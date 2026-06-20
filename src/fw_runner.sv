@@ -1,5 +1,5 @@
 
-module spl_runner(
+module fw_runner(
     input
 );
 endmodule

@@ -1,5 +1,5 @@
 
-module spl_root #(
+module fw_root #(
     parameter type Tbind=int
     // Assumptions about clock stability?
 ) (

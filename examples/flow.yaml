@@ -5,20 +5,20 @@ package:
   name: examples
 
   tasks:
-  - name: spl-src
+  - name: fw-src
     uses: std.FileSet
     with:
       type: systemVerilogSource
       base: ${{ rootdir }}/../src
       include:
-      - spl_pkg.sv
-      - spl_clock_xtor_if.sv
-      - spl_put_xtor_if.sv
+      - fw_pkg.sv
+      - fw_clock_xtor_if.sv
+      - fw_put_xtor_if.sv
       incdirs:
       - .
   - name: src
     uses: std.FileSet
-    needs: [spl-src]
+    needs: [fw-src]
     with:
       type: systemVerilogSource
       include:

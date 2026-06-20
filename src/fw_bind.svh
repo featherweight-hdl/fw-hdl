@@ -1,5 +1,5 @@
 
-class spl_bind #(type Troot);
+class fw_bind #(type Troot);
     Troot           root;
     std::process    proc;
 

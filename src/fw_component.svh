@@ -1,10 +1,10 @@
 
-class spl_component;
+class fw_component;
     protected string          m_name;
-    protected spl_component   m_parent;
-    protected spl_component   m_children[$];
+    protected fw_component   m_parent;
+    protected fw_component   m_children[$];
 
-    function new(string name, spl_component parent);
+    function new(string name, fw_component parent);
         m_name = name;
         m_parent = parent;
 

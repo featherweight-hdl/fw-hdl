@@ -1,0 +1,7 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+package:
+  name: fw-hdl
+
+  fragments:
+  - src/flow.yaml
+  - tests/flow.yaml

@@ -1,5 +1,5 @@
 
-interface spl_clock_xtor_if(
+interface fw_clock_xtor_if(
     input clock,
     input reset
     );

@@ -1,5 +1,5 @@
 
-interface spl_put_xtor_if #(
+interface fw_put_xtor_if #(
     parameter type T
 ) (
     output T        out

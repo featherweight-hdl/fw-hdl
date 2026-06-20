@@ -1,0 +1,18 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+fragment:
+  name: src
+
+  tasks:
+  # Core featherweight (fw) modeling-library source. The package pulls in the
+  # class .svh files via the include dir; the interface modules are listed
+  # explicitly so the library elaborates standalone.
+  - name: sv-src
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      include:
+      - fw_pkg.sv
+      - fw_clock_xtor_if.sv
+      - fw_put_xtor_if.sv
+      incdirs:
+      - .

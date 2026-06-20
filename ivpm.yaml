@@ -1,5 +1,5 @@
 package:
-  name: spl-sv
+  name: fw-hdl
   with:
     agents:
       claude: true

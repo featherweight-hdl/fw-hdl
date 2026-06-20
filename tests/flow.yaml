@@ -1,0 +1,25 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+fragment:
+  name: tests
+
+  tasks:
+  # Compile smoke test: build a Verilator image from the core fw library plus a
+  # trivial testbench. If the image builds, the library compiles & elaborates.
+  - name: smoke-tb
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      include:
+      - fw_smoke_tb.sv
+      incdirs:
+      - .
+
+  - name: smoke-img
+    uses: hdlsim.vlt.SimImage
+    needs: [src.sv-src, smoke-tb]
+    with:
+      top: [fw_smoke_tb]
+
+  - name: smoke
+    uses: hdlsim.vlt.SimRun
+    needs: [smoke-img]
