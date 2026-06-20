@@ -1,0 +1,16 @@
+package:
+  name: spl-sv
+  with:
+    agents:
+      claude: true
+
+  dep-sets:
+  - name: default-dev
+    deps: 
+    - name: verilator
+      url: https://github.com/edapack/verilator-bin
+      src: gh-rls
+    - name: dv-flow-mgr
+      url: https://github.com/dv-flow/dv-flow-mgr.git
+    - name: dv-flow-libhdlsim
+      url: https://github.com/dv-flow/dv-flow-libhdlsim.git

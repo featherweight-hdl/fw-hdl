@@ -1,0 +1,13 @@
+
+interface spl_put_xtor_if #(
+    parameter type T
+) (
+    output T        out
+);
+
+    task automatic put(input T t);
+        out <= t;
+    endtask
+
+endinterface
+

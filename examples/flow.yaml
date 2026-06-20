@@ -1,0 +1,36 @@
+
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+
+package:
+  name: examples
+
+  tasks:
+  - name: spl-src
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      base: ${{ rootdir }}/../src
+      include:
+      - spl_pkg.sv
+      - spl_clock_xtor_if.sv
+      - spl_put_xtor_if.sv
+      incdirs:
+      - .
+  - name: src
+    uses: std.FileSet
+    needs: [spl-src]
+    with:
+      type: systemVerilogSource
+      include:
+      - "*.sv"
+
+  - name: sim-img
+    uses: hdlsim.vlt.SimImage
+    needs: [src]
+    with:
+      top: [counter_tb]
+  - root: sim
+    uses: hdlsim.vlt.SimRun
+    needs: [sim-img]
+
+    
