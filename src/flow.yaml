@@ -5,8 +5,10 @@ fragment:
   tasks:
   # Core featherweight (fw) modeling-library source. The package pulls in the
   # class .svh files via the include dir; the interface modules are listed
-  # explicitly so the library elaborates standalone.
-  - name: sv-src
+  # explicitly so the library elaborates standalone. EXPORTED so other packages
+  # (protocol kits, apps) can depend on it as `fw-hdl.src.sv-src` after importing
+  # fw-hdl. incdir '.' is srcdir-relative, so it stays correct when imported.
+  - export: sv-src
     uses: std.FileSet
     with:
       type: systemVerilogSource

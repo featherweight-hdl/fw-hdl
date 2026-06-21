@@ -1,21 +1,19 @@
-package:
-  name: fw-hdl
-  with:
-    agents:
-      claude: true
+
+package:  
+  name: fw-proto-rv
 
   dep-sets:
   - name: default-dev
     deps: 
     - name: verilator
+      src: gh-rls 
       url: https://github.com/edapack/verilator-bin
-      src: gh-rls
-      cache: true
-    - name: yosys
-      url: https://github.com/edapack/yosys-bin
-      src: gh-rls
-      cache: true
+    - name: fw-hdl
+      url: https://github.com/featherweight-hdl/fw-hdl.git
     - name: dv-flow-mgr
       url: https://github.com/dv-flow/dv-flow-mgr.git
     - name: dv-flow-libhdlsim
       url: https://github.com/dv-flow/dv-flow-libhdlsim.git
+    - name: dv-flow-libformal
+      url: https://github.com/dv-flow/dv-flow-libformal.git
+

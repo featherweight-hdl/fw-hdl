@@ -1,0 +1,41 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+fragment:
+  name: src
+
+  tasks:
+  # The fw modeling library (fw_pkg + interface modules) this kit builds on. It
+  # lives in the fw-hdl package; pull it in by relative path so the example builds
+  # standalone. (A delivered kit would instead depend on the fw-hdl package.)
+  - name: fw-src
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      base: ${{ rootdir }}/../../../../src
+      include:
+      - fw_pkg.sv
+      - fw_clock_xtor_if.sv
+      - fw_put_xtor_if.sv
+      incdirs:
+      - ${{ rootdir }}/../../../../src
+
+  # The protocol kit itself: the class-layer package + the transactor SV
+  # interfaces/modules (which cannot live in a package). incdir '.' picks up the
+  # .svh includes (macros, API classes, bridges).
+  - export: files
+    uses: std.FileSet
+    needs: [fw-src]
+    with:
+      type: systemVerilogSource
+      include:
+      - rv_proto_pkg.sv
+      - rv_initiator_xtor_if.sv
+      - rv_initiator_xtor_core.sv
+      - rv_initiator_xtor.sv
+      - rv_target_xtor_if.sv
+      - rv_target_xtor_core.sv
+      - rv_target_xtor.sv
+      - rv_monitor_xtor_if.sv
+      - rv_monitor_xtor_core.sv
+      - rv_monitor_xtor.sv
+      incdirs:
+      - .

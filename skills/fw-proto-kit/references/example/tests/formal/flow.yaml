@@ -1,0 +1,36 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+fragment:
+  name: formal
+
+  tasks:
+  # The kit's two PROTOCOL CORES -- the only synthesizable RTL in the kit (the
+  # transactor-interfaces use SV-queue FIFOs). The formal harness wires these
+  # back-to-back. Listed on their own so yosys never sees the queue-based files.
+  - name: cores
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      base: ${{ rootdir }}/src
+      include:
+      - rv_initiator_xtor_core.sv
+      - rv_target_xtor_core.sv
+
+  # The back-to-back formal harness (instances both cores + the properties).
+  - name: rv-proto-fv
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      include:
+      - rv_proto_fv.sv
+      incdirs:
+      - .
+
+  # SymbiYosys BMC proof (dv-flow-libformal). depth 14 lets several beats fully
+  # traverse the initiator->bus->target pipeline; the cores are 1-deep skids so a
+  # beat crosses in ~3 cycles.
+  - root: fv
+    uses: formal.sby.BMC
+    needs: [cores, rv-proto-fv]
+    with:
+      top: rv_proto_fv
+      depth: 14

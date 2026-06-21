@@ -1,0 +1,24 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+fragment:
+  name: tests
+
+  tasks:
+  # Runnable demonstrator: drives data through the kit and checks order/count.
+  - name: rv-proto-tb
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      include:
+      - rv_proto_tb.sv
+      incdirs:
+      - .
+
+  - name: rv-proto-img
+    uses: hdlsim.vlt.SimImage
+    needs: [src.files, rv-proto-tb]
+    with:
+      top: [rv_proto_tb]
+
+  - root: rv-proto
+    uses: hdlsim.vlt.SimRun
+    needs: [rv-proto-img]

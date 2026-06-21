@@ -1,6 +1,6 @@
 
 interface fw_put_xtor_if #(
-    parameter type T
+    parameter type T = int
 ) (
     output T        out
 );

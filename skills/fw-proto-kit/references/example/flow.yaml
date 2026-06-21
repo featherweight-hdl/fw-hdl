@@ -1,10 +1,10 @@
 # yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
 package:
-  name: fw-hdl
+  name: rv.proto
 
+  # The kit sources live in src/; a runnable demonstrator lives in tests/; a
+  # back-to-back formal proof of the cores lives in tests/formal/.
   fragments:
   - src/flow.yaml
   - tests/flow.yaml
-  - tests/intf_pc/flow.yaml
-  - tests/rv_proto/flow.yaml
   - tests/formal/flow.yaml

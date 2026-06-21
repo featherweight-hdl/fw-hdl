@@ -1,4 +1,5 @@
 
 class fw_reqrsp_if #(type Treq, type Trsp);
-    pure virtual task call(input Treq in, output Trsp out);
+    // outputs (returns) lead: out = call(in).
+    pure virtual task call(output Trsp out, input Treq in);
 endclass

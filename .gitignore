@@ -149,7 +149,6 @@ activemq-data/
 
 # Environments
 .env
-.envrc
 .venv
 env/
 venv/
@@ -221,6 +220,7 @@ packages/
 .claude/
 .codex/
 .agents/
+.cursor/
 
 obj_dir/
 rundir/
