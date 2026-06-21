@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+fragment:
+  name: formal
+
+  tasks:
+  # Formal proof: a back-to-back initiator + target connected by a ready/valid
+  # link, each with its own FIFO interface. SymbiYosys (via dv-flow-libformal)
+  # proves the link handshake contract, no-overflow, and end-to-end data
+  # integrity. The RTL is synthesizable (yosys-friendly) -- the formal-shaped
+  # equivalent of the rv_proto transactor dataflow.
+  - name: fifo-link-fv
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      include:
+      - fifo_link_fv.sv
+      incdirs:
+      - .
+
+  - name: fifo-link
+    uses: formal.sby.BMC
+    needs: [fifo-link-fv]
+    with:
+      top: fifo_link_fv
+      # 16 cycles is enough to fill both depth-4 FIFOs (capacity 8) and drain
+      # them, exercising pointer wrap and the full in-flight range.
+      depth: 16

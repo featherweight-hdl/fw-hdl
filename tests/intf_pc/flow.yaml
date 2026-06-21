@@ -1,0 +1,26 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+fragment:
+  name: intf_pc
+
+  tasks:
+  # Producer/consumer interface-protocol test: a producer that drives the
+  # fw_put_if #(T) interface-class API and a consumer that supplies an
+  # implementation via the `FW_PUT_IMP template macro.
+  - name: intf-pc-tb
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      include:
+      - intf_pc_tb.sv
+      incdirs:
+      - .
+
+  - name: intf-pc-img
+    uses: hdlsim.vlt.SimImage
+    needs: [src.sv-src, intf-pc-tb]
+    with:
+      top: [intf_pc_tb]
+
+  - name: intf-pc
+    uses: hdlsim.vlt.SimRun
+    needs: [intf-pc-img]

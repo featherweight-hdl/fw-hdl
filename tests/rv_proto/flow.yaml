@@ -1,0 +1,25 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+fragment:
+  name: rv_proto
+
+  tasks:
+  # Ready/valid protocol-kit test: defines a small ready/valid API +
+  # transactor and drives data across the signal-level handshake.
+  - name: rv-proto-tb
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      include:
+      - rv_proto_tb.sv
+      incdirs:
+      - .
+
+  - name: rv-proto-img
+    uses: hdlsim.vlt.SimImage
+    needs: [src.sv-src, rv-proto-tb]
+    with:
+      top: [rv_proto_tb]
+
+  - name: rv-proto
+    uses: hdlsim.vlt.SimRun
+    needs: [rv-proto-img]
