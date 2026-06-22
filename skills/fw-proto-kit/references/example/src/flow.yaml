@@ -3,7 +3,7 @@ fragment:
   name: src
 
   tasks:
-  # The fw modeling library (fw_pkg + interface modules) this kit builds on. It
+  # The fw modeling library (fw_hdl_pkg + interface modules) this kit builds on. It
   # lives in the fw-hdl package; pull it in by relative path so the example builds
   # standalone. (A delivered kit would instead depend on the fw-hdl package.)
   - name: fw-src
@@ -12,7 +12,7 @@ fragment:
       type: systemVerilogSource
       base: ${{ rootdir }}/../../../../src
       include:
-      - fw_pkg.sv
+      - fw_hdl_pkg.sv
       - fw_clock_xtor_if.sv
       - fw_put_xtor_if.sv
       incdirs:

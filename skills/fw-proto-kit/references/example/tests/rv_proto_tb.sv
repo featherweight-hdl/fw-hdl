@@ -16,7 +16,7 @@
 // rv_monitor_xtor) sit on one shared ready/valid bus; the monitor passively taps
 // it (drives nothing) while every beat crosses the real signal-level handshake.
 module rv_proto_tb;
-    import fw_pkg::*;
+    import fw_hdl_pkg::*;
     import rv_proto_pkg::*;
 
     typedef logic [31:0] data_t;

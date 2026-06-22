@@ -13,8 +13,9 @@ fragment:
     with:
       type: systemVerilogSource
       include:
-      - fw_pkg.sv
+      - fw_hdl_pkg.sv
       - fw_clock_xtor_if.sv
       - fw_put_xtor_if.sv
+      - fw_root.sv
       incdirs:
       - .

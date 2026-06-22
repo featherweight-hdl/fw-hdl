@@ -3,7 +3,7 @@
 // connected through the fw_port/fw_export deferred-binding wrappers.
 //
 // The reusable infrastructure (fw_component, fw_port, fw_export) comes from
-// fw_pkg. The "send" *protocol* used to exercise it -- its interface-class API
+// fw_hdl_pkg. The "send" *protocol* used to exercise it -- its interface-class API
 // and its implementation-template macro -- is defined here in the test, since
 // it is test scaffolding rather than a generic library feature.
 //
@@ -67,7 +67,7 @@
     NAME``_imp_t NAME
 
 module intf_pc_tb;
-    import fw_pkg::*;
+    import fw_hdl_pkg::*;
 
     typedef bit [31:0] data_t;
 

@@ -1,11 +1,11 @@
 
 // Compile/elaboration smoke test for the featherweight (fw) modeling library.
 //
-// Importing fw_pkg pulls in every class in the library, while instantiating the
+// Importing fw_hdl_pkg pulls in every class in the library, while instantiating the
 // interface modules and specializing the parameterized classes forces Verilator
 // to elaborate them. A successful build of this testbench is the pass criterion.
 module fw_smoke_tb;
-    import fw_pkg::*;
+    import fw_hdl_pkg::*;
 
     bit         clock;
     bit         reset;

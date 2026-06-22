@@ -1,6 +1,6 @@
 
 package counter_pkg;
-    import fw_pkg::*;
+    import fw_hdl_pkg::*;
 
     class counter extends fw_component;
         fw_port #(fw_put_if #(bit[31:0]))  out;
@@ -29,7 +29,7 @@ module counter(
     input           clock,
     input           reset,
     output[31:0]    count);
-    import fw_pkg::*;
+    import fw_hdl_pkg::*;
     import counter_pkg::*;
 
     fw_put_xtor_if #(bit[31:0]) count_if(.out(count));

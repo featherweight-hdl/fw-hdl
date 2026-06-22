@@ -14,7 +14,7 @@ typedef class fw_component;
 // Both providers are fw_if_base, so resolution is uniform: ask the provider
 // for its imp. A port is never a provider to an export (calls flow toward the
 // imp), which fw_export::connect enforces by only accepting another export.
-class fw_port #(type T) extends fw_if_base #(T);
+class fw_port #(type T) extends fw_if_base #(T) implements fw_elaboratable;
     local string           m_name;
     local fw_component     m_parent;
     local fw_if_base #(T)  m_provider;  // an export (peer) or a port (outer)
@@ -22,6 +22,12 @@ class fw_port #(type T) extends fw_if_base #(T);
     function new(string name = "", fw_component parent = null);
         m_name   = name;
         m_parent = parent;
+        // A port is elaboratable: register with the containing component so the
+        // lifecycle walk reaches it. An ACTIVE port (a bridge overriding run())
+        // is then launched by do_run() alongside child components.
+        if (parent != null) begin
+            parent.add_elaboratable(this);
+        end
     endfunction
 
     // port-to-export or port-to-port. The provider is anything that can
@@ -38,5 +44,16 @@ class fw_port #(type T) extends fw_if_base #(T);
             $fatal(1, "fw_port '%s' is unconnected", m_name);
             return null;
         end
+    endfunction
+
+    // --- fw_elaboratable lifecycle -------------------------------------------
+    // A bare port has nothing to build/connect (its binding is performed by the
+    // owning component via connect(provider)). A port does NOT run by default;
+    // an ACTIVE port -- a bridge with a sampling loop -- additionally
+    // `implements fw_runnable` so add_elaboratable() queues its run().
+    virtual function void do_build();
+    endfunction
+
+    virtual function void do_connect();
     endfunction
 endclass
