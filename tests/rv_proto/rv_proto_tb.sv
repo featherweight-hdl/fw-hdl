@@ -57,6 +57,8 @@
 //     layer stays parameterized. Full simulators (Questa/VCS/Xcelium) support
 //     the parameterized form; that is the production structure.
 
+`include "fw_hdl_macros.svh"
+
 // ----------------------------------------------------------------------
 // Implementation-template macros provided by the rv APIs. EVERY API ships one,
 // and any implementation of that API MUST use it to define the implementation
@@ -420,7 +422,7 @@ module rv_monitor_xtor (
 endmodule
 
 module rv_proto_tb;
-    import fw_pkg::*;
+    import fw_hdl_pkg::*;
 
     typedef logic [31:0] data_t;
 
@@ -462,33 +464,39 @@ module rv_proto_tb;
     // The class layer stays parameterized (#(type T)); the virtual transactor
     // interface is concrete (see Verilator quirks in the file header).
     // --------------------------------------------------------------
-    class rv_initiator_bridge #(type T) extends fw_component;
+    // Initiator bridge: a PROVIDER of the initiator API, so the bridge IS an
+    // fw_export (not a component). The driver's port connects directly to it --
+    // `drv.out.connect(bridge)` -- and send() drives the beat onto the
+    // transactor interface. As an export ADAPTER it extends fw_export directly
+    // rather than using `FW_RV_INITIATOR_IMP (which is for COMPONENTS that
+    // publish an API through an internal export member).
+    class rv_initiator_bridge #(type T) extends fw_export #(rv_initiator_if #(T))
+            implements rv_initiator_if #(T);
         virtual rv_initiator_xtor_if vif;
-
-        `FW_RV_INITIATOR_IMP(T, rv_initiator_bridge #(T), exp);
 
         function new(string name, fw_component parent,
                      virtual rv_initiator_xtor_if vif);
-            super.new(name, parent);
+            super.new(name, parent, this);   // the export's imp is the bridge
             this.vif = vif;
-            exp = new(this);
         endfunction
 
-        virtual task exp_send(input T t);
+        virtual task send(input T t);
             vif.send(t);
         endtask
     endclass
 
-    class rv_target_bridge #(type T) extends fw_port #(rv_target_if #(T));
+    class rv_target_bridge #(type T) extends fw_port #(rv_target_if #(T))
+            implements fw_runnable;
         virtual rv_target_xtor_if vif;
 
         function new(string name, fw_component parent,
                      virtual rv_target_xtor_if vif);
             super.new(name, parent);
             this.vif = vif;
+            parent.add_runnable(this);   // active port: opt in to run()
         endfunction
 
-        task run();
+        virtual task run();
             rv_target_if #(T) api = get_if();
             forever begin
                 automatic T t;
@@ -503,16 +511,18 @@ module rv_proto_tb;
     //     fw_port #(rv_monitor_if) and runs an active loop. It BLOCKS on
     //     vif.get(t) (the transactor-interface's blocking method) and then fans
     //     the beat out via the NON-BLOCKING monitor API observe().
-    class rv_monitor_bridge #(type T) extends fw_port #(rv_monitor_if #(T));
+    class rv_monitor_bridge #(type T) extends fw_port #(rv_monitor_if #(T))
+            implements fw_runnable;
         virtual rv_monitor_xtor_if vif;
 
         function new(string name, fw_component parent,
                      virtual rv_monitor_xtor_if vif);
             super.new(name, parent);
             this.vif = vif;
+            parent.add_runnable(this);   // active port: opt in to run()
         endfunction
 
-        task run();
+        virtual task run();
             rv_monitor_if #(T) api = get_if();
             forever begin
                 automatic T t;
@@ -525,11 +535,12 @@ module rv_proto_tb;
     // --------------------------------------------------------------
     // Driver: consumes the initiator API through a port.
     // --------------------------------------------------------------
-    class driver extends fw_component;
+    class driver extends fw_component implements fw_runnable;
         fw_port #(rv_initiator_if #(data_t)) out;
 
         function new(string name, fw_component parent);
             super.new(name, parent);
+            parent.add_runnable(this);   // active component: opt in to run()
         endfunction
 
         function void build();
@@ -592,45 +603,27 @@ module rv_proto_tb;
     endclass
 
     // --------------------------------------------------------------
-    // Top: instances driver + sink, builds the bridges over the two transactor
-    // interfaces, and connects each to its peer.
+    // Top: a PURE component. It instances driver + sink + observer and owns
+    // their API ports/exports, but knows NOTHING about the signal-level
+    // transactors or their virtual interfaces. All bridge construction and
+    // module-scope binding lives in rv_top_bind below, so rv_top stays reusable
+    // and independent of this testbench's signal plumbing.
     // --------------------------------------------------------------
     class rv_top extends fw_component;
         driver   drv;
         sink     chk;
         observer obs;
-        rv_target_bridge  #(data_t) tbr;
-        rv_monitor_bridge #(data_t) mbr;
-        virtual rv_initiator_xtor_if vif_init;
-        virtual rv_target_xtor_if    vif_targ;
-        virtual rv_monitor_xtor_if   vif_mon;
 
         function new(string name, fw_component parent);
             super.new(name, parent);
         endfunction
 
         function void build();
+            // Just create the immediate children; do_build() recurses into
+            // them top-down, so no manual child.build() calls here.
             drv = new("drv", this);
             chk = new("chk", this);
             obs = new("obs", this);
-            drv.build();
-            chk.build();
-            obs.build();
-        endfunction
-
-        function void connect();
-            // Initiator transactor: the driver's port connects to its export.
-            rv_initiator_bridge #(data_t) ibr =
-                new("init_bridge", this, vif_init);
-            drv.out.connect(ibr.exp);
-
-            // Target transactor: a port that calls into the sink's export.
-            tbr = new("targ_bridge", this, vif_targ);
-            tbr.connect(chk.in);
-
-            // Monitor transactor: a port that publishes to the observer's export.
-            mbr = new("mon_bridge", this, vif_mon);
-            mbr.connect(obs.mon);
         endfunction
     endclass
 
@@ -670,58 +663,65 @@ module rv_proto_tb;
         .valid(bus_valid), .ready(bus_ready), .data(bus_data)
     );
 
+    // --------------------------------------------------------------
+    // Automatic lifecycle, described compactly. `fw_root_begin/bind/end expands
+    // to the rv_top_bind class (= fw_component_root #(rv_top) + the bridge
+    // construction) and the fw_root instance u_root that runs it: on reset
+    // release it news rv_top_bind and forks its run() (build -> connect -> run);
+    // on a reset it kills and restarts the tree. u_root.root is the live root.
+    //
+    // Each bind line constructs one bridge over a live module-scope interface
+    // and connects it to a tree endpoint:
+    //   initiator -> drv.out (driver's port)   target -> chk.in (sink export)
+    //                                           monitor -> obs.mon (observer export)
+    // --------------------------------------------------------------
+    `fw_root_begin(rv_top, u_root, clock, reset)
+        // endpoint, its live vif, the bridge that adapts it. Suffix = endpoint
+        // kind: drv.out is a port; chk.in / obs.mon are exports.
+        `fw_root_bind_port  (drv.out, init_xtor.u_if, rv_initiator_bridge #(data_t))
+        `fw_root_bind_export(chk.in,  targ_xtor.u_if, rv_target_bridge    #(data_t))
+        `fw_root_bind_export(obs.mon, mon_xtor.u_if, rv_monitor_bridge   #(data_t))
+    `fw_root_end
+
     initial begin
-        automatic rv_top top;
         automatic int errors = 0;
 
-        // Reset, then release.
+        // Reset, then release. fw_root elaborates + runs the tree on release.
         reset = 1'b1;
         repeat (4) @(posedge clock);
         reset = 1'b0;
 
-        top = new("top", null);
-        top.vif_init = init_xtor.u_if;   // reach into the transactor module
-        top.vif_targ = targ_xtor.u_if;
-        top.vif_mon  = mon_xtor.u_if;
-        top.build();
-        top.connect();
-
-        // Start the target + monitor sampling loops, then push N beats.
-        fork
-            top.tbr.run();
-            top.mbr.run();
-        join_none
-        top.drv.run();
-
-        // Drain: wait until every beat has reached BOTH the sink and the monitor.
-        while (top.chk.received.size() < N || top.obs.seen.size() < N)
+        // Wait for fw_root to new the root (one clock after release), then drain:
+        // wait until every beat has reached BOTH the sink and the monitor.
+        while (u_root.root == null) @(posedge clock);
+        while (u_root.root.chk.received.size() < N || u_root.root.obs.seen.size() < N)
             @(posedge clock);
 
         // Check: every beat arrived at the sink, in order, unchanged.
-        if (top.chk.received.size() != N) begin
-            $display("FAIL: expected %0d beats, got %0d", N, top.chk.received.size());
+        if (u_root.root.chk.received.size() != N) begin
+            $display("FAIL: expected %0d beats, got %0d", N, u_root.root.chk.received.size());
             errors++;
         end else begin
             for (int unsigned i = 0; i < N; i++) begin
                 automatic data_t exp = 32'hcafe_0000 + i;
-                if (top.chk.received[i] !== exp) begin
+                if (u_root.root.chk.received[i] !== exp) begin
                     $display("FAIL: beat %0d expected 0x%08h got 0x%08h",
-                             i, exp, top.chk.received[i]);
+                             i, exp, u_root.root.chk.received[i]);
                     errors++;
                 end
             end
         end
 
         // Check: the monitor observed the same N beats, in order.
-        if (top.obs.seen.size() != N) begin
-            $display("FAIL: monitor expected %0d beats, got %0d", N, top.obs.seen.size());
+        if (u_root.root.obs.seen.size() != N) begin
+            $display("FAIL: monitor expected %0d beats, got %0d", N, u_root.root.obs.seen.size());
             errors++;
         end else begin
             for (int unsigned i = 0; i < N; i++) begin
                 automatic data_t exp = 32'hcafe_0000 + i;
-                if (top.obs.seen[i] !== exp) begin
+                if (u_root.root.obs.seen[i] !== exp) begin
                     $display("FAIL: monitor beat %0d expected 0x%08h got 0x%08h",
-                             i, exp, top.obs.seen[i]);
+                             i, exp, u_root.root.obs.seen[i]);
                     errors++;
                 end
             end

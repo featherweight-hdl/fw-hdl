@@ -13,7 +13,7 @@ typedef class fw_component;
 //     be given an imp directly via the constructor / set_imp), but
 //   * an export may NOT connect to a port -- calls flow toward the imp, never
 //     away from it. connect() only accepts another fw_export.
-class fw_export #(type T) extends fw_if_base #(T);
+class fw_export #(type T) extends fw_if_base #(T) implements fw_elaboratable;
     local string          m_name;
     local fw_component    m_parent;
     local T               m_imp;   // terminal implementation (imp), or
@@ -23,6 +23,12 @@ class fw_export #(type T) extends fw_if_base #(T);
         m_name   = name;
         m_parent = parent;
         m_imp    = imp;
+        // An export is elaboratable too: register with the containing component
+        // so it is part of the lifecycle tree (exports are passive, so this is
+        // mainly for uniformity / future per-export phases).
+        if (parent != null) begin
+            parent.add_elaboratable(this);
+        end
     endfunction
 
     // Bind/replace the terminal implementation this export provides.
@@ -45,5 +51,12 @@ class fw_export #(type T) extends fw_if_base #(T);
             $fatal(1, "fw_export '%s' resolves to no implementation", m_name);
             return null;
         end
+    endfunction
+
+    // --- fw_elaboratable lifecycle (passive: all no-ops) ---------------------
+    virtual function void do_build();
+    endfunction
+
+    virtual function void do_connect();
     endfunction
 endclass

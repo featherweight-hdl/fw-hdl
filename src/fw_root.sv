@@ -24,9 +24,7 @@ module fw_root #(
                 automatic string path = $sformatf("%m");
                 $display("TODO: Create root");
                 in_reset <= 1'b0;
-                root = new();
-                root.build(path);
-                root.connect();
+                root = new(path);
                 fork
                     root.run();
                 join_none

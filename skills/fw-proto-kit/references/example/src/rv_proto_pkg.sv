@@ -3,11 +3,11 @@
 // cannot live in a package); they are listed alongside this file in the FileSet.
 //
 // Macros are included BEFORE the package so they are visible where the bridges
-// use them. fw_pkg supplies fw_component / fw_port / fw_export.
+// use them. fw_hdl_pkg supplies fw_component / fw_port / fw_export.
 `include "rv_proto_macros.svh"
 
 package rv_proto_pkg;
-    import fw_pkg::*;
+    import fw_hdl_pkg::*;
 
     // API interface-classes (each ships a `FW_RV_*_IMP macro, see rv_proto_macros).
     `include "rv_initiator_if.svh"
