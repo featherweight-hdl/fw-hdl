@@ -19,3 +19,8 @@ package:
       url: https://github.com/dv-flow/dv-flow-mgr.git
     - name: dv-flow-libhdlsim
       url: https://github.com/dv-flow/dv-flow-libhdlsim.git
+    # Provides the formal.sby.* tasks used by tests/formal/flow.yaml. Declared
+    # so the package definition resolves in CI / fresh checkouts (it was
+    # previously only available via a local editable install).
+    - name: dv-flow-libformal
+      url: https://github.com/dv-flow/dv-flow-libformal.git
