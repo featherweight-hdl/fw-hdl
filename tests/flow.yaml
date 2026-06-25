@@ -16,7 +16,7 @@ fragment:
 
   - name: smoke-img
     uses: hdlsim.vlt.SimImage
-    needs: [src.sv-src, smoke-tb]
+    needs: [hdl.sv-src, smoke-tb]
     with:
       top: [fw_smoke_tb]
 

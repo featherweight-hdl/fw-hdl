@@ -4,8 +4,10 @@ typedef class fw_component;
 // A *port* is an API-implementation *consumer* (TLM/UVM semantics).
 //
 // A component holds a port to call an API whose implementation lives
-// elsewhere. The port is connected to a provider and resolves, via get_if(),
-// to the implementation that provider ultimately reaches.
+// elsewhere. The port is connected to a provider and, during the connect phase,
+// resolves the provider's implementation handle into the public member `t`. Run-
+// phase code then calls the API directly as `port.t.method(...)` -- no per-call
+// graph walk.
 //
 // Connection rules:
 //   * port-to-export: connect to a peer export that provides the imp, or
@@ -15,6 +17,11 @@ typedef class fw_component;
 // for its imp. A port is never a provider to an export (calls flow toward the
 // imp), which fw_export::connect enforces by only accepting another export.
 class fw_port #(type T) extends fw_if_base #(T) implements fw_elaboratable;
+    // The resolved implementation handle (the imp), bound during do_connect().
+    // This is the run-phase call target: `port.t.method(args)`. Null until
+    // connect resolves it (an unconnected port leaves it null).
+    T                      t;
+
     local string           m_name;
     local fw_component     m_parent;
     local fw_if_base #(T)  m_provider;  // an export (peer) or a port (outer)
@@ -36,6 +43,13 @@ class fw_port #(type T) extends fw_if_base #(T) implements fw_elaboratable;
         m_provider = provider;
     endfunction
 
+    // Has a provider been bound? Used by the clock-domain auto-inherit pass to
+    // tell an explicitly-bound child port from one that should default to its
+    // parent's domain.
+    function bit is_connected();
+        return m_provider != null;
+    endfunction
+
     // Resolve through the connection graph to the concrete implementation.
     virtual function T get_if();
         if (m_provider != null) begin
@@ -47,13 +61,20 @@ class fw_port #(type T) extends fw_if_base #(T) implements fw_elaboratable;
     endfunction
 
     // --- fw_elaboratable lifecycle -------------------------------------------
-    // A bare port has nothing to build/connect (its binding is performed by the
-    // owning component via connect(provider)). A port does NOT run by default;
-    // an ACTIVE port -- a bridge with a sampling loop -- additionally
-    // `implements fw_runnable` so add_elaboratable() queues its run().
+    // A bare port has nothing to build (its binding is performed by the owning
+    // component via connect(provider)). A port does NOT run by default; an
+    // ACTIVE port -- a bridge with a sampling loop -- additionally
+    // `implements fw_runnable` so add_runnable() queues its run().
     virtual function void do_build();
     endfunction
 
+    // Resolve the implementation handle once, here, so run-phase code can use
+    // `t` directly. Resolution walks the connection graph (get_if). Safe because
+    // connect is top-down and no connect() body resolves a binding: by the time
+    // a port's do_connect runs, its whole provider chain is already wired.
     virtual function void do_connect();
+        if (m_provider != null) begin
+            t = get_if();
+        end
     endfunction
 endclass

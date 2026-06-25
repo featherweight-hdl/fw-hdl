@@ -1,0 +1,26 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+fragment:
+  name: clock_domain
+
+  tasks:
+  # Clock-domain test: inherit + top-down override + a derived divide-by-N
+  # domain, checked via root_ticks() (trace up) and tick() (accumulate down).
+  - name: clock-domain-tb
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      include:
+      - clock_domain_pkg.sv
+      - clock_domain_tb.sv
+      incdirs:
+      - .
+
+  - name: clock-domain-img
+    uses: hdlsim.vlt.SimImage
+    needs: [hdl.sv-src, clock-domain-tb]
+    with:
+      top: [clock_domain_tb]
+
+  - name: clock-domain
+    uses: hdlsim.vlt.SimRun
+    needs: [clock-domain-img]

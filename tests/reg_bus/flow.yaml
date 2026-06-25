@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+fragment:
+  name: reg_bus
+
+  tasks:
+  # M3: register-block bus integration -- a CPU reaches a device's registers by
+  # offset through an fw_port #(fw_reg_block_if); the device provides the block
+  # as an fw_export and drives status from hardware. Driven via fw_root.
+  - name: reg-bus-tb
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      include:
+      - reg_bus_pkg.sv
+      - reg_bus_tb.sv
+      incdirs:
+      - .
+
+  - name: reg-bus-img
+    uses: hdlsim.vlt.SimImage
+    needs: [hdl.sv-src, reg-bus-tb]
+    with:
+      top: [reg_bus_tb]
+
+  - name: reg-bus
+    uses: hdlsim.vlt.SimRun
+    needs: [reg-bus-img]

@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fw-hdl"
+version = "0.0.1"
+description = "Featherweight-HDL: SystemVerilog -> Zuspec IR -> synthesizable RTL"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "Matthew Ballance", email = "matt.ballance@gmail.com"}
+]
+requires-python = ">=3.10"
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+]
+dependencies = [
+    "pyslang",
+    "zuspec-ir-core",
+    "zuspec-be-sv",
+    # The transparent SPL→RTL lowering is centralized in zuspec.synth.spl
+    # (CENTRALIZED-LOWERING-DESIGN.md); fw-hdl drives it as a runtime dependency.
+    "zuspec-synth",
+]
+
+[project.optional-dependencies]
+# Test extras: the system/equivalence tests drive dfm flows via pytest_dfm and
+# build/run sims through dv-flow-libhdlsim (see PLAN.md §2).
+test = [
+    "pytest>=7.0",
+    "pytest-dfm",
+    "dv-flow-mgr",
+    "dv-flow-libhdlsim",
+]
+
+[project.scripts]
+fw-hdl = "fw.hdl.cli:main"
+
+# NOTE: the `dv_flow.mgr` entry-point for the `fw.hdl.Synth` task is added in P4,
+# once fw/hdl/dfm.py + fw/hdl/flow.dv exist (PLAN.md §1.6).  Registering it before
+# those files exist would break plugin discovery.
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["fw*"]
+
+[tool.pytest.ini_options]
+testpaths = ["../tests/python"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]

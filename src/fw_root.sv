@@ -6,10 +6,15 @@ module fw_root #(
     input   clock,
     input   reset
 );
+    import fw_hdl_pkg::*;
+
     reg in_reset = 0;
     Tbind root = null;
 
-    // Need to pass a virtual-interface handle for working with time
+    // The root clock-domain transactor: bridges the clock-domain API to this
+    // module's clock/reset. Its bridge becomes the root component's clock
+    // domain, which every other component inherits by default.
+    fw_clock_xtor_if u_clk(.clock(clock), .reset(reset));
 
     always @(posedge clock or posedge reset) begin
         if (reset) begin
@@ -22,11 +27,16 @@ module fw_root #(
         end else begin
             if (in_reset) begin
                 automatic string path = $sformatf("%m");
+                automatic fw_clock_xtor_bridge clk_dom;
                 $display("TODO: Create root");
                 in_reset <= 1'b0;
                 root = new(path);
+                // Seat the root component's clock domain before start() so the
+                // whole tree resolves through it.
+                clk_dom = new("clock", root, u_clk);
+                root.clock.connect(clk_dom);
                 fork
-                    root.run();
+                    root.start();
                 join_none
             end
             // What's the next timestamp?

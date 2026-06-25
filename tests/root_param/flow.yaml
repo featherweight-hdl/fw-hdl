@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+fragment:
+  name: root_param
+
+  tasks:
+  # Parameterized-root demonstrator: a typed param object, built from module
+  # parameters by a module-scope bind class and threaded through fw_root
+  # unchanged into fw_component_param.
+  - name: root-param-tb
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      include:
+      - root_param_pkg.sv
+      - root_param_tb.sv
+      incdirs:
+      - .
+
+  - name: root-param-img
+    uses: hdlsim.vlt.SimImage
+    needs: [hdl.sv-src, root-param-tb]
+    with:
+      top: [root_param_tb]
+
+  - name: root-param
+    uses: hdlsim.vlt.SimRun
+    needs: [root-param-img]

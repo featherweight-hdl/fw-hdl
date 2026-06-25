@@ -11,13 +11,14 @@ fragment:
     with:
       type: systemVerilogSource
       include:
+      - intf_pc_pkg.sv
       - intf_pc_tb.sv
       incdirs:
       - .
 
   - name: intf-pc-img
     uses: hdlsim.vlt.SimImage
-    needs: [src.sv-src, intf-pc-tb]
+    needs: [hdl.sv-src, intf-pc-tb]
     with:
       top: [intf_pc_tb]
 

@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+fragment:
+  name: reg_dma
+
+  tasks:
+  # M4: the WISHBONE DMA register map (31 channels) on the register model, with a
+  # hardware engine polling a watch-set of CSRs and a software host driving a
+  # channel through the bus. Ergonomics & scale proof. Driven via fw_root.
+  - name: reg-dma-tb
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      include:
+      - reg_dma_pkg.sv
+      - reg_dma_tb.sv
+      incdirs:
+      - .
+
+  - name: reg-dma-img
+    uses: hdlsim.vlt.SimImage
+    needs: [hdl.sv-src, reg-dma-tb]
+    with:
+      top: [reg_dma_tb]
+
+  - name: reg-dma
+    uses: hdlsim.vlt.SimRun
+    needs: [reg-dma-img]

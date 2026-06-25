@@ -15,6 +15,10 @@ package:
       url: https://github.com/edapack/yosys-bin
       src: gh-rls
       cache: true
+    - name: nextpnr
+      url: https://github.com/edapack/nextpnr-bin
+      src: gh-rls
+      cache: true
     - name: dv-flow-mgr
       url: https://github.com/dv-flow/dv-flow-mgr.git
     - name: dv-flow-libhdlsim
@@ -24,3 +28,20 @@ package:
     # previously only available via a local editable install).
     - name: dv-flow-libformal
       url: https://github.com/dv-flow/dv-flow-libformal.git
+    - name: pytest-dfm
+      url: https://github.com/dv-flow/pytest-dfm.git
+
+    - name: zuspec-ir-core
+      url: https://github.com/zuspec/zuspec-ir-core.git
+    - name: zuspec-synth
+      url: https://github.com/zuspec/zuspec-synth.git
+    - name: zuspec-be-sv
+      url: https://github.com/zuspec/zuspec-be-sv.git
+    - name: zuspec-be-sw
+      url: https://github.com/zuspec/zuspec-be-sw.git
+    - name: zuspec-fe-sv
+      url: https://github.com/zuspec/zuspec-fe-sv.git
+    - name: pyslang
+      src: pypi
+    - name: sphinx
+      src: pypi

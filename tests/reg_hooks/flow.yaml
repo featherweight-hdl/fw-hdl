@@ -1,0 +1,25 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+fragment:
+  name: reg_hooks
+
+  tasks:
+  # M2 tests: hardware read-provider / write-observer hooks and the hierarchical
+  # fw_reg_set wait_change (a forked engine sleeping on a set of registers).
+  - name: reg-hooks-tb
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      include:
+      - reg_hooks_tb.sv
+      incdirs:
+      - .
+
+  - name: reg-hooks-img
+    uses: hdlsim.vlt.SimImage
+    needs: [hdl.sv-src, reg-hooks-tb]
+    with:
+      top: [reg_hooks_tb]
+
+  - name: reg-hooks
+    uses: hdlsim.vlt.SimRun
+    needs: [reg-hooks-img]

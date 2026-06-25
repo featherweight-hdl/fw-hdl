@@ -1,0 +1,25 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+fragment:
+  name: reg_core
+
+  tasks:
+  # M1 directed tests: the access-mask contract (RW/RO/WO/ROC/overlap), the typed
+  # packed-struct projection, and block offset decode (auto-stride, gap, nested).
+  - name: reg-core-tb
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      include:
+      - reg_core_tb.sv
+      incdirs:
+      - .
+
+  - name: reg-core-img
+    uses: hdlsim.vlt.SimImage
+    needs: [hdl.sv-src, reg-core-tb]
+    with:
+      top: [reg_core_tb]
+
+  - name: reg-core
+    uses: hdlsim.vlt.SimRun
+    needs: [reg-core-img]

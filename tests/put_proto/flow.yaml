@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+fragment:
+  name: put_proto
+
+  tasks:
+  # Signal-level put-protocol test: a producer drives the std put API across the
+  # fw_put_xtor_if transactor interface onto an unhandshaked bus, sampled and
+  # checked by the testbench.
+  - name: put-proto-tb
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      include:
+      - put_proto_pkg.sv
+      - put_proto_tb.sv
+      incdirs:
+      - .
+
+  - name: put-proto-img
+    uses: hdlsim.vlt.SimImage
+    needs: [hdl.sv-src, put-proto-tb]
+    with:
+      top: [put_proto_tb]
+
+  - name: put-proto
+    uses: hdlsim.vlt.SimRun
+    needs: [put-proto-img]

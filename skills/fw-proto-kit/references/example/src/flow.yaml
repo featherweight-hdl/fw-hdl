@@ -14,9 +14,11 @@ fragment:
       include:
       - fw_hdl_pkg.sv
       - fw_clock_xtor_if.sv
-      - fw_put_xtor_if.sv
+      - std/fw_std_pkg.sv
+      - std/fw_put_xtor_if.sv
       incdirs:
       - ${{ rootdir }}/../../../../src
+      - ${{ rootdir }}/../../../../src/std
 
   # The protocol kit itself: the class-layer package + the transactor SV
   # interfaces/modules (which cannot live in a package). incdir '.' picks up the

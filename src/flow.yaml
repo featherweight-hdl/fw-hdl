@@ -1,21 +1,43 @@
 # yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
 fragment:
-  name: src
+  name: hdl
 
   tasks:
-  # Core featherweight (fw) modeling-library source. The package pulls in the
-  # class .svh files via the include dir; the interface modules are listed
-  # explicitly so the library elaborates standalone. EXPORTED so other packages
-  # (protocol kits, apps) can depend on it as `fw-hdl.src.sv-src` after importing
-  # fw-hdl. incdir '.' is srcdir-relative, so it stays correct when imported.
-  - export: sv-src
+  # Core featherweight (fw) modeling-library KERNEL: the deferred-binding
+  # mechanism (component / port / export / clock domain) with no opinion about
+  # what protocol rides over it. The package pulls in the class .svh files via
+  # the include dir; the interface modules are listed explicitly so the library
+  # elaborates standalone. incdir '.' is srcdir-relative, so it stays correct
+  # when imported. Layered as a separate task from `std` so the kernel can build
+  # standalone; consumers get both through the `sv-src` export below.
+  - name: core
     uses: std.FileSet
     with:
       type: systemVerilogSource
       include:
       - fw_hdl_pkg.sv
       - fw_clock_xtor_if.sv
-      - fw_put_xtor_if.sv
       - fw_root.sv
       incdirs:
       - .
+
+  - name: std
+    uses: std.FileSet
+    needs: [core]
+    with:
+      type: systemVerilogSource
+      base: std
+      include:
+      - fw_std_pkg.sv
+      - fw_put_xtor_if.sv
+      incdirs:
+      - .
+
+  # The single public export: bundles kernel + std (it needs `std`, which needs
+  # `core`, and a FileSet forwards its needs' files/incdirs). Other packages and
+  # the tests depend on `fw-hdl.hdl.sv-src` to get the whole library at once.
+  - export: sv-src
+    uses: std.FileSet
+    needs: [std]
+    with:
+      type: systemVerilogSource

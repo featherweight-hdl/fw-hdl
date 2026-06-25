@@ -10,13 +10,15 @@ fragment:
     with:
       type: systemVerilogSource
       include:
+      - rv_proto_pkg.sv
+      - rv_proto_xtors.sv
       - rv_proto_tb.sv
       incdirs:
       - .
 
   - name: rv-proto-img
     uses: hdlsim.vlt.SimImage
-    needs: [src.sv-src, rv-proto-tb]
+    needs: [hdl.sv-src, rv-proto-tb]
     with:
       top: [rv_proto_tb]
 

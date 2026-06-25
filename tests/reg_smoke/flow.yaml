@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+fragment:
+  name: reg_smoke
+
+  tasks:
+  # M0 smoke test for the kernel register model: build a Verilator image from the
+  # core fw library plus a trivial testbench that exercises a one-block register
+  # round-trip. If it builds and prints PASS, the register classes compile and
+  # the basic value path works.
+  - name: reg-smoke-tb
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      include:
+      - reg_smoke_tb.sv
+      incdirs:
+      - .
+
+  - name: reg-smoke-img
+    uses: hdlsim.vlt.SimImage
+    needs: [hdl.sv-src, reg-smoke-tb]
+    with:
+      top: [reg_smoke_tb]
+
+  - name: reg-smoke
+    uses: hdlsim.vlt.SimRun
+    needs: [reg-smoke-img]

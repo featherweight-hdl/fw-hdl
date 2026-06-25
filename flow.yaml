@@ -5,6 +5,15 @@ package:
   fragments:
   - src/flow.yaml
   - tests/flow.yaml
+  - tests/reg_smoke/flow.yaml
+  - tests/reg_core/flow.yaml
+  - tests/reg_hooks/flow.yaml
+  - tests/reg_bus/flow.yaml
+  - tests/reg_dma/flow.yaml
+  - tests/blinky/flow.yaml
+  - tests/clock_domain/flow.yaml
   - tests/intf_pc/flow.yaml
+  - tests/put_proto/flow.yaml
+  - tests/root_param/flow.yaml
   - tests/rv_proto/flow.yaml
   - tests/formal/flow.yaml

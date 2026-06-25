@@ -1,6 +1,3 @@
-`ifndef INCLUDED_RV_INITIATOR_BRIDGE_SVH
-`define INCLUDED_RV_INITIATOR_BRIDGE_SVH
-
 // Initiator bridge -- the PROVIDER side. Holds a virtual transactor-interface
 // handle and implements rv_initiator_if via the API's `FW_RV_INITIATOR_IMP macro
 // (never hand-rolled). send() redirects to exp_send(), which calls vif.send()
@@ -22,5 +19,3 @@ class rv_initiator_bridge #(type T = logic [31:0]) extends fw_component;
         vif.send(t);
     endtask
 endclass
-
-`endif /* INCLUDED_RV_INITIATOR_BRIDGE_SVH */

@@ -1,6 +1,7 @@
 
 package counter_pkg;
     import fw_hdl_pkg::*;
+    import fw_std_pkg::*;
 
     class counter extends fw_component;
         fw_port #(fw_put_if #(bit[31:0]))  out;
@@ -30,6 +31,7 @@ module counter(
     input           reset,
     output[31:0]    count);
     import fw_hdl_pkg::*;
+    import fw_std_pkg::*;
     import counter_pkg::*;
 
     fw_put_xtor_if #(bit[31:0]) count_if(.out(count));
@@ -38,8 +40,8 @@ module counter(
     // Connector?
     class counter_bind extends fw_bind #(counter_pkg::counter);
         function void connect();
-            fw_put_xtor_impl #(bit[31:0]) impl = new(count_if);
-            root.out.t = impl;
+            fw_put_xtor_bridge #(bit[31:0]) bridge = new("count", root, count_if);
+            root.out.connect(bridge);
             $display("connect");
         endfunction
     endclass

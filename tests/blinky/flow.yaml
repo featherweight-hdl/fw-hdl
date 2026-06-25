@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+fragment:
+  name: blinky
+
+  tasks:
+  # Blinky example: a runnable root component drives the std put API onto a 1-bit
+  # LED pin, holding each value a large number of ticks before flipping it.
+  - name: blinky-tb
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      include:
+      - blinky_pkg.sv
+      - blinky_top.sv
+      - blinky_tb.sv
+      incdirs:
+      - .
+
+  - name: blinky-img
+    uses: hdlsim.vlt.SimImage
+    needs: [hdl.sv-src, blinky-tb]
+    with:
+      top: [blinky_tb]
+
+  - name: blinky
+    uses: hdlsim.vlt.SimRun
+    needs: [blinky-img]
