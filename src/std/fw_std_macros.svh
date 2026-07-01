@@ -37,4 +37,28 @@
     endclass \
     NAME``_imp_t NAME
 
+// `FW_MEM_IMP(ADDR, DATA, STRB, IMP, NAME) -- export NAME providing fw_mem_if
+//   #(ADDR, DATA, STRB); write(...) redirects to IMP's NAME``_write(...) and
+//   read(...) to NAME``_read(...). Outputs-first arg order in both redirects.
+//   Use this in a component that supplies the mem API in the pure class (TLM)
+//   layer; the signal-level provider is instead a per-protocol adapter (e.g.
+//   fw-proto-wb's wb_mem_initiator) that drives the bus.
+`define FW_MEM_IMP(ADDR, DATA, STRB, IMP, NAME) \
+    class NAME``_imp_t extends fw_export #(fw_mem_if #(ADDR, DATA, STRB)) \
+            implements fw_mem_if #(ADDR, DATA, STRB); \
+        local IMP m_imp; \
+        function new(IMP imp); \
+            super.new(`"NAME`", imp, this); \
+            m_imp = imp; \
+        endfunction \
+        virtual task write(output bit err, input ADDR addr, input DATA data, \
+                           input STRB strb); \
+            m_imp.NAME``_write(err, addr, data, strb); \
+        endtask \
+        virtual task read(output DATA data, output bit err, input ADDR addr); \
+            m_imp.NAME``_read(data, err, addr); \
+        endtask \
+    endclass \
+    NAME``_imp_t NAME
+
 `endif /* INCLUDED_FW_STD_MACROS_SVH */

@@ -12,26 +12,20 @@ class dma_channel_regs extends fw_reg_block #(32);
     fw_reg #(dma_addr_t)   a0, am0, a1, am1;
     fw_reg #(bit [31:0])   desc, swptr;
 
+    // Registers self-register with this block (the `this` parent), so offsets
+    // auto-assign in construction order: csr 0x00, sz 0x04, a0 0x08, am0 0x0c,
+    // a1 0x10, am1 0x14, desc 0x18, swptr 0x1c -> size() == 0x20.
     function new(string name);
         super.new(name);
-        csr = new("csr", .sw_wmask(csr_sw_wmask()),
-                         .hw_wmask(csr_hw_wmask()),
-                         .rclr_mask(csr_rclr()));
-        sz  = new("sz");
-        a0  = new("a0");
-        am0 = new("am0", .reset(32'hFFFF_FFFC));
-        a1  = new("a1");
-        am1 = new("am1", .reset(32'hFFFF_FFFC));
-        desc = new("desc");  swptr = new("swptr");
-
-        add(csr);    // 0x00
-        add(sz);     // 0x04
-        add(a0);     // 0x08
-        add(am0);    // 0x0c
-        add(a1);     // 0x10
-        add(am1);    // 0x14
-        add(desc);   // 0x18
-        add(swptr);  // 0x1c  -> size() == 0x20
+        csr = new("csr", this, .sw_wmask(csr_sw_wmask()),
+                               .hw_wmask(csr_hw_wmask()),
+                               .rclr_mask(csr_rclr()));
+        sz  = new("sz",  this);
+        a0  = new("a0",  this);
+        am0 = new("am0", this, .reset(32'hFFFF_FFFC));
+        a1  = new("a1",  this);
+        am1 = new("am1", this, .reset(32'hFFFF_FFFC));
+        desc = new("desc", this);  swptr = new("swptr", this);
     endfunction
 
     // bits hardware drives: status + interrupt-source (ROC) bits
@@ -58,19 +52,16 @@ class dma_regs extends fw_reg_block #(32);
     fw_reg #(bit [31:0]) int_src_a, int_src_b;      // hw-set, read-to-clear
     dma_channel_regs     ch[DMA_NCH];
 
+    // Globals self-register at the block cursor (csr 0x00, int_msk_a 0x04,
+    // int_msk_b 0x08, int_src_a 0x0c, int_src_b 0x10); the channel files are
+    // nested explicitly at 0x20 stride 0x20 (gap 0x14..0x1f).
     function new(string name);
         super.new(name);
-        csr       = new("csr");
-        int_msk_a = new("int_msk_a");  int_msk_b = new("int_msk_b");
-        int_src_a = new("int_src_a", .hw_wmask('1), .rclr_mask('1));
-        int_src_b = new("int_src_b", .hw_wmask('1), .rclr_mask('1));
+        csr       = new("csr",       this);
+        int_msk_a = new("int_msk_a", this);  int_msk_b = new("int_msk_b", this);
+        int_src_a = new("int_src_a", this, .hw_wmask('1), .rclr_mask('1));
+        int_src_b = new("int_src_b", this, .hw_wmask('1), .rclr_mask('1));
 
-        add(csr);        // 0x00
-        add(int_msk_a);  // 0x04
-        add(int_msk_b);  // 0x08
-        add(int_src_a);  // 0x0c
-        add(int_src_b);  // 0x10
-        // channel files start at 0x20, stride 0x20 (gap 0x14..0x1f).
         for (int i = 0; i < DMA_NCH; i++) begin
             ch[i] = new($sformatf("ch%0d", i));
             add_block(ch[i], 32 + i*32);

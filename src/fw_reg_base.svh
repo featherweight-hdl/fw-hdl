@@ -20,8 +20,9 @@
 // hold heterogeneous registers as fw_reg_val_if #(W).
 
 typedef class fw_reg_set;   // forward: register <-> watch-set are mutually referential
+typedef class fw_reg_block; // forward: a register self-adds to its parent group
 
-virtual class fw_reg_base #(int W = 32) implements fw_reg_val_if #(W);
+virtual class fw_reg_base #(int W = 32) implements fw_reg_val_if #(W), fw_awaitable_if;
     protected string         m_name;
     protected int unsigned   m_offset;     // assigned when added to a group
     protected bit [W-1:0]    m_val;        // hardware-owned state
@@ -33,17 +34,26 @@ virtual class fw_reg_base #(int W = 32) implements fw_reg_val_if #(W);
     // ---- hardware hooks ------------------------------------------------------
     protected fw_reg_rd_if #(W) m_rd;      // read provider (optional, single)
     protected fw_reg_wr_if #(W) m_wr[$];   // write observers (zero or more)
-    // ---- change notification (drives fw_reg_set) -----------------------------
-    protected event             m_change;
-    protected fw_reg_set #(W)   m_sets[$]; // watch-sets subscribed to this reg
+    // ---- change notification --------------------------------------------------
+    protected event             m_change;    // fired on any value change
+    protected fw_reg_set #(W)   m_sets[$];   // register watch-sets (track which)
+    protected fw_event_set      m_mons[$];   // monitors this register produces into
 
+    // A register always belongs to a group: `parent` is mandatory and the register
+    // adds itself (mirroring how an fw_component registers with its parent), so a
+    // register file is declared as just `r = new("r", this)` -- no separate add()
+    // call. `offset` defaults to the group's running cursor (uniform stride); pass
+    // an explicit byte offset only to leave a gap or force placement.
     function new(string name,
+                 fw_reg_block #(W) parent,
+                 int         offset    = -1,
                  bit [W-1:0] reset     = '0,
                  bit [W-1:0] sw_wmask  = '1,
                  bit [W-1:0] hw_wmask  = '0,
                  bit [W-1:0] rclr_mask = '0);
         m_name = name;  m_reset = reset;  m_val = reset;
         m_sw_wmask = sw_wmask;  m_hw_wmask = hw_wmask;  m_rclr_mask = rclr_mask;
+        parent.add(this, offset);   // self-register (at the cursor, or `offset`)
     endfunction
 
     function string       name();              return m_name;   endfunction
@@ -53,11 +63,17 @@ virtual class fw_reg_base #(int W = 32) implements fw_reg_val_if #(W);
     function void         set_rd(fw_reg_rd_if #(W) rd); m_rd = rd;        endfunction
     function void         add_wr(fw_reg_wr_if #(W) wr); m_wr.push_back(wr); endfunction
     function void         subscribe(fw_reg_set #(W) s); m_sets.push_back(s); endfunction
+    // fw_awaitable_if: this register IS an event source -- produce its "event
+    // occurred" into monitor `s` (push). signal() then notifies s on every change,
+    // so a consumer waits on a set spanning this register and other sources.
+    virtual function void produce_to(fw_event_set s);  m_mons.push_back(s);  endfunction
 
-    // any value change: trigger the local event and notify subscribed watch-sets
+    // any value change: fire the change event, notify register watch-sets, and
+    // produce into subscribed monitors
     protected function void signal();
         -> m_change;
-        foreach (m_sets[i]) m_sets[i].notify(this);
+        foreach (m_sets[i]) m_sets[i].notify_from(this);   // register watch-set (which)
+        foreach (m_mons[i]) m_mons[i].notify();            // fw_event_set monitors (push)
     endfunction
 
     // --- CANONICAL value: the single source of truth. The read provider (if

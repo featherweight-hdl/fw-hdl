@@ -26,8 +26,9 @@ module reg_core_tb;
     initial begin
         // ---- profile: RW (sw writes, hw cannot) -----------------------------
         begin
+            automatic fw_reg_block #(32) blk = new("blk");
             automatic fw_reg #(bit [31:0]) r =
-                new("rw", .sw_wmask(32'hFFFF_FFFF), .hw_wmask(32'h0));
+                new("rw", blk, .sw_wmask(32'hFFFF_FFFF), .hw_wmask(32'h0));
             r.write_val(32'hA5A5_1234);
             chk(r.read_val() === 32'hA5A5_1234, "RW: sw write should land");
             r.update_val(32'hFFFF_FFFF);                 // hw cannot write
@@ -36,8 +37,9 @@ module reg_core_tb;
 
         // ---- profile: RO (sw cannot write, hw owns) --------------------------
         begin
+            automatic fw_reg_block #(32) blk = new("blk");
             automatic fw_reg #(bit [31:0]) r =
-                new("ro", .sw_wmask(32'h0), .hw_wmask(32'hFFFF_FFFF));
+                new("ro", blk, .sw_wmask(32'h0), .hw_wmask(32'hFFFF_FFFF));
             r.write_val(32'hFFFF_FFFF);                  // sw cannot write
             chk(r.read_val() === 32'h0, "RO: sw write must be ignored");
             r.update_val(32'h0000_1234);                 // hw owns
@@ -46,8 +48,9 @@ module reg_core_tb;
 
         // ---- profile: ROC (hw set, read-to-clear on sw read only) ------------
         begin
+            automatic fw_reg_block #(32) blk = new("blk");
             automatic fw_reg #(bit [31:0]) r =
-                new("roc", .sw_wmask(32'h0), .hw_wmask(32'hFFFF_FFFF),
+                new("roc", blk, .sw_wmask(32'h0), .hw_wmask(32'hFFFF_FFFF),
                     .rclr_mask(32'hFFFF_FFFF));
             r.update_val(32'h0000_0007);                  // hw sets sticky bits
             chk(r.read_val() === 32'h7, "ROC: read_val peek must NOT clear");
@@ -58,8 +61,9 @@ module reg_core_tb;
 
         // ---- profile: RW + hw-set overlap (hardware wins) --------------------
         begin
+            automatic fw_reg_block #(32) blk = new("blk");
             automatic fw_reg #(bit [31:0]) r =
-                new("ovl", .sw_wmask(32'h0000_0001), .hw_wmask(32'h0000_0001));
+                new("ovl", blk, .sw_wmask(32'h0000_0001), .hw_wmask(32'h0000_0001));
             r.write_val(32'h1);                           // sw sets bit0
             chk(r.read_val() === 32'h1, "OVL: sw write takes effect");
             r.update_val(32'h0, 32'h1);                   // hw clears bit0 -> wins
@@ -72,8 +76,9 @@ module reg_core_tb;
         begin
             automatic csr_t hwm = '{busy:1, done:1, int_src:1, default:'0};
             automatic csr_t swm = '{en:1, default:'0};
+            automatic fw_reg_block #(32) blk = new("blk");
             automatic fw_reg #(csr_t) csr =
-                new("csr", .sw_wmask(swm), .hw_wmask(hwm),
+                new("csr", blk, .sw_wmask(swm), .hw_wmask(hwm),
                     .rclr_mask('{int_src:1, default:'0}));
             csr_t v;
 
@@ -97,12 +102,9 @@ module reg_core_tb;
         // ---- block decode: auto-stride + explicit gap ------------------------
         begin
             automatic fw_reg_block #(32) blk = new("blk");
-            automatic fw_reg #(bit [31:0]) a = new("a");
-            automatic fw_reg #(bit [31:0]) b = new("b");
-            automatic fw_reg #(bit [31:0]) c = new("c");
-            blk.add(a);                 // 0x00
-            blk.add(b);                 // 0x04 (auto)
-            blk.add(c, 32'h20);         // explicit, leaves a gap
+            automatic fw_reg #(bit [31:0]) a = new("a", blk);            // 0x00
+            automatic fw_reg #(bit [31:0]) b = new("b", blk);            // 0x04 (auto)
+            automatic fw_reg #(bit [31:0]) c = new("c", blk, 32'h20);    // explicit, leaves a gap
             chk(a.offset() === 0,      "DEC: a @ 0x00");
             chk(b.offset() === 4,      "DEC: b @ 0x04");
             chk(c.offset() === 32'h20, "DEC: c @ 0x20");
@@ -116,12 +118,9 @@ module reg_core_tb;
         begin
             automatic fw_reg_block #(32) top = new("top");
             automatic fw_reg_block #(32) sub = new("sub");
-            automatic fw_reg #(bit [31:0]) g  = new("g");
-            automatic fw_reg #(bit [31:0]) s0 = new("s0");
-            automatic fw_reg #(bit [31:0]) s1 = new("s1");
-            sub.add(s0);                // local 0x00
-            sub.add(s1);                // local 0x04 -> sub.size()==0x08
-            top.add(g);                 // 0x00
+            automatic fw_reg #(bit [31:0]) g  = new("g",  top);   // 0x00
+            automatic fw_reg #(bit [31:0]) s0 = new("s0", sub);   // local 0x00
+            automatic fw_reg #(bit [31:0]) s1 = new("s1", sub);   // local 0x04 -> sub.size()==0x08
             top.add_block(sub, 32'h10); // sub occupies 0x10..0x17
             chk(top.size() === 32'h18, "NEST: top size spans sub-block");
             top.write_val(32'h10, 32'h1111_1111);

@@ -15,6 +15,7 @@ package fw_std_pkg;
     `include "fw_put_if.svh"      // put(t)            -- write to an output, no handshake
     `include "fw_get_if.svh"      // get(t)            -- sample an input, no handshake
     `include "fw_reqrsp_if.svh"   // call(out, in)     -- blocking request/response
+    `include "fw_mem_if.svh"      // read/write(addr)  -- protocol-independent memory access
 
     // Signal-level bridge for the put protocol: holds a virtual
     // fw_put_xtor_if (a separate compilation unit) and implements fw_put_if.

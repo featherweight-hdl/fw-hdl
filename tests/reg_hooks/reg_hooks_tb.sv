@@ -49,7 +49,8 @@ module reg_hooks_tb;
     initial begin
         // ===== read provider: live value, single source of truth =============
         begin
-            automatic fw_reg #(bit [31:0]) r = new("rp", .hw_wmask('1));
+            automatic fw_reg_block #(32)   blk = new("blk");
+            automatic fw_reg #(bit [31:0]) r = new("rp", blk, .hw_wmask('1));
             automatic live_provider        p = new();
             r.set_rd(p);
             p.live = 32'h0000_0011;
@@ -62,7 +63,8 @@ module reg_hooks_tb;
 
         // ===== write observer: fires on sw write only, with (val, prev) ======
         begin
-            automatic fw_reg #(bit [31:0]) r = new("wo", .sw_wmask('1));
+            automatic fw_reg_block #(32)   blk = new("blk");
+            automatic fw_reg #(bit [31:0]) r = new("wo", blk, .sw_wmask('1));
             automatic rec_observer         o = new();
             r.add_wr(o);
             r.write_val(32'hAAAA_0000);
@@ -78,8 +80,9 @@ module reg_hooks_tb;
 
         // ===== watch-set: forked engine sleeps until any member changes ======
         begin
-            automatic fw_reg #(bit [31:0]) r0 = new("r0", .sw_wmask('1), .hw_wmask('1));
-            automatic fw_reg #(bit [31:0]) r1 = new("r1", .sw_wmask('1), .hw_wmask('1));
+            automatic fw_reg_block #(32)   blk = new("blk");
+            automatic fw_reg #(bit [31:0]) r0 = new("r0", blk, .sw_wmask('1), .hw_wmask('1));
+            automatic fw_reg #(bit [31:0]) r1 = new("r1", blk, .sw_wmask('1), .hw_wmask('1));
             automatic fw_reg_set #(32)     s  = new();
             automatic watcher              w  = new(s);
             s.add(r0);

@@ -22,10 +22,8 @@ class reg_device extends fw_component implements fw_runnable;
 
     function void build();
         m_block  = new("regs");
-        m_ctrl   = new("ctrl");                                  // RW (defaults)
-        m_status = new("status", .sw_wmask('0), .hw_wmask('1));  // RO to sw, hw owns
-        m_block.add(m_ctrl);     // 0x00
-        m_block.add(m_status);   // 0x04
+        m_ctrl   = new("ctrl", m_block);                                  // 0x00, RW (defaults)
+        m_status = new("status", m_block, .sw_wmask('0), .hw_wmask('1));  // 0x04, RO to sw, hw owns
 
         regs = new("regs", this, m_block);   // export imp == the block
 

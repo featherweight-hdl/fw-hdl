@@ -15,11 +15,13 @@ class fw_reg #(type T = bit, int W = $bits(T)) extends fw_reg_base #(W)
         implements fw_reg_val_if #(W);
 
     function new(string name,
+                 fw_reg_block #(W) parent,
+                 int offset  = -1,
                  T reset     = '0,
                  T sw_wmask  = '1,
                  T hw_wmask  = '0,
                  T rclr_mask = '0);
-        super.new(name, reset, sw_wmask, hw_wmask, rclr_mask);
+        super.new(name, parent, offset, reset, sw_wmask, hw_wmask, rclr_mask);
     endfunction
 
     // native projection of the canonical value (single source of truth, no side

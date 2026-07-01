@@ -14,12 +14,9 @@ module reg_smoke_tb;
     initial begin
         automatic int errors = 0;
         automatic fw_reg_block #(32)  blk = new("blk");
-        automatic fw_reg #(word_t)    r0  = new("r0");
-        automatic fw_reg #(word_t)    r1  = new("r1");
+        automatic fw_reg #(word_t)    r0  = new("r0", blk);   // 0x00
+        automatic fw_reg #(word_t)    r1  = new("r1", blk);   // 0x04 (auto stride 4)
         automatic word_t got;
-
-        blk.add(r0);          // 0x00
-        blk.add(r1);          // 0x04 (auto stride 4)
 
         // sw write -> read round-trip through the block (by offset)
         blk.write_val(32'h00, 32'hdead_beef);

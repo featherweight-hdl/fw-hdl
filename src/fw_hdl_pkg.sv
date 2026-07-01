@@ -20,13 +20,15 @@ package fw_hdl_pkg;
     // another API" carried over fw_port/fw_export, like fw_clock_domain_if). The
     // interface classes come first; fw_reg_base forward-declares fw_reg_set (the
     // register and its watch-set are mutually referential).
+    `include "fw_event_set.svh"     // monitor: a named set of sources you wait_any() on
+    `include "fw_awaitable_if.svh"  // producer: an event source, wired in via produce_to
     `include "fw_reg_rd_if.svh"     // hardware read provider hook
     `include "fw_reg_wr_if.svh"     // hardware write observer hook
     `include "fw_reg_val_if.svh"    // untyped (value-level) register API
     `include "fw_reg_block_if.svh"  // addressable group API (bus-facing)
     `include "fw_reg_base.svh"      // register state machine (untyped)
     `include "fw_reg.svh"           // typed register over a packed struct
-    `include "fw_reg_set.svh"       // hierarchical watch-set (wait_change)
+    `include "fw_reg_set.svh"       // register watch-set (fw_event_set + which)
     `include "fw_reg_block.svh"     // register group: offsets, decode
 
 endpackage
