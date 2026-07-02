@@ -1,3 +1,11 @@
+---
+name: fw-proto-kit
+description: Build a Featherweight-HDL protocol kit — a set of class-level role APIs
+  (initiator / target / monitor) plus signal-level transactors that bridge those APIs to a wire
+  protocol (ready/valid, wishbone, AXI…), shipped with a back-to-back simulation test and a
+  back-to-back SymbiYosys formal component. Use when creating or extending an fw-hdl
+  protocol/transactor package; a runnable ready/valid reference kit lives in references/example/.
+---
 
 # Featherweight-HDL Protocol Kit
 
