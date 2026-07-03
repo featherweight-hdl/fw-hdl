@@ -1,3 +1,12 @@
+---
+name: fw-api-kit
+description: Define a Featherweight-HDL API — the class-based contract by which fw components
+  communicate: a pure-virtual interface class <proto>_if plus the `FW_<PROTO>_IMP provider
+  macro that stamps out its export/imp proxy. No signals, no RTL. Use when creating or updating
+  an fw-hdl API (from a finished interface class or an informal spec) before building a
+  signal-level protocol on top of it with fw-proto-kit.
+---
+
 # Featherweight-HDL API Kit
 
 Use this skill to define a featherweight-HDL **API**: the class-based contract by

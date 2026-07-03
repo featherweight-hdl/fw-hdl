@@ -1,3 +1,13 @@
+---
+name: fw-hdl
+description: Featherweight-HDL (fw-hdl) — a lightweight, UVM-flavored class modeling layer for
+  SystemVerilog: describe a model/testbench as a tree of fw_component objects wired through
+  deferred-binding fw_port/fw_export APIs, run the fixed build → connect → run lifecycle, and
+  bridge the class world to signal-level pins with the fw_root macros. Use when writing or
+  reading fw-hdl models — components, ports/exports, clock domains, the fw_root wrapper, or the
+  fw_hdl_pkg (kernel) and fw_std_pkg (standard protocol) libraries.
+---
+
 # Featherweight-HDL
 
 Featherweight-HDL (fw-hdl) is a lightweight, UVM-flavored **class modeling layer**
