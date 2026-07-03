@@ -80,14 +80,31 @@ Connection rules (enforced in `src/fw_port.svh` / `src/fw_export.svh`):
 - An export may **not** connect to a port — calls always flow *toward* the imp.
 
 `API` is an **interface class** with `pure virtual` methods — the class-level
-contract. Tasks block; functions don't. Example, the std `put` API
-(`src/std/fw_put_if.svh`):
+contract. Example, the std `put` API (`src/std/fw_put_if.svh`):
 
 ```systemverilog
 interface class fw_put_if #(type T);
     pure virtual task put(input T t);
 endclass
 ```
+
+**Task vs. function — the defining rule for a protocol.** A method that *could*
+consume time **must be a `task`**. This holds even when the time consumed is only
+a single clock cycle inside the transactor: the pure-TLM imp may return instantly,
+but a signal-level bridge implementing the same API will `@(posedge clock)`, and a
+`function` can never wait. The `task`/`function` choice is fixed at the interface
+class and binds *every* implementation, so pick for the most time-consuming one.
+
+- **Make it a `task`** whenever any implementation might block, sample, or advance
+  a clock — i.e. essentially always. In most real protocols **every method is a
+  task**.
+- **Make it a `function`** only when the method is *truly* non-time-consuming: it
+  returns the current state immediately, for observation (the state is always
+  broadcast and readable with zero delay). A getter/predicate with no possible
+  wait in any implementation.
+
+When in doubt, use a `task` — over-committing to a `function` is the one choice
+you cannot walk back without changing the contract for every implementation.
 
 ### Providing an API — the `` `FW_*_IMP `` macro
 Every std API ships an implementation-template macro. A component that *provides*
@@ -158,6 +175,24 @@ Elaboration (build/connect) is separate from execution (run):
   default; an object that needs a process `implements fw_runnable` and calls
   `add_runnable(this)` (usually from its constructor). There is no auto-detection.
 
+> **Waking a `run()` on external events — use a level-sensitive wait, not
+> `@event`.** When a `run()` loop sleeps until some *other* component pokes it
+> (e.g. a non-blocking sink method sets a flag), wait on a **level** — a flag
+> cleared before you read state — not on an edge:
+> ```systemverilog
+> function void notify(); m_dirty = 1; endfunction   // called from another process
+> task run();
+>     forever begin
+>         wait (m_dirty);         // returns immediately if already set -> no lost poke
+>         m_dirty = 0;            // clear BEFORE reading, so a poke during eval re-dirties
+>         act_on(current_state());
+>     end
+> endtask
+> ```
+> A bare `@(m_wake)` drops any poke that lands between your last evaluate and the
+> `@` — the loop then sleeps forever on state that already moved. (For a *set* of
+> heterogeneous sources, an `fw_event_set` gives the same guarantee.)
+
 The phases (`src/fw_component.svh`):
 - **`do_build()`** — TOP-DOWN: run *this* `build()` (which creates children), then
   recurse into the just-created children.
@@ -183,6 +218,50 @@ The whole lifecycle is driven by **`fw_component_root #(Tb)`**
 (`src/fw_component_root.svh`): its `run()` calls `do_build()` → `do_connect()` →
 `do_run()`, and `kill()` tears the tree's process down. You rarely write this
 directly — the `` `fw_root `` macros generate a subclass of it (§5).
+
+> **Do not force-wire one of your own *public* ports from inside a reusable
+> component.** `port.connect(provider)` is last-writer-wins on the port's
+> provider, and `do_connect()` is top-down (parent before child). So if a
+> reusable component's `connect()` binds a port it also *exposes*, and an
+> integrator wired that same port from the enclosing level, the component's
+> internal `connect()` runs later and **silently overwrites** the integrator's
+> binding. Keep a port either internal (wired by its owner, not exposed) or
+> public (left for the integrator) — never both. This is the flip side of
+> "ordering is free": ordering is free for *resolution*, not a license to
+> double-bind the same endpoint.
+
+### Mandatory vs. optional connections
+
+**Mandatory is the default; optionality must be justified.** For each edge, ask:
+*is the component's operation correct and complete without this connection?* If
+"no," it is **mandatory** — and an unconnected mandatory edge should fail **loudly
+and early**, naming the port, not misbehave silently.
+
+- **A mandatory consumer port must surface a clear error when unbound — but mind
+  the diagnostic gap.** `do_connect()` only resolves `port.t` when a provider
+  exists, so reading `port.t` on an *unconnected* port is a **bare null-deref**,
+  *not* the friendly `"fw_port 'X' is unconnected"` — that named `$fatal` fires
+  only from `get_if()`. So for a mandatory port either resolve it via `get_if()`
+  at run-start (the engine-style `if0 = mif0.get_if();`), or assert
+  `port.is_connected()` in `connect()` — both give an early, named failure. Do
+  **not** wrap a mandatory port in a silent `is_connected()` guard; that converts
+  a localized error into a far-away malfunction.
+- **Provider exports cannot self-report.** An `fw_export` has no "am I actually
+  consumed?" check, so a *forgotten* binding of a mandatory provider (e.g. the
+  register-access host port a model needs in order to be programmed at all)
+  surfaces only as *nothing happens → watchdog timeout*. Guard these with an
+  explicit **connect-phase assertion** that names the port and why it's required.
+- **Legitimately optional** edges — guard with `is_connected()` and degrade
+  gracefully — are the ones where operation stays correct without them:
+  *observation/telemetry seams* (a cause/monitor tap a scoreboard may or may not
+  attach), *capability-gated features* (a handshake port only some configs use;
+  the engine treats "unconnected" as the correct inactive behavior), and *outputs
+  a given integration chooses not to observe* (like unconnected output pins in
+  RTL — legal, just unwatched; record the justification, and let a test that
+  *does* observe them catch a forgotten binding).
+- **Treat a silent timeout as evidence you mislabeled a mandatory edge as
+  optional.** The first question on a hang is "which required connection is
+  quietly missing?"
 
 ---
 
@@ -399,3 +478,10 @@ A multi-endpoint example (ports *and* exports, plus a monitor) is in
   `connect()` only wires (`port.connect(provider)`) and must not read `port.t`.
 - A bridge is not a component: by role it is an `fw_export` (provider) or an
   `fw_port` (consumer). Its constructor is always `new(name, parent, vif)`.
+- Connections are **mandatory by default**; justify each optional edge and guard
+  it with `is_connected()`. Make mandatory edges fail early with a named error
+  (resolve via `get_if()` or assert in `connect()`) — never a silent timeout (§2).
+- Never force-wire a *public* port from inside a reusable component — the internal
+  `connect()` overwrites an integrator's binding (§2).
+- Wake a `run()` on external pokes with a level-sensitive `wait(flag)`, not
+  `@event` (§2).
