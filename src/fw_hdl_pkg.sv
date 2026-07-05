@@ -10,6 +10,7 @@ package fw_hdl_pkg;
     `include "fw_port.svh"
     `include "fw_clock_domain.svh"
     `include "fw_clock_xtor_bridge.svh"
+    `include "fw_clock_period_xtor_bridge.svh"
     `include "fw_component.svh"
     `include "fw_component_param.svh"
     `include "fw_component_root.svh"

@@ -17,6 +17,8 @@ fragment:
       include:
       - fw_hdl_pkg.sv
       - fw_clock_xtor_if.sv
+      - fw_clock_period_xtor_if.sv
+      - fw_clock_period_xtor.sv
       - fw_root.sv
       incdirs:
       - .
