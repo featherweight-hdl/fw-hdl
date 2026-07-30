@@ -1,0 +1,40 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+fragment:
+  name: dbg_op
+
+  tasks:
+  # D-5: operations. A span holds a pooled context across a yield, so the
+  # failure that matters is two threads whose spans finish out of order --
+  # which produces a plausible, wrong trace rather than an error. That case,
+  # and the G5 proof that depth/parent/duration need never be emitted, are
+  # what this bench exists for.
+  - name: dbg-op-tb
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      include:
+      - dbg_op_tb.sv
+      incdirs:
+      - .
+
+  - name: dbg-op-img
+    uses: hdlsim.vlt.SimImage
+    needs: [hdl.sv-src, dbg-op-tb]
+    with:
+      top: [dbg_op_tb]
+
+  - name: dbg-op
+    uses: hdlsim.vlt.SimRun
+    needs: [dbg-op-img]
+
+  # G1: the span handle itself must vanish -- hence `fw_op_span` is a macro.
+  - name: dbg-op-off-img
+    uses: hdlsim.vlt.SimImage
+    needs: [hdl.sv-src, dbg-op-tb]
+    with:
+      top: [dbg_op_tb]
+      defines: [FW_TRACE_OFF]
+
+  - name: dbg-op-off
+    uses: hdlsim.vlt.SimRun
+    needs: [dbg-op-off-img]

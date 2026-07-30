@@ -1,5 +1,26 @@
 
 package fw_hdl_pkg;
+    // Observable operations & events (docs/fw_hdl_observable_events.md). The
+    // static half -- vocabulary, site descriptors, the catalog, and the flat
+    // transport record -- comes first: it depends on nothing, and the macros must
+    // be defined before any class below can carry an instrumentation site.
+    `include "dbg/fw_dbg_macros.svh"
+    `include "dbg/fw_dbg_types.svh"
+    `include "dbg/fw_dbg_site.svh"
+    `include "dbg/fw_dbg_catalog.svh"
+    `include "dbg/fw_dbg_rec.svh"
+    // The listener API and its context objects. Ahead of fw_port/fw_export
+    // because fw_component holds an fw_port #(fw_dbg_listener_if); the DOMAIN
+    // (which is an fw_export and needs a component parent) comes after them.
+    `include "dbg/fw_dbg_bindable.svh"
+    `include "dbg/fw_dbg_listener_if.svh"
+    `include "dbg/fw_dbg_contextual.svh"
+    `include "dbg/fw_dbg_ctx.svh"
+    `include "dbg/fw_dbg_listener.svh"
+    // The LIVE view (op stack + blocked-on set). Depends on fw_dbg_thread, and
+    // fw_event_set/fw_component below both feed it.
+    `include "dbg/fw_dbg_track.svh"
+
     `include "fw_elaboratable.svh"
     `include "fw_runnable.svh"
     // Deferred-binding wrappers and the clock-domain API must precede
@@ -16,6 +37,14 @@ package fw_hdl_pkg;
     `include "fw_component_param.svh"
     `include "fw_component_root.svh"
     `include "fw_component_root_param.svh"
+
+    // The debug tree: a domain is an fw_export carrying fw_dbg_listener_if, so
+    // it lands here, after the deferred-binding wrappers and fw_component.
+    `include "dbg/fw_dbg_domain.svh"
+    `include "dbg/fw_dbg_sink_text.svh"
+    // Policy on top of the mechanism: plusarg-driven wiring, so a bench can be
+    // instrumented without being edited. Needs the domain and the sink.
+    `include "dbg/fw_dbg_console.svh"
 
     // Register model -- a core modeling aspect, so it lives in the kernel
     // alongside the component/port/export/clock-domain machinery (it is "just

@@ -1,0 +1,40 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+fragment:
+  name: dbg_smoke
+
+  tasks:
+  # D-0: the static half of the observable-events facility -- site descriptors,
+  # the catalog, the flat record, and the registration idiom they rest on.
+  - name: dbg-smoke-tb
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      include:
+      - dbg_smoke_tb.sv
+      incdirs:
+      - .
+
+  - name: dbg-smoke-img
+    uses: hdlsim.vlt.SimImage
+    needs: [hdl.sv-src, dbg-smoke-tb]
+    with:
+      top: [dbg_smoke_tb]
+
+  - name: dbg-smoke
+    uses: hdlsim.vlt.SimRun
+    needs: [dbg-smoke-img]
+
+  # The SAME source with the facility compiled out (invariant G1). This build
+  # exists to prove there is no residue and, just as importantly, that
+  # instrumented source still compiles when every site vanishes -- the failure
+  # mode that would otherwise only surface in a production build.
+  - name: dbg-smoke-off-img
+    uses: hdlsim.vlt.SimImage
+    needs: [hdl.sv-src, dbg-smoke-tb]
+    with:
+      top: [dbg_smoke_tb]
+      defines: [FW_TRACE_OFF]
+
+  - name: dbg-smoke-off
+    uses: hdlsim.vlt.SimRun
+    needs: [dbg-smoke-off-img]

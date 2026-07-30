@@ -1,0 +1,52 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+fragment:
+  name: dbg_listener
+
+  tasks:
+  # D-1: the listener API, the domain tree, subscription-driven gating, and the
+  # per-context clamp.
+  - name: dbg-listener-tb
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      include:
+      - dbg_listener_tb.sv
+      incdirs:
+      - .
+
+  - name: dbg-listener-img
+    uses: hdlsim.vlt.SimImage
+    needs: [hdl.sv-src, dbg-listener-tb]
+    with:
+      top: [dbg_listener_tb]
+
+  - name: dbg-listener
+    uses: hdlsim.vlt.SimRun
+    needs: [dbg-listener-img]
+
+  # The borrowed-context detector (G4) is only compiled under FW_DBG_DEBUG, so
+  # it needs its own image. The test drives the detector in non-fatal mode and
+  # asserts it fired -- exercising the check itself rather than merely trusting
+  # that a $fatal would have happened.
+  - name: dbg-listener-dbg-img
+    uses: hdlsim.vlt.SimImage
+    needs: [hdl.sv-src, dbg-listener-tb]
+    with:
+      top: [dbg_listener_tb]
+      defines: [FW_DBG_DEBUG]
+
+  - name: dbg-listener-dbg
+    uses: hdlsim.vlt.SimRun
+    needs: [dbg-listener-dbg-img]
+
+  # G1: the same source with every site compiled out.
+  - name: dbg-listener-off-img
+    uses: hdlsim.vlt.SimImage
+    needs: [hdl.sv-src, dbg-listener-tb]
+    with:
+      top: [dbg_listener_tb]
+      defines: [FW_TRACE_OFF]
+
+  - name: dbg-listener-off
+    uses: hdlsim.vlt.SimRun
+    needs: [dbg-listener-off-img]

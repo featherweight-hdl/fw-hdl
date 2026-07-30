@@ -1,0 +1,39 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+fragment:
+  name: dbg_filter
+
+  tasks:
+  # D-7b: the site and subject filtering axes. Volume control is the difference
+  # between a facility people leave on and one they turn off, so its edge cases
+  # (out-of-range subjects, late-born sites, last-match-wins) are pinned down
+  # here rather than discovered in a trace nobody trusts.
+  - name: dbg-filter-tb
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      include:
+      - dbg_filter_tb.sv
+      incdirs:
+      - .
+
+  - name: dbg-filter-img
+    uses: hdlsim.vlt.SimImage
+    needs: [hdl.sv-src, dbg-filter-tb]
+    with:
+      top: [dbg_filter_tb]
+
+  - name: dbg-filter
+    uses: hdlsim.vlt.SimRun
+    needs: [dbg-filter-img]
+
+  # G1: the control API must still compile with every site removed.
+  - name: dbg-filter-off-img
+    uses: hdlsim.vlt.SimImage
+    needs: [hdl.sv-src, dbg-filter-tb]
+    with:
+      top: [dbg_filter_tb]
+      defines: [FW_TRACE_OFF]
+
+  - name: dbg-filter-off
+    uses: hdlsim.vlt.SimRun
+    needs: [dbg-filter-off-img]

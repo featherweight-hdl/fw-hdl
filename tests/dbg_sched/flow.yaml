@@ -1,0 +1,39 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+fragment:
+  name: dbg_sched
+
+  tasks:
+  # D-4: SCHED events, the live op stack, and fw_dbg_dump() -- the "seeing
+  # nothing" milestone. The second half of this testbench is the acceptance
+  # criterion: a deliberately parked model whose dump names the blocked thread,
+  # what it is inside, and every source it is waiting for.
+  - name: dbg-sched-tb
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      include:
+      - dbg_sched_tb.sv
+      incdirs:
+      - .
+
+  - name: dbg-sched-img
+    uses: hdlsim.vlt.SimImage
+    needs: [hdl.sv-src, dbg-sched-tb]
+    with:
+      top: [dbg_sched_tb]
+
+  - name: dbg-sched
+    uses: hdlsim.vlt.SimRun
+    needs: [dbg-sched-img]
+
+  # G1: the wait must behave identically with every site removed.
+  - name: dbg-sched-off-img
+    uses: hdlsim.vlt.SimImage
+    needs: [hdl.sv-src, dbg-sched-tb]
+    with:
+      top: [dbg_sched_tb]
+      defines: [FW_TRACE_OFF]
+
+  - name: dbg-sched-off
+    uses: hdlsim.vlt.SimRun
+    needs: [dbg-sched-off-img]

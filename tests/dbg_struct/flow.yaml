@@ -1,0 +1,46 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+fragment:
+  name: dbg_struct
+
+  tasks:
+  # D-2: the ambient `dbg` context, structural events, and the bind map.
+  - name: dbg-struct-tb
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      include:
+      - dbg_struct_tb.sv
+      incdirs:
+      - .
+
+  - name: dbg-struct-img
+    uses: hdlsim.vlt.SimImage
+    needs: [hdl.sv-src, dbg-struct-tb]
+    with:
+      top: [dbg_struct_tb]
+
+  - name: dbg-struct
+    uses: hdlsim.vlt.SimRun
+    needs: [dbg-struct-img]
+
+  # G1: the structure still elaborates and the bind map still builds with every
+  # site compiled out. The map is a static artifact, not part of the stream.
+  - name: dbg-struct-off-img
+    uses: hdlsim.vlt.SimImage
+    needs: [hdl.sv-src, dbg-struct-tb]
+    with:
+      top: [dbg_struct_tb]
+      defines: [FW_TRACE_OFF]
+
+  - name: dbg-struct-off
+    uses: hdlsim.vlt.SimRun
+    needs: [dbg-struct-off-img]
+
+  # The static artifact itself: `+fw_bindmap` writes the JSON to the run
+  # directory. Opt-in, because a facility that drops a file into every existing
+  # run without being asked is a behavior change, not a feature.
+  - name: dbg-struct-artifact
+    uses: hdlsim.vlt.SimRun
+    needs: [dbg-struct-img]
+    with:
+      plusargs: [fw_bindmap=fw_bindmap.json, fw_bindmap_show]

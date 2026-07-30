@@ -13,22 +13,38 @@ typedef class fw_component;
 //     be given an imp directly via the constructor / set_imp), but
 //   * an export may NOT connect to a port -- calls flow toward the imp, never
 //     away from it. connect() only accepts another fw_export.
-class fw_export #(type T) extends fw_if_base #(T) implements fw_elaboratable;
-    local string          m_name;
+class fw_export #(type T) extends fw_if_base #(T)
+        implements fw_elaboratable, fw_dbg_bindable;
     local fw_component    m_parent;
     local T               m_imp;   // terminal implementation (imp), or
     local fw_export #(T)  m_fwd;   // forwarded-to provider (export-to-export)
 
     function new(string name = "", fw_component parent = null, T imp = null);
-        m_name   = name;
-        m_parent = parent;
-        m_imp    = imp;
+        m_ep_name = name;
+        m_parent  = parent;
+        m_imp     = imp;
         // An export is elaboratable too: register with the containing component
         // so it is part of the lifecycle tree (exports are passive, so this is
         // mainly for uniformity / future per-export phases).
         if (parent != null) begin
             parent.add_elaboratable(this);
+            parent.add_bindable(this);
         end
+    endfunction
+
+    // --- fw_dbg_bindable ------------------------------------------------------
+    virtual function string bind_name(); return m_ep_name;  endfunction
+    virtual function string bind_role(); return "export";   endfunction
+    virtual function bit    bind_connected();
+        return (m_imp != null) || (m_fwd != null);
+    endfunction
+    virtual function bit bind_resolved();
+        return (m_imp != null) || (m_fwd != null && m_fwd.bind_resolved());
+    endfunction
+    virtual function string bind_provider();
+        if (m_imp != null) return "<imp>";
+        if (m_fwd != null) return m_fwd.ep_name();
+        return "";
     endfunction
 
     // Bind/replace the terminal implementation this export provides.
@@ -48,9 +64,20 @@ class fw_export #(type T) extends fw_if_base #(T) implements fw_elaboratable;
         end else if (m_fwd != null) begin
             return m_fwd.get_if();
         end else begin
-            $fatal(1, "fw_export '%s' resolves to no implementation", m_name);
+            $display("");
+            $display("fw_export '%s' resolves to NO IMPLEMENTATION -- it holds no imp and forwards to nothing.",
+                     full_name());
+            if (m_parent != null) begin
+                m_parent.dump_bind_map();
+            end
+            $fatal(1, "fw_export '%s' resolves to no implementation", full_name());
             return null;
         end
+    endfunction
+
+    function string full_name();
+        return (m_parent != null) ? {m_parent.get_full_name(), ".", m_ep_name}
+                                  : m_ep_name;
     endfunction
 
     // --- fw_elaboratable lifecycle (passive: all no-ops) ---------------------

@@ -1,0 +1,37 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+fragment:
+  name: dbg_reg
+
+  tasks:
+  # D-3: register-model events -- change/actor, refused writes, the decode, and
+  # the previously-silent unmapped access.
+  - name: dbg-reg-tb
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      include:
+      - dbg_reg_tb.sv
+      incdirs:
+      - .
+
+  - name: dbg-reg-img
+    uses: hdlsim.vlt.SimImage
+    needs: [hdl.sv-src, dbg-reg-tb]
+    with:
+      top: [dbg_reg_tb]
+
+  - name: dbg-reg
+    uses: hdlsim.vlt.SimRun
+    needs: [dbg-reg-img]
+
+  # G1: the register model must behave identically with every site removed.
+  - name: dbg-reg-off-img
+    uses: hdlsim.vlt.SimImage
+    needs: [hdl.sv-src, dbg-reg-tb]
+    with:
+      top: [dbg_reg_tb]
+      defines: [FW_TRACE_OFF]
+
+  - name: dbg-reg-off
+    uses: hdlsim.vlt.SimRun
+    needs: [dbg-reg-off-img]

@@ -2,6 +2,44 @@
 package:
   name: fw-hdl
 
+  tasks:
+  # The library regression. One root task so `dfm run tests` means the same
+  # thing here as it does at the project root -- and so the observable-events
+  # work has a single gate to keep green (invariant G6: every existing test
+  # passes with the facility compiled in and disabled).
+  #
+  # Fragment tasks are namespaced, so each entry is qualified by its fragment.
+  - name: tests
+    needs:
+    - tests.smoke
+    - blinky.blinky
+    - clock_domain.clock-domain
+    - dbg_smoke.dbg-smoke
+    - dbg_smoke.dbg-smoke-off
+    - dbg_listener.dbg-listener
+    - dbg_listener.dbg-listener-dbg
+    - dbg_listener.dbg-listener-off
+    - dbg_struct.dbg-struct
+    - dbg_struct.dbg-struct-off
+    - dbg_struct.dbg-struct-artifact
+    - dbg_reg.dbg-reg
+    - dbg_reg.dbg-reg-off
+    - dbg_sched.dbg-sched
+    - dbg_sched.dbg-sched-off
+    - dbg_filter.dbg-filter
+    - dbg_filter.dbg-filter-off
+    - dbg_op.dbg-op
+    - dbg_op.dbg-op-off
+    - intf_pc.intf-pc
+    - put_proto.put-proto
+    - reg_bus.reg-bus
+    - reg_core.reg-core
+    - reg_dma.reg-dma
+    - reg_hooks.reg-hooks
+    - reg_smoke.reg-smoke
+    - root_param.root-param
+    - rv_proto.rv-proto
+
   fragments:
   - src/flow.yaml
   - tests/flow.yaml
@@ -10,6 +48,13 @@ package:
   - tests/reg_hooks/flow.yaml
   - tests/reg_bus/flow.yaml
   - tests/reg_dma/flow.yaml
+  - tests/dbg_smoke/flow.yaml
+  - tests/dbg_listener/flow.yaml
+  - tests/dbg_struct/flow.yaml
+  - tests/dbg_reg/flow.yaml
+  - tests/dbg_sched/flow.yaml
+  - tests/dbg_filter/flow.yaml
+  - tests/dbg_op/flow.yaml
   - tests/blinky/flow.yaml
   - tests/clock_domain/flow.yaml
   - tests/intf_pc/flow.yaml

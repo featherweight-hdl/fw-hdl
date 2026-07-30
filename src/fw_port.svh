@@ -16,25 +16,37 @@ typedef class fw_component;
 // Both providers are fw_if_base, so resolution is uniform: ask the provider
 // for its imp. A port is never a provider to an export (calls flow toward the
 // imp), which fw_export::connect enforces by only accepting another export.
-class fw_port #(type T) extends fw_if_base #(T) implements fw_elaboratable;
+class fw_port #(type T) extends fw_if_base #(T)
+        implements fw_elaboratable, fw_dbg_bindable;
     // The resolved implementation handle (the imp), bound during do_connect().
     // This is the run-phase call target: `port.t.method(args)`. Null until
     // connect resolves it (an unconnected port leaves it null).
     T                      t;
 
-    local string           m_name;
     local fw_component     m_parent;
     local fw_if_base #(T)  m_provider;  // an export (peer) or a port (outer)
 
     function new(string name = "", fw_component parent = null);
-        m_name   = name;
-        m_parent = parent;
+        m_ep_name = name;
+        m_parent  = parent;
         // A port is elaboratable: register with the containing component so the
         // lifecycle walk reaches it. An ACTIVE port (a bridge overriding run())
         // is then launched by do_run() alongside child components.
         if (parent != null) begin
             parent.add_elaboratable(this);
+            // ...and bindable, so the bind map can enumerate it without having
+            // to know T (see fw_dbg_bindable).
+            parent.add_bindable(this);
         end
+    endfunction
+
+    // --- fw_dbg_bindable ------------------------------------------------------
+    virtual function string bind_name();      return m_ep_name;          endfunction
+    virtual function string bind_role();      return "port";             endfunction
+    virtual function bit    bind_connected(); return m_provider != null; endfunction
+    virtual function bit    bind_resolved();  return t != null;          endfunction
+    virtual function string bind_provider();
+        return (m_provider != null) ? m_provider.ep_name() : "";
     endfunction
 
     // port-to-export or port-to-port. The provider is anything that can
@@ -51,12 +63,44 @@ class fw_port #(type T) extends fw_if_base #(T) implements fw_elaboratable;
     endfunction
 
     // Resolve through the connection graph to the concrete implementation.
+    //
+    // The unconnected case used to be a bare `$fatal` naming one port, which is
+    // the least useful moment to be told the least useful fact: you learn that
+    // SOMETHING is unwired, then go read source to find out what else is. Now it
+    // emits a VITAL notice and dumps the whole bind map first, so the failure
+    // carries its own diagnosis -- every endpoint in the tree, what it resolved
+    // to, and everything else that is also unconnected.
     virtual function T get_if();
         if (m_provider != null) begin
             return m_provider.get_if();
         end else begin
-            $fatal(1, "fw_port '%s' is unconnected", m_name);
+            `fw_error_begin(pdbg(), "fw_port.unconnected")
+            `fw_ev_end
+            report_unconnected();
+            $fatal(1, "fw_port '%s' is unconnected", full_name());
             return null;
+        end
+    endfunction
+
+    // --- diagnostics ----------------------------------------------------------
+    // A port's emitting context is its OWNING COMPONENT's context: a port has no
+    // context of its own, and giving it one would double the size of the debug
+    // tree for no benefit. Reached through `.t` rather than get_if(), so a port
+    // that fails to resolve can never recurse into itself while reporting it.
+    protected function fw_dbg_listener_if pdbg();
+        return (m_parent != null) ? m_parent.dbg_if() : null;
+    endfunction
+
+    function string full_name();
+        return (m_parent != null) ? {m_parent.get_full_name(), ".", m_ep_name}
+                                  : m_ep_name;
+    endfunction
+
+    protected function void report_unconnected();
+        $display("");
+        $display("fw_port '%s' is UNCONNECTED -- resolution has no provider.", full_name());
+        if (m_parent != null) begin
+            m_parent.dump_bind_map();
         end
     endfunction
 
