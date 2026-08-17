@@ -9,7 +9,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # Install IVPM, restore its content-addressed cache, and run
       # `ivpm update` to populate ./packages (dv-flow-mgr, dv-flow-libhdlsim,
@@ -27,8 +27,9 @@ jobs:
           sudo apt-get update && sudo apt-get install -y direnv
           direnv allow .
 
-      - name: Run simulation tests
-        run: |
-          direnv exec . dfm run fw-hdl.tests.smoke
-          direnv exec . dfm run fw-hdl.intf_pc.intf-pc
-          direnv exec . dfm run fw-hdl.rv_proto.rv-proto
+      # `fw-hdl.tests` is the library regression root task: it depends on every
+      # test in tests/, so CI gates the same thing a developer gets from
+      # `dfm run tests`. Listing individual tests here means new suites (the
+      # dbg_* and reg_* families, for instance) silently go ungated.
+      - name: Run the library regression
+        run: direnv exec . dfm run tests
