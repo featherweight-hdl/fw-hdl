@@ -1,0 +1,67 @@
+# featherweight-hdl/fw-hdl -- Forgejo Actions.
+#
+# THIS FILE'S FIRST JOB IS TO EXIST.
+#
+# When .forgejo/workflows/ is absent the Forgejo runner FALLS BACK to running
+# .github/workflows/. That is measured on this instance, not assumed:
+# action_run.workflow_directory records runs that did exactly that, and
+# psstools/pssfmt is one of the repos it happened to.
+#
+# Adding this file SHADOWS the .github one -- precedence is first-directory-found,
+# evaluated per commit -- so the GitHub workflow can no longer be executed by a
+# runner it was never written for.
+#
+# WHY THIS IS A CHECK RATHER THAN A MIRROR OF THE GITHUB WORKFLOW
+# ---------------------------------------------------------------
+# The GitHub side is a test suite driven by fvutils/ivpm-setup@v1 and dfm, neither of which resolves on a Forgejo runner.
+# A shadow that pretended to reproduce it would go red for reasons that are
+# about the runner rather than the code, and people would stop reading it. So
+# this runs the checks that ARE meaningful here.
+#
+# ⚠️ Shadowing does NOT protect the inbound path. Precedence is evaluated
+# against the INCOMING tree, so a ref pulled from GitHub that lacks
+# .forgejo/workflows/ still falls back to .github/. pull_publish = "block" and
+# the publish_risk() preflight are what hold that side; this file is not a
+# substitute for either.
+name: CI
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Check for internal identifiers in tracked files
+      # This repo is published to git.dvkit.org, so anything committed here is
+      # public. Internal host names, tailnet addresses and CGNAT-range IPs must
+      # not appear in tracked files -- if a build ever needs one, it belongs in
+      # a repository secret, which is masked in logs.
+      run: |
+        pattern='perch-char\.ts\.net|\.ts\.net|a9550|100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]+\.[0-9]+'
+        if git grep -nIE "$pattern" -- . ':!.forgejo/workflows/ci.yml' ; then
+          echo "::error::internal identifier found in a tracked file (see matches above)"
+          exit 1
+        fi
+        echo "OK: no internal identifiers in tracked files"
+
+    - name: Static-check the packaging metadata
+      # Deliberately does not execute the build: that is what the GitHub side
+      # is for, and running it here would pull dependencies over the network on
+      # every push.
+      run: |
+        if [ -f pyproject.toml ]; then
+          python3 -c "import tomllib; d=tomllib.load(open('pyproject.toml','rb')); p=d.get('project',{}); print('pyproject:', p.get('name'), p.get('version'))"
+        elif [ -f setup.py ]; then
+          python3 -c "import ast; ast.parse(open('setup.py').read()); print('setup.py parses')"
+        elif [ -f package.json ]; then
+          python3 -c "import json; d=json.load(open('package.json')); print('package.json:', d.get('name'), d.get('version'))"
+        else
+          echo "no packaging metadata; nothing to check"
+        fi
