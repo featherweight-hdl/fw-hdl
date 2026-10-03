@@ -139,7 +139,22 @@ def test_arrays_cross_the_binding_element_0_low(tmp_path):
                                                               '"a"\n  width: 64')
         .replace('width: 32', 'width: 64'))
     sv = fn_api.xls_binding_sv(api, {m.module: m})
-    assert "p_a[k*16 +: 16] = a[k];" in sv
-    assert "result[k] = r[k*16 +: 16];" in sv
+    assert "p_a[(k0) * 16 +: 16] = a[k0];" in sv
+    assert "result[k0] = r[(k0) * 16 +: 16];" in sv
     assert "{>>" not in sv
     assert "module arr_pkg_api_harness;" in sv and "package arr_pkg_api_xls_pkg;" in sv
+
+
+def test_two_dimensional_arrays_flatten_row_major_element_0_low(tmp_path):
+    p = tmp_path / "blk_pkg.sv"
+    p.write_text("package blk_pkg;\n  typedef bit [7:0] blk_t [4][4];\n"
+                 "  function automatic blk_t f(blk_t b); return b; endfunction\nendpackage\n")
+    api = _api([str(p)], ["blk_pkg::f"])
+    (a,) = api.functions[0].args
+    assert (a.type, a.dims, a.bits) == ("bit[7:0]", "[0:3][0:3]", 8)
+    m = fn_api.fn_module_from_signature(
+        SIG.replace("crc32_pkg__main", "blk_pkg__f").replace('"message"\n  width: 8',
+                                                             '"b"\n  width: 128')
+        .replace("width: 32", "width: 128"))
+    sv = fn_api.xls_binding_sv(api, {m.module: m})
+    assert "p_b[((k0) * 4 + k1) * 8 +: 8] = b[k0][k1];" in sv

@@ -167,4 +167,36 @@ package rle_pkg;
     typedef RunLengthEncoder #(32, 32) RunLengthEncoder32_32;
     typedef RunLengthDecoder #(32, 32) RunLengthDecoder32_32;
 
+    // NOT upstream: the composition of xls-examples.md E9. The encoder feeds
+    // the decoder through a channel, so the top gives back what it is given.
+    // A structural component: it only builds and connects; fw.hdl.spl.Integrate
+    // makes its RTL top from the blocks' signatures.
+    class rle_loopback extends fw_component;
+        fw_port #(fw_get_if #(RunLengthEncoder32::EncInData))  input_r;
+        fw_port #(fw_put_if #(RunLengthDecoder32::DecOutData)) output_s;
+
+        RunLengthEncoder32 enc;
+        RunLengthDecoder32 dec;
+        fw_channel #(RunLengthEncoder32::EncOutData, 0) compressed;
+
+        function new(string name, fw_component parent);
+            super.new(name, parent);
+        endfunction
+
+        function void build();
+            input_r = new("input_r", this);
+            output_s = new("output_s", this);
+            enc = new("enc", this);
+            dec = new("dec", this);
+            compressed = new("compressed", this);
+        endfunction
+
+        function void connect();
+            enc.input_r.connect(input_r);
+            enc.output_s.connect(compressed.put_ex);
+            dec.input_r.connect(compressed.get_ex);
+            dec.output_s.connect(output_s);
+        endfunction
+    endclass
+
 endpackage

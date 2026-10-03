@@ -1,0 +1,170 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+# E10, second half -- aes_ctr: AES in counter mode as a proc (aes_ctr.x), on
+# the AES functions of ../aes. The test is upstream's #[test_proc], calling
+# the component through its generated API (fw.hdl.api.Components). XLS's
+# equivalence checker takes functions only, so the proc is checked by the
+# test at every level and by upstream's own test proc.
+fragment:
+  name: aes_ctr
+
+  tasks:
+  # ---- Sources --------------------------------------------------------
+  - name: orig
+    desc: The upstream DSLX, unmodified (../aes/orig/UPSTREAM)
+    uses: std.FileSet
+    with:
+      type: dslxSource
+      base: ../aes/orig
+      include:
+      - xls/modules/aes/constants.x
+      - xls/modules/aes/aes_common.x
+      - xls/modules/aes/aes.x
+      - xls/modules/aes/aes_ctr.x
+
+  - name: lib
+    desc: "The fw-hdl library, the std:: ports, and the AES functions (../aes)"
+    uses: std.FileSet
+    needs: [xls_examples.fw-lib]
+    with:
+      type: systemVerilogSource
+      base: ..
+      include: [common/xls_std_pkg.sv, aes/aes_pkg.sv]
+
+  - name: src
+    desc: The SV port of the proc
+    uses: std.FileSet
+    needs: [lib]
+    with:
+      type: systemVerilogSource
+      include: [aes_ctr_pkg.sv]
+
+  - name: unit-tests
+    desc: The upstream test proc as an SVUnit test, calling the component API
+    uses: std.FileSet
+    with:
+      type: svunitTest
+      include: [aes_ctr_unit_test.sv]
+
+  # ---- The SV path ----------------------------------------------------
+  - name: ir
+    uses: fw.hdl.xls.IR
+    needs: [src]
+    with:
+      top: [aes_ctr]
+
+  - name: rtl
+    uses: synth.xls.Codegen
+    needs: [ir]
+    with:
+      pipeline_stages: 2
+
+  # ---- The DSLX path --------------------------------------------------
+  - name: dslx-test
+    uses: synth.xls.DslxTest
+    needs: [orig]
+    with:
+      test_filter: aes_ctr_test_128
+
+  - name: dslx-ir
+    uses: synth.xls.DslxToIR
+    needs: [orig]
+    with:
+      tops: [aes_ctr]
+
+  - name: dslx-rtl
+    uses: synth.xls.Codegen
+    needs: [dslx-ir]
+    with:
+      pipeline_stages: 2
+
+  # ---- Yosys ----------------------------------------------------------
+  - name: synth
+    strategy:
+      select:
+        axes:
+          target: [generic, ice40, ecp5]
+      body:
+      - uses: synth.yosys.Synth
+        needs: [rtl]
+        with:
+          target: "${{ this.target }}"
+
+  - name: dslx-synth
+    strategy:
+      select:
+        axes:
+          target: [generic, ice40, ecp5]
+      body:
+      - uses: synth.yosys.Synth
+        needs: [dslx-rtl]
+        with:
+          target: "${{ this.target }}"
+
+  # ---- The API, and what answers it at each level ---------------------
+  - name: api
+    uses: fw.hdl.api.Components
+    needs: [src]
+    with:
+      components: [aes_ctr]
+
+  - name: dut-model
+    uses: fw.hdl.api.ModelBinding
+    needs: [api]
+
+  - name: bind-xls
+    uses: fw.hdl.api.XlsBinding
+    needs: [api, rtl]
+
+  - name: runner
+    uses: hdltest.svunit.TestRunner
+    needs: [unit-tests]
+    with:
+      harness: [aes_ctr_pkg_api_harness]
+
+  - name: bench-model
+    passthrough: all
+    needs: [src, api, dut-model, runner]
+
+  - name: bench-rtl
+    passthrough: all
+    needs: [src, api, rtl, bind-xls, runner]
+
+  - name: bench-gates
+    passthrough: all
+    needs: [src, api, synth.generic, bind-xls, runner]
+
+  - name: bench-gates-ice40
+    passthrough: all
+    needs: [src, api, synth.ice40, bind-xls, runner]
+
+  - name: bench-gates-ecp5
+    passthrough: all
+    needs: [src, api, synth.ecp5, bind-xls, runner]
+
+  # ---- The tests ------------------------------------------------------
+  - name: test
+    strategy:
+      matrix:
+        view: [model, rtl, gates, gates-ice40, gates-ecp5]
+        case:
+        - {name: aes_ctr}
+      body:
+      - name: "${{ this.view }}-${{ this.case.name }}"
+        uses: hdltest.svunit.Check
+        needs: ["xls_examples.run.aes_ctr.${{ this.view }}"]
+        with:
+          name: "aes_ctr-${{ this.view }}"
+        tags:
+        - std.Test: {case: "${{ this.case.name }}", view: "${{ this.view }}"}
+
+  - root: all
+    desc: "aes_ctr end to end: both paths, Yosys on both, the test at every level"
+    needs:
+    - dslx-test
+    - synth.generic
+    - synth.ice40
+    - synth.ecp5
+    - dslx-synth.generic
+    - dslx-synth.ice40
+    - dslx-synth.ecp5
+    - test

@@ -1,0 +1,113 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+# E9, second half -- NOT upstream: the encoder and decoder composed. A
+# structural component (rle_pkg::rle_loopback) joins them by a channel; the
+# SPL -> RTL pipeline of xls-phase2.md implements each block with XLS and
+# integrates the top from their signatures alone. The test checks that what
+# goes in comes back out.
+fragment:
+  name: rle_loop
+
+  tasks:
+  - name: src
+    uses: std.FileSet
+    needs: [xls_examples.fw-lib]
+    with:
+      type: systemVerilogSource
+      include: [rle_pkg.sv]
+
+  - name: unit-tests
+    uses: std.FileSet
+    with:
+      type: svunitTest
+      include: [rle_loop_unit_test.sv]
+
+  # ---- SPL -> RTL: partition, a block per class, integrate -------------
+  - name: part
+    uses: fw.hdl.spl.Partition
+    needs: [src]
+    with:
+      top: rle_loopback
+      xls: [RunLengthEncoder32, RunLengthDecoder32]
+
+  - name: codegen
+    uses: synth.xls.Codegen
+    needs: [part]
+    with:
+      pipeline_stages: 2
+
+  - name: sig
+    uses: zuspec.xls.Signature
+    needs: [part, codegen]
+
+  - name: rtl
+    desc: The integrated top, the blocks and the channel FIFO, in compile order
+    uses: fw.hdl.spl.Integrate
+    needs: [part, sig]
+
+  - name: synth
+    strategy:
+      select:
+        axes:
+          target: [generic, ice40, ecp5]
+      body:
+      - uses: synth.yosys.Synth
+        needs: [rtl]
+        with:
+          target: "${{ this.target }}"
+
+  # ---- The API, and what answers it at each level ---------------------
+  - name: api
+    uses: fw.hdl.api.Components
+    needs: [src]
+    with:
+      components: [rle_loopback]
+      name: rle_loop_api
+
+  - name: dut-model
+    uses: fw.hdl.api.ModelBinding
+    needs: [api]
+
+  - name: bind-xls
+    uses: fw.hdl.api.XlsBinding
+    needs: [api, rtl]
+
+  - name: runner
+    uses: hdltest.svunit.TestRunner
+    needs: [unit-tests]
+    with:
+      harness: [rle_loop_api_harness]
+
+  - name: bench-model
+    passthrough: all
+    needs: [src, api, dut-model, runner]
+
+  - name: bench-rtl
+    passthrough: all
+    needs: [src, api, rtl, bind-xls, runner]
+
+  - name: bench-gates
+    passthrough: all
+    needs: [src, api, synth.generic, bind-xls, runner]
+
+  - name: bench-gates-ice40
+    passthrough: all
+    needs: [src, api, synth.ice40, bind-xls, runner]
+
+  - name: bench-gates-ecp5
+    passthrough: all
+    needs: [src, api, synth.ecp5, bind-xls, runner]
+
+  - name: test
+    strategy:
+      matrix:
+        view: [model, rtl, gates, gates-ice40, gates-ecp5]
+        case:
+        - {name: rle_loop}
+      body:
+      - name: "${{ this.view }}-${{ this.case.name }}"
+        uses: hdltest.svunit.Check
+        needs: ["xls_examples.run.rle_loop.${{ this.view }}"]
+        with:
+          name: "rle_loop-${{ this.view }}"
+        tags:
+        - std.Test: {case: "${{ this.case.name }}", view: "${{ this.view }}"}

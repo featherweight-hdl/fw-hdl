@@ -148,7 +148,9 @@ package:
       `synth.xls.Codegen` on `fw.hdl.xls.IR`'s output). For functions,
       Codegen must be given `input_valid_signal` and `output_valid_signal`.
       For components, each input channel presents queued values on its
-      ready/valid pins and each output channel is always ready.
+      ready/valid pins and each output channel is always ready; a
+      structural component's top is described by the `blockSignature` of
+      `fw.hdl.spl.Integrate`.
 
       Output -- `systemVerilogSource`, `<api>_xls.sv`:
 
@@ -171,6 +173,7 @@ package:
     - filetype: fwFnApi
     - filetype: fwCompApi
     - filetype: xlsModuleSignature
+    - filetype: blockSignature
     passthrough: none
     with:
       clock_period:

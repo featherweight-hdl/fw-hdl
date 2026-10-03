@@ -17,6 +17,8 @@ package:
   - synth.yosys
   - fw.hdl.xls
   - fw.hdl.api
+  - fw.hdl.spl
+  - zuspec.xls
 
   tasks:
   # SVUnit itself, shared by every example's tests.
@@ -43,7 +45,7 @@ package:
     strategy:
       select:
         axes:
-          example: [crc32, adler32, lfsr, gcd, prefix_sum, fir_dot, idct_chen, sha256, rle, aes]
+          example: [crc32, adler32, lfsr, gcd, prefix_sum, fir_dot, idct_chen, sha256, rle, rle_loop, aes, aes_ctr]
           level: [model, rtl, gates, gates-ice40, gates-ecp5, dslx-rtl, dslx-gates]
       body:
       - uses: hdlsim.vlt.SimImage
@@ -56,7 +58,7 @@ package:
     strategy:
       select:
         axes:
-          example: [crc32, adler32, lfsr, gcd, prefix_sum, fir_dot, idct_chen, sha256, rle, aes]
+          example: [crc32, adler32, lfsr, gcd, prefix_sum, fir_dot, idct_chen, sha256, rle, rle_loop, aes, aes_ctr]
           level: [model, rtl, gates, gates-ice40, gates-ecp5, dslx-rtl, dslx-gates]
       body:
       - uses: hdlsim.vlt.SimRun
@@ -67,7 +69,7 @@ package:
   - root: tests
     desc: Every example's SVUnit tests at every level (--tests <example>, --views <level>)
     uses: std.TestRunner
-    needs: [crc32.test, crc32.dslx-tests, adler32.test, lfsr.test, gcd.test, prefix_sum.test, fir_dot.test, idct_chen.test, sha256.test, rle.test]
+    needs: [crc32.test, crc32.dslx-tests, adler32.test, lfsr.test, gcd.test, prefix_sum.test, fir_dot.test, idct_chen.test, sha256.test, rle.test, rle_loop.test, aes.test, aes_ctr.test]
 
   fragments:
   - crc32/flow.yaml
@@ -79,3 +81,6 @@ package:
   - idct_chen/flow.yaml
   - sha256/flow.yaml
   - rle/flow.yaml
+  - rle/loop_flow.yaml
+  - aes/flow.yaml
+  - aes_ctr/flow.yaml

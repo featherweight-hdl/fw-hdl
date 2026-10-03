@@ -230,30 +230,44 @@ def fn_module_from_signature(text: str) -> FnModule:
 _DIM = re.compile(r"\[(-?\d+):(-?\d+)\]")
 
 
-def _array(a: ApiArg):
-    """(first index, step, length) of a one-dimensional unpacked argument."""
-    dims = _DIM.findall(a.dims)
-    if len(dims) != 1:
-        raise ValueError(f"{a.name}{a.dims}: only one unpacked dimension can cross the "
-                         f"XLS binding so far")
-    left, right = int(dims[0][0]), int(dims[0][1])
-    return left, (1 if right >= left else -1), abs(right - left) + 1
+def _dims(a: ApiArg):
+    """[(first index, step, length)] of an unpacked argument, outermost first."""
+    out = []
+    for left, right in _DIM.findall(a.dims):
+        left, right = int(left), int(right)
+        out.append((left, 1 if right >= left else -1, abs(right - left) + 1))
+    return out
 
 
-def _index(a: ApiArg, k: str) -> str:
-    left, step, _ = _array(a)
-    return f"{left} {'+' if step > 0 else '-'} {k}" if left or step < 0 else k
+def _loops(a: ApiArg, body: str) -> List[str]:
+    """Nested loops over every element of unpacked *a*. *body* uses `{idx}`
+    (the SV index, e.g. `[k0][k1]`) and `{off}` (the element's bit offset).
+
+    XLS flattens an array with element 0 in the low bits, and each element
+    the same way in turn: element (k0, k1, ...) of an array whose element is
+    W bits sits at ((k0 * n1 + k1) * n2 + ...) * W."""
+    dims = _dims(a)
+    idx = "".join(
+        f"[{(f'{l} + k{i}' if l else f'k{i}') if st > 0 else f'{l} - k{i}'}]"
+        for i, (l, st, _) in enumerate(dims))
+    flat = "k0"
+    for i, (_, _, n) in enumerate(dims[1:], start=1):
+        flat = f"({flat}) * {n} + k{i}"
+    off = f"({flat}) * {a.bits}"
+    out, pad = [], "        "
+    for i, (_, _, n) in enumerate(dims):
+        out.append(f"{pad}for (int k{i} = 0; k{i} < {n}; k{i}++)")
+        pad += "    "
+    out.append(pad + body.format(idx=idx, off=off))
+    return out
 
 
 def _pack(a: ApiArg, port: str) -> List[str]:
-    """Statements that put argument *a* on its port's queue. XLS flattens an
-    array with element 0 in the low bits: element k is bits [k*W +: W]."""
+    """Statements that put argument *a* on its port's queue."""
     if not a.dims:
         return [f"        q_{port}.push_back({a.name});"]
-    _, _, length = _array(a)
-    return [f"        for (int k = 0; k < {length}; k++)",
-            f"            p_{port}[k*{a.bits} +: {a.bits}] = {a.name}[{_index(a, 'k')}];",
-            f"        q_{port}.push_back(p_{port});"]
+    return _loops(a, f"p_{port}[{{off}} +: {a.bits}] = {a.name}{{idx}};") + \
+        [f"        q_{port}.push_back(p_{port});"]
 
 
 def xls_binding_sv(api: FnApi, mods: Dict[str, FnModule], period: int = 10,
@@ -313,10 +327,8 @@ def xls_binding_sv(api: FnApi, mods: Dict[str, FnModule], period: int = 10,
             o += _pack(a, port)
         o.append("        while (!results.exists(t)) @(posedge clk);")
         if f.ret.dims:
-            _, _, length = _array(f.ret)
-            o += ["        r = results[t];",
-                  f"        for (int k = 0; k < {length}; k++)",
-                  f"            result[{_index(f.ret, 'k')}] = r[k*{f.ret.bits} +: {f.ret.bits}];"]
+            o.append("        r = results[t];")
+            o += _loops(f.ret, f"result{{idx}} = r[{{off}} +: {f.ret.bits}];")
         else:
             o.append("        result = results[t];")
         o += ["        results.delete(t);",

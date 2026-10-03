@@ -309,8 +309,18 @@ async def ApiComponents(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResu
         parser = _parse(files, config, reporter)
         for n in names:
             cls = _find_class(parser, n)
-            comp = StaticMapper(config, reporter, parser.source_manager).map_component(
-                cls, spelling=n)
+            # A component with a run() task is a block; one without is
+            # structural (it builds and connects children), whose own ports
+            # the structure mapper reads.
+            has_run = any(getattr(m, "name", None) == "run"
+                          and m.kind == ast.SymbolKind.Subroutine for m in cls)
+            if has_run:
+                comp = StaticMapper(config, reporter, parser.source_manager).map_component(
+                    cls, spelling=n)
+            else:
+                from fw.hdl.fe.structure import StructureMapper
+                comp = StructureMapper(config, reporter, parser.source_manager).map_structure(
+                    cls, spelling=n).component
             # The package-qualified spelling: a typedef's or the class's path.
             path = [None]
 
@@ -322,11 +332,23 @@ async def ApiComponents(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResu
                 return True
             parser.get_root().visit(visit)
             sv = path[0] or n
+            # A structural top is written at package scope, so a port's
+            # payload is spelled as its declaration writes it (the mapper
+            # gives the generic class's name, losing the specialization).
+            declared = {}
+            if not has_run:
+                import re as _re
+                for m in cls:
+                    if m.kind == ast.SymbolKind.ClassProperty and m.syntax is not None:
+                        t = str(getattr(m.syntax.parent, "type", "") or "").strip()
+                        mt = _re.search(r"fw_(?:get|put)_if\s*#\s*\(\s*(.+?)\s*\)\s*\)$", t)
+                        if mt:
+                            declared[m.name] = mt.group(1)
             ports = []
             for f in comp.fields:
                 if f.kind != ir.FieldKind.Port:
                     continue
-                t = f.pragmas.get("sv_type", "")
+                t = declared.get(f.name) or f.pragmas.get("sv_type", "")
                 role = "put" if isinstance(f.datatype, ir.DataTypeGetIF) else "get"
                 ports.append(comp_api.CompPort(f.name, role, t, f.datatype.element_type.bits))
             comps.append(comp_api.CompApi(n, sv, module_name(n), ports))
@@ -354,10 +376,16 @@ def _comp_xls_binding(input: TaskDataInput, api) -> TaskDataResult:
         with open(path) as f:
             sig = signature_from_codegen(f.read())
         sigs[sig.name] = sig
+    # A structural top's signature, from fw.hdl.spl.Integrate.
+    for path in _files(input, "blockSignature"):
+        sig = ir.load_signature(path)
+        sigs[sig.name] = sig
     missing = [c.module for c in api.components if c.module not in sigs]
     if missing:
-        return _api_error(f"XlsBinding: no xlsModuleSignature for module(s) {missing}; "
-                          f"run synth.xls.Codegen on fw.hdl.xls.IR's output for each component")
+        return _api_error(f"XlsBinding: no xlsModuleSignature or blockSignature for "
+                          f"module(s) {missing}; run synth.xls.Codegen on fw.hdl.xls.IR's "
+                          f"output for each component, or fw.hdl.spl.Integrate for a "
+                          f"structural one")
     try:
         text = comp_api.xls_binding_sv(api, sigs, period=input.params.clock_period,
                                        reset_cycles=input.params.reset_cycles,
