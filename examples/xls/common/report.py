@@ -214,8 +214,8 @@ def md(q: List[Dict], it: List[Dict], sw: List[Dict]) -> str:
           "pipeline latency); a level that answers sooner than its latency allows is a "
           "finding (xls-examples.md risk 6). Glue lines are what a user writes by hand to "
           "run the test at that level: none on the fw-hdl path; `crc32/dslx_glue/` on the "
-          "DSLX path. lfsr_proc's test depends on timing (it polls, so it is not a Kahn "
-          "process network); it is expected to fail at rtl and gates (lfsr/README.md).", "",
+          "DSLX path. lfsr_proc polls, so when it sees a seed depends on the level; its test "
+          "syncs on each new seed and checks the values skipped (lfsr/README.md).", "",
           "## QoR: the SV port against the original", "",
           "| example | path | IR nodes | latency | generic | ice40 | ecp5 | equivalence |",
           "|---|---|---|---|---|---|---|---|"]

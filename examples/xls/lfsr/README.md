@@ -38,20 +38,26 @@ that up.
 
 **This example's test shows why.** Upstream's `#[test_proc]` expects the proc to see each
 new seed on the activation right after the test sends it, which is how the DSLX
-interpreter happens to schedule the two procs. [`lfsr_proc_unit_test.sv`](lfsr_proc_unit_test.sv)
-transcribes it:
+interpreter happens to schedule the two procs. Transcribed literally, the test passes at
+`model` and fails at `rtl` and every gate level: the proc runs every clock, the test's
+seed takes cycles to reach its input, and in the meantime the proc sends 3, the next
+value from the initial `(1, 1)`. The RTL and the three netlists agree with each other
+exactly; only the schedule differs. Neither answer is wrong: a polling proc's outputs
+depend on timing.
 
-| level | values received | |
+**The one deviation**, in [`lfsr_proc_unit_test.sv`](lfsr_proc_unit_test.sv): after each
+seed is sent, `recv_until_seed` accepts outputs that continue the old sequence, checking
+each one against `lfsr` under the old tap mask, at most `MAX_LAG` (8) of them, until
+the seed itself comes out. From then on every value is upstream's, checked exactly.
+Neither seed occurs in the first 8 values of the sequence it replaces, so the first
+match is unambiguous. The design is unchanged.
+
+| level | values received | old values skipped per seed |
 |---|---|---|
-| DSLX interpreter (upstream) | 1, 1, 2, 4, 8, 17, 237, 219 | passes |
-| `model` | 1, 1, 2, 4, 8, 17, 237, 219 | passes (Verilator runs the test on before the proc resumes) |
-| `rtl` | 1, 3, ... | fails |
-| `gates`, `gates-ice40`, `gates-ecp5` | 1, 3, ... | fails, exactly as `rtl` |
+| DSLX interpreter (upstream) | 1, 1, 2, 4, 8, 17, 237, 219 | 0 |
+| `model` | 1, 1, 2, 4, 8, 17, 237, 219 | 0 |
+| `rtl`, `gates`, `gates-ice40`, `gates-ecp5` | 1, 3, 7, 1, 2, 4, 8, 17, 35, 71, 237, 219 | 2 (3, 7; then 35, 71) |
 
-The RTL and the three netlists agree with each other exactly; what differs is the
-schedule. The pipelined proc polls again before the test's seed reaches its input, so it
-sends 3 (the next state from the initial `(1, 1)`) before it sees the seed. Neither
-answer is wrong: a polling proc's outputs depend on timing.
-
-So the suite runs this test at `model` only; `lfsr_proc.timing` runs it at the other
-levels and is expected to fail there.
+The test passes at every level. It checks what `recv_non_blocking` promises, that a
+seed takes effect on some later activation and the outputs follow it from there, not
+when.

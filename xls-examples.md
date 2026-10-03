@@ -618,9 +618,14 @@ synthesis.
   - **E3's proc half (`lfsr_proc`)** ports and lowers. Its upstream test is
     timing-dependent: it assumes the interpreter's schedule. It passes at `model`. At
     `rtl` and all three netlists it fails the same way (1, 3, ...): the pipelined proc
-    polls again before the seed arrives. The suite runs `model`; `lfsr_proc.timing`
-    runs the rest, failing by design. This is the clearest demonstration of why the
-    other tests are level-independent: they are KPNs.
+    polls again before the seed arrives. ~~The suite runs `model`; `lfsr_proc.timing`
+    runs the rest, failing by design.~~ **Fixed in the test, not the design:** after
+    each seed, `recv_until_seed` accepts up to 8 outputs that continue the old sequence
+    (each checked) until the seed appears, then checks upstream's values exactly. It
+    passes at all five levels (0 values skipped at `model`, 2 per seed at `rtl` and the
+    netlists). This is the one deviation in the transcription (lfsr/README.md). It is
+    still the clearest demonstration of why the other tests are level-independent:
+    they are KPNs, and this test has to say what it means by "eventually".
   - The `model` binding's outputs are now a rendezvous (a component's put waits for
     the test's get), so a polling proc cannot run ahead in zero time.
 - ☑ **GAP-4** Codegen valid signals (G-11). Also added to libsynth along the way:
@@ -794,10 +799,10 @@ synthesis.
   - E2 to E10 are ported: adler32, lfsr (fn and proc), gcd, prefix_sum, fir_dot,
     idct_chen, sha256, rle (enc, dec, and the `rle_loop` composition through
     Integrate), aes and aes_ctr. EX-3, EX-4, EX-5, GAP-3 and YS-2 are done.
-  - Ten examples pass one SVUnit test file at all five levels. aes and aes_ctr pass at
-    `model` and `rtl`; their gate levels are still to run (EX-6). lfsr_proc passes at
-    `model` and, by design, not at `rtl`/`gates`: its test depends on when the proc
-    polls (D-7).
+  - Eleven examples pass one SVUnit test file at all five levels. aes and aes_ctr pass
+    at `model` and `rtl`; their gate levels are still to run (EX-6). lfsr_proc's
+    transcribed test depended on when the proc polls (D-7); it now syncs on each new
+    seed and passes everywhere (GAP-3).
   - GAP-3: `fw_get_nb_if` gives a port `try_get`, which be-xls lowers to XLS's
     non-blocking receive. It is opt-in, because polling gives up level-independent
     results.

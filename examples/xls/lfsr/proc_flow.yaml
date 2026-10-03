@@ -96,15 +96,12 @@ fragment:
     passthrough: all
     needs: [src, api, synth.ecp5, bind-xls, runner]
 
-  # The suite runs the test at `model` only. At the other levels the proc
-  # polls on its own clock and sees each seed one activation later than the
-  # DSLX interpreter's schedule assumes, so the transcribed test fails there
-  # by design: it is timing-dependent (README.md). `timing` runs those
-  # levels, to show it.
+  # The test syncs on each new seed (README.md: the proc polls, so when it
+  # sees a seed depends on the level), so it runs at every level.
   - name: test
     strategy:
       matrix:
-        view: [model]
+        view: [model, rtl, gates, gates-ice40, gates-ecp5]
         case:
         - {name: lfsr_proc}
       body:
@@ -116,20 +113,6 @@ fragment:
         tags:
         - std.Test: {case: "${{ this.case.name }}", view: "${{ this.view }}"}
 
-  - name: timing
-    desc: "The timing-dependent test at the levels where it is expected to fail"
-    strategy:
-      matrix:
-        view: [rtl, gates, gates-ice40, gates-ecp5]
-        case:
-        - {name: lfsr_proc}
-      body:
-      - name: "${{ this.view }}-${{ this.case.name }}"
-        uses: hdltest.svunit.Check
-        needs: ["xls_examples.run.lfsr_proc.${{ this.view }}"]
-        with:
-          name: "lfsr_proc-${{ this.view }}"
-
   - root: all
-    desc: "lfsr_proc: upstream's test proc, Yosys, and the test at model (and, failing by design, at the other levels)"
-    needs: [dslx-test, synth.generic, synth.ice40, synth.ecp5, test, timing]
+    desc: "lfsr_proc: upstream's test proc, Yosys, and the test at every level"
+    needs: [dslx-test, synth.generic, synth.ice40, synth.ecp5, test]
