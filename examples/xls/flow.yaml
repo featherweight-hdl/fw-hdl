@@ -52,10 +52,12 @@ package:
   - root: tests
     desc: Every example's SVUnit tests at every level (--tests <example>, --views <level>)
     uses: std.TestRunner
-    needs: [crc32.test, crc32.dslx-tests, adler32.test, lfsr.test, prefix_sum.test]
+    needs: [crc32.test, crc32.dslx-tests, adler32.test, lfsr.test, gcd.test, prefix_sum.test, fir_dot.test]
 
   fragments:
   - crc32/flow.yaml
   - adler32/flow.yaml
   - lfsr/flow.yaml
+  - gcd/flow.yaml
   - prefix_sum/flow.yaml
+  - fir_dot/flow.yaml
