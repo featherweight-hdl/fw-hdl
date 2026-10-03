@@ -192,6 +192,10 @@ class StaticMapper:
     def const_int(self, e) -> Optional[int]:
         """The value of an elaboration-time constant expression, or None."""
         cv = getattr(e, "constant", None)
+        if cv is None and e.kind == EK.NamedValue \
+                and e.symbol.kind in (ast.SymbolKind.Parameter, ast.SymbolKind.EnumValue):
+            # Inside a function body a parameter reference carries no constant.
+            cv = getattr(e.symbol, "value", None)
         if cv is None or cv.isContainer() or cv.hasUnknown():
             return None
         return self.svint_value(cv.value)
@@ -445,6 +449,16 @@ class StaticMapper:
             if name in ("$signed", "$unsigned") and len(e.arguments) == 1:
                 a = e.arguments[0]
                 return self.cast(self.expr(a), int(a.type.bitWidth), name == "$signed")
+            if name == "$clog2" and len(e.arguments) == 1:
+                # Of an elaboration-time constant only (a loop bound, say):
+                # the value is a constant of the call's type.
+                v = self.const_int(e.arguments[0])
+                if v is None:
+                    raise self.fail("$clog2 of a value that is not an elaboration-time "
+                                    "constant is not in the static subset", e)
+                dt = self.dtype(e.type, e)
+                return ir.ExprCast(target_type=dt, value=ir.ExprConstant(
+                    value=(max(v, 1) - 1).bit_length()))
             raise self.fail(f"system call {name} is not in the static subset", e)
         if e.subroutineKind == ast.SubroutineKind.Task:
             raise self.fail(f"task {e.subroutineName!r} called in an expression", e)

@@ -236,4 +236,14 @@ package micro_fn_pkg;
         return e21_rot_c#(8)::rotl1(x, 8'b10111000);
     endfunction
 
+    // E22: $clog2 of an elaboration-time constant (a loop bound, as in
+    // prefix_sum.x's std::flog2(ARRAY_SIZE))
+    localparam int unsigned E22_N = 16;
+    function automatic bit [7:0] e22_clog2(bit [7:0] x);
+        bit [7:0] s = 8'd0;
+        for (int i = 0; i < $clog2(E22_N); i++)
+            s = s + (x >> i);
+        return s + 8'($clog2(E22_N + 1));
+    endfunction
+
 endpackage

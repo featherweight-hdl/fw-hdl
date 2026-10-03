@@ -25,7 +25,7 @@ FUNCS = [
     "e14_cast", "e14_signed", "e14_trunc", "e15_field", "e16_pat",
     "e17_tbl", "e18_arr", "e19_call", "e20_lit",
     "t5_pk", "t6_enum", "s3_case", "s4_pop", "s4_rev", "s6_early", "s8_ops",
-    "e21_param_w5", "e21_param_w8",
+    "e21_param_w5", "e21_param_w8", "e22_clog2",
 ]
 
 

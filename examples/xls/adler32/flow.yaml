@@ -1,0 +1,158 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+# E2, adler32: Adler-32 of one byte; % by a constant, a one-trip for.
+# The same graph as crc32/flow.yaml (the template example, which comments
+# every step). Tests run through ../flow.yaml's img/run families.
+fragment:
+  name: adler32
+
+  tasks:
+  # ---- Sources --------------------------------------------------------
+  - name: orig
+    desc: The upstream DSLX, unmodified (orig/UPSTREAM)
+    uses: std.FileSet
+    with:
+      type: dslxSource
+      base: orig
+      include: [xls/examples/adler32/adler32.x]
+
+  - name: src
+    desc: The SV port
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      include: [adler32_pkg.sv]
+
+  - name: unit-tests
+    desc: The upstream tests as SVUnit tests, calling the API
+    uses: std.FileSet
+    with:
+      type: svunitTest
+      include: [adler32_unit_test.sv]
+
+  # ---- The SV path ----------------------------------------------------
+  - name: ir
+    uses: fw.hdl.xls.IR
+    needs: [src]
+    with:
+      top: [adler32_pkg::main]
+
+  - name: rtl
+    uses: synth.xls.Codegen
+    needs: [ir]
+    with:
+      pipeline_stages: 2
+      input_valid_signal: input_valid
+      output_valid_signal: output_valid
+
+  # ---- The DSLX path --------------------------------------------------
+  - name: dslx-test
+    uses: synth.xls.DslxTest
+    needs: [orig]
+
+  - name: dslx-ir
+    uses: synth.xls.DslxToIR
+    needs: [orig]
+    with:
+      tops: [main]
+
+  - name: dslx-rtl
+    uses: synth.xls.Codegen
+    needs: [dslx-ir]
+    with:
+      pipeline_stages: 2
+      input_valid_signal: input_valid
+      output_valid_signal: output_valid
+
+  - name: equiv
+    desc: Each SV function's optimized IR against its DSLX original's
+    uses: synth.xls.Equiv
+    needs: [rtl, dslx-rtl]
+    with:
+      pairs: [adler32_pkg__main=__adler32__main]
+
+  # ---- Yosys ----------------------------------------------------------
+  - name: synth
+    strategy:
+      select:
+        axes:
+          target: [generic, ice40, ecp5]
+      body:
+      - uses: synth.yosys.Synth
+        needs: [rtl]
+        with:
+          target: "${{ this.target }}"
+
+  - name: dslx-synth
+    strategy:
+      select:
+        axes:
+          target: [generic, ice40, ecp5]
+      body:
+      - uses: synth.yosys.Synth
+        needs: [dslx-rtl]
+        with:
+          target: "${{ this.target }}"
+
+  # ---- The API, and what answers it at each level ---------------------
+  - name: api
+    uses: fw.hdl.api.Functions
+    needs: [src]
+    with:
+      functions: [adler32_pkg::main]
+
+  - name: dut-model
+    uses: fw.hdl.api.ModelBinding
+    needs: [api]
+
+  - name: bind-xls
+    uses: fw.hdl.api.XlsBinding
+    needs: [api, rtl]
+
+  - name: runner
+    uses: hdltest.svunit.TestRunner
+    needs: [unit-tests]
+    with:
+      harness: [adler32_pkg_api_harness]
+  - name: bench-model
+    passthrough: all
+    needs: [src, api, dut-model, runner]
+  - name: bench-rtl
+    passthrough: all
+    needs: [src, api, rtl, bind-xls, runner]
+  - name: bench-gates
+    passthrough: all
+    needs: [src, api, synth.generic, bind-xls, runner]
+  - name: bench-gates-ice40
+    passthrough: all
+    needs: [src, api, synth.ice40, bind-xls, runner]
+  - name: bench-gates-ecp5
+    passthrough: all
+    needs: [src, api, synth.ecp5, bind-xls, runner]
+  # ---- The tests ------------------------------------------------------
+  - name: test
+    strategy:
+      matrix:
+        view: [model, rtl, gates, gates-ice40, gates-ecp5]
+        case:
+        - {name: adler32}
+      body:
+      - name: "${{ this.view }}-${{ this.case.name }}"
+        uses: hdltest.svunit.Check
+        needs: ["xls_examples.run.adler32.${{ this.view }}"]
+        with:
+          name: "adler32-${{ this.view }}"
+        tags:
+        - std.Test: {case: "${{ this.case.name }}", view: "${{ this.view }}"}
+
+  - root: all
+    desc: "adler32 end to end: both paths, equivalence, Yosys on both, the tests at every level"
+    needs:
+    - dslx-test
+    - equiv
+    - synth.generic
+    - synth.ice40
+    - synth.ecp5
+    - dslx-synth.generic
+    - dslx-synth.ice40
+    - dslx-synth.ecp5
+    - test

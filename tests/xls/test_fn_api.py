@@ -125,3 +125,21 @@ def test_function_lookup_by_path_and_ambiguity(tmp_path):
         sv_to_functions([str(p)], ["f"])
     (fn,) = sv_to_functions([str(p)], ["b::f"], rename={"b::f": "b__f"})
     assert fn.name == "b__f"
+
+
+def test_arrays_cross_the_binding_element_0_low(tmp_path):
+    # XLS flattens an array onto a port with element 0 in the low bits
+    # (its codegen unflattens `values[15:0]` into element 0).
+    p = tmp_path / "arr_pkg.sv"
+    p.write_text("package arr_pkg;\n  typedef bit [15:0] v_t [4];\n"
+                 "  function automatic v_t f(v_t a); return a; endfunction\nendpackage\n")
+    api = _api([str(p)], ["arr_pkg::f"])
+    m = fn_api.fn_module_from_signature(
+        SIG.replace("crc32_pkg__main", "arr_pkg__f").replace('"message"\n  width: 8',
+                                                              '"a"\n  width: 64')
+        .replace('width: 32', 'width: 64'))
+    sv = fn_api.xls_binding_sv(api, {m.module: m})
+    assert "p_a[k*16 +: 16] = a[k];" in sv
+    assert "result[k] = r[k*16 +: 16];" in sv
+    assert "{>>" not in sv
+    assert "module arr_pkg_api_harness;" in sv and "package arr_pkg_api_xls_pkg;" in sv

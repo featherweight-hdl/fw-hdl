@@ -227,10 +227,33 @@ def fn_module_from_signature(text: str) -> FnModule:
         output_valid=_one(valid, "output_name") if valid else None)
 
 
-def _packed(a: ApiArg) -> str:
-    """A packed value of argument *a*: unpacked arrays are streamed, element
-    0 first (most significant), as XLS flattens an array onto a port."""
-    return f"{{>>{{{a.name}}}}}" if a.dims else a.name
+_DIM = re.compile(r"\[(-?\d+):(-?\d+)\]")
+
+
+def _array(a: ApiArg):
+    """(first index, step, length) of a one-dimensional unpacked argument."""
+    dims = _DIM.findall(a.dims)
+    if len(dims) != 1:
+        raise ValueError(f"{a.name}{a.dims}: only one unpacked dimension can cross the "
+                         f"XLS binding so far")
+    left, right = int(dims[0][0]), int(dims[0][1])
+    return left, (1 if right >= left else -1), abs(right - left) + 1
+
+
+def _index(a: ApiArg, k: str) -> str:
+    left, step, _ = _array(a)
+    return f"{left} {'+' if step > 0 else '-'} {k}" if left or step < 0 else k
+
+
+def _pack(a: ApiArg, port: str) -> List[str]:
+    """Statements that put argument *a* on its port's queue. XLS flattens an
+    array with element 0 in the low bits: element k is bits [k*W +: W]."""
+    if not a.dims:
+        return [f"        q_{port}.push_back({a.name});"]
+    _, _, length = _array(a)
+    return [f"        for (int k = 0; k < {length}; k++)",
+            f"            p_{port}[k*{a.bits} +: {a.bits}] = {a.name}[{_index(a, 'k')}];",
+            f"        q_{port}.push_back(p_{port});"]
 
 
 def xls_binding_sv(api: FnApi, mods: Dict[str, FnModule], period: int = 10,
@@ -282,12 +305,21 @@ def xls_binding_sv(api: FnApi, mods: Dict[str, FnModule], period: int = 10,
         sig_args = [f"input {a.decl()}" for a in f.args] + [f"output {f.ret.decl()}"]
         o += [f"    task automatic call({', '.join(sig_args)});",
               "        int unsigned t = issued++;"]
+        o += [f"        bit [{w - 1}:0] p_{port};" for a, (port, w) in zip(f.args, m.inputs)
+              if a.dims]
+        if f.ret.dims:
+            o.append(f"        bit [{rw - 1}:0] r;")
         for a, (port, _) in zip(f.args, m.inputs):
-            o.append(f"        q_{port}.push_back({_packed(a)});")
-        o += ["        while (!results.exists(t)) @(posedge clk);",
-              (f"        {{>>{{result}}}} = results[t];" if f.ret.dims
-               else "        result = results[t];"),
-              "        results.delete(t);",
+            o += _pack(a, port)
+        o.append("        while (!results.exists(t)) @(posedge clk);")
+        if f.ret.dims:
+            _, _, length = _array(f.ret)
+            o += ["        r = results[t];",
+                  f"        for (int k = 0; k < {length}; k++)",
+                  f"            result[{_index(f.ret, 'k')}] = r[k*{f.ret.bits} +: {f.ret.bits}];"]
+        else:
+            o.append("        result = results[t];")
+        o += ["        results.delete(t);",
               "    endtask",
               "endinterface", ""]
 

@@ -1,6 +1,12 @@
 # yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
 # XLS examples: SV ports of XLS designs, with the original DSLX beside them.
 # See README.md and ../../xls-examples.md.
+#
+# Each example (a fragment) builds its two paths, proves them equivalent and
+# synthesizes them, and offers one `bench-<level>` task per test level: what
+# that level compiles besides SVUnit. The image and run families below are
+# shared: a cell exists for every example and level, and is built only when
+# a test asks for it.
 package:
   name: xls_examples
   imports:
@@ -17,10 +23,39 @@ package:
   - name: svunit
     uses: hdltest.svunit.Lib
 
+  - name: img
+    desc: "The test bench of one example at one level, compiled (img.<example>.<level>)"
+    strategy:
+      select:
+        axes:
+          example: [crc32, adler32, lfsr, gcd, prefix_sum, fir_dot, idct_chen, sha256, rle, aes]
+          level: [model, rtl, gates, gates-ice40, gates-ecp5, dslx-rtl, dslx-gates]
+      body:
+      - uses: hdlsim.vlt.SimImage
+        needs: [svunit, "${{ this.example }}.bench-${{ this.level }}"]
+        with:
+          top: [testrunner]
+
+  - name: run
+    desc: "One example's SVUnit tests at one level (run.<example>.<level>)"
+    strategy:
+      select:
+        axes:
+          example: [crc32, adler32, lfsr, gcd, prefix_sum, fir_dot, idct_chen, sha256, rle, aes]
+          level: [model, rtl, gates, gates-ice40, gates-ecp5, dslx-rtl, dslx-gates]
+      body:
+      - uses: hdlsim.vlt.SimRun
+        needs: ["img.${{ this.example }}.${{ this.level }}"]
+        with:
+          mode: test
+
   - root: tests
-    desc: Every example's SVUnit tests, at every level (--views model,rtl,gates)
+    desc: Every example's SVUnit tests at every level (--tests <example>, --views <level>)
     uses: std.TestRunner
-    needs: [crc32.test]
+    needs: [crc32.test, crc32.dslx-tests, adler32.test, lfsr.test, prefix_sum.test]
 
   fragments:
   - crc32/flow.yaml
+  - adler32/flow.yaml
+  - lfsr/flow.yaml
+  - prefix_sum/flow.yaml
