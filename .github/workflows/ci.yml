@@ -31,5 +31,19 @@ jobs:
       # test in tests/, so CI gates the same thing a developer gets from
       # `dfm run tests`. Listing individual tests here means new suites (the
       # dbg_* and reg_* families, for instance) silently go ungated.
+      #
+      # -j sizes dfm's jobserver token pool. The scheduler admits every ready
+      # task at once but each waits at most 60s for a token (hardcoded in
+      # dv-flow-mgr's JobServer.acquire), so on a 4-core runner a pool smaller
+      # than the number of concurrent test tasks starves the late ones and they
+      # fail with "Jobserver acquire timeout". The pool must therefore stay
+      # comfortably above the test count -- raise it if the suite outgrows it.
+      #
+      # -j also feeds each SimImage's inner `make -j`, which is what makes an
+      # individual build slow enough to hit that timeout. DFM_CORES decouples
+      # the two: pool of 64, but each build compiles serially. Concurrent
+      # builds then peak around 7GB, within the runner's 16GB.
       - name: Run the library regression
-        run: direnv exec . dfm run tests
+        env:
+          DFM_CORES: 1
+        run: direnv exec . dfm run -j 64 tests
