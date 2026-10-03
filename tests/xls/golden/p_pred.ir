@@ -1,0 +1,29 @@
+package p_pred
+
+file_number 0 "tests/xls/micro/micro_proc_pkg.sv"
+
+top proc p_pred<a: bits[8] in, b: bits[8] in, o: bits[8] out>(last_y: bits[8] pos=[(0,79,18)], init={0}) {
+  chan_interface a(direction=receive, kind=streaming, strictness=proven_mutually_exclusive, flow_control=ready_valid, flop_kind=none)
+  chan_interface b(direction=receive, kind=streaming, strictness=proven_mutually_exclusive, flow_control=ready_valid, flop_kind=none)
+  chan_interface o(direction=send, kind=streaming, strictness=proven_mutually_exclusive, flow_control=ready_valid, flop_kind=none)
+  last_y: bits[8] = state_read(state_element=last_y, id=1, pos=[(0,79,18)])
+  literal.3: bits[8] = literal(value=0, id=3, pos=[(0,94,26)])
+  after_all.4: token = after_all(id=4, pos=[(0,95,16)])
+  receive.5: (token, bits[8]) = receive(after_all.4, channel=a, id=5, pos=[(0,95,16)])
+  tuple_index.6: token = tuple_index(receive.5, index=0, id=6, pos=[(0,95,16)])
+  x: bits[8] = tuple_index(receive.5, index=1, id=7, pos=[(0,95,16)])
+  bit_slice.11: bits[1] = bit_slice(x, start=0, width=1, id=11, pos=[(0,96,20)])
+  receive.12: (token, bits[8]) = receive(tuple_index.6, predicate=bit_slice.11, channel=b, id=12, pos=[(0,97,20)])
+  tuple_index.13: token = tuple_index(receive.12, index=0, id=13, pos=[(0,97,20)])
+  y: bits[8] = tuple_index(receive.12, index=1, id=14, pos=[(0,97,20)])
+  last_y__1: bits[8] = sel(bit_slice.11, cases=[last_y, y], id=16, pos=[(0,96,16)])
+  y__1: bits[8] = sel(bit_slice.11, cases=[literal.3, y], id=17, pos=[(0,96,16)])
+  zero_ext.18: bits[32] = zero_ext(x, new_bit_count=32, id=18, pos=[(0,100,20)])
+  zero_ext.19: bits[32] = zero_ext(y__1, new_bit_count=32, id=19, pos=[(0,100,24)])
+  add.20: bits[32] = add(zero_ext.18, zero_ext.19, id=20, pos=[(0,100,20)])
+  literal.23: bits[32] = literal(value=10, id=23, pos=[(0,100,28)])
+  ugt.24: bits[1] = ugt(add.20, literal.23, id=24, pos=[(0,100,20)])
+  add.25: bits[8] = add(x, y__1, id=25, pos=[(0,100,40)])
+  send.26: token = send(tuple_index.13, add.25, predicate=ugt.24, channel=o, id=26, pos=[(0,100,32)])
+  next_value.28: () = next_value(state_element=last_y, value=last_y__1, id=28, pos=[(0,96,16)])
+}

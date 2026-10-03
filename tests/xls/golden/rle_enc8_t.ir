@@ -1,0 +1,37 @@
+package rle_enc8_t
+
+file_number 0 "tests/xls/corpus/rle_pkg.sv"
+
+top proc rle_enc8_t<in: bits[8] in, out: bits[16] out>(last: bits[8] pos=[(0,15,20)], cnt: bits[8] pos=[(0,15,37)], valid: bits[1] pos=[(0,15,47)], init={0, 0, 0}) {
+  chan_interface in(direction=receive, kind=streaming, strictness=proven_mutually_exclusive, flow_control=ready_valid, flop_kind=none)
+  chan_interface out(direction=send, kind=streaming, strictness=proven_mutually_exclusive, flow_control=ready_valid, flop_kind=none)
+  last: bits[8] = state_read(state_element=last, id=1, pos=[(0,15,20)])
+  cnt: bits[8] = state_read(state_element=cnt, id=2, pos=[(0,15,37)])
+  valid: bits[1] = state_read(state_element=valid, id=3, pos=[(0,15,47)])
+  after_all.5: token = after_all(id=5, pos=[(0,29,16)])
+  receive.6: (token, bits[8]) = receive(after_all.5, channel=in, id=6, pos=[(0,29,16)])
+  tuple_index.7: token = tuple_index(receive.6, index=0, id=7, pos=[(0,29,16)])
+  x: bits[8] = tuple_index(receive.6, index=1, id=8, pos=[(0,29,16)])
+  ne.9: bits[1] = ne(x, last, id=9, pos=[(0,30,30)])
+  literal.10: bits[8] = literal(value=255, id=10, pos=[(0,30,50)])
+  eq.11: bits[1] = eq(cnt, literal.10, id=11, pos=[(0,30,43)])
+  or.12: bits[1] = or(ne.9, eq.11, id=12, pos=[(0,30,30)])
+  and.13: bits[1] = and(valid, or.12, id=13, pos=[(0,30,20)])
+  concat.14: bits[16] = concat(last, cnt, id=14, pos=[(0,30,68)])
+  send.15: token = send(tuple_index.7, concat.14, predicate=and.13, channel=out, id=15, pos=[(0,30,58)])
+  eq.17: bits[1] = eq(x, last, id=17, pos=[(0,31,34)])
+  and.18: bits[1] = and(valid, eq.17, id=18, pos=[(0,31,25)])
+  literal.19: bits[8] = literal(value=255, id=19, pos=[(0,31,54)])
+  ne.20: bits[1] = ne(cnt, literal.19, id=20, pos=[(0,31,47)])
+  and.21: bits[1] = and(and.18, ne.20, id=21, pos=[(0,31,25)])
+  zero_ext.22: bits[32] = zero_ext(cnt, new_bit_count=32, id=22, pos=[(0,31,63)])
+  literal.25: bits[32] = literal(value=1, id=25, pos=[(0,31,69)])
+  add.26: bits[32] = add(zero_ext.22, literal.25, id=26, pos=[(0,31,63)])
+  literal.30: bits[32] = literal(value=1, id=30, pos=[(0,31,73)])
+  sel.31: bits[32] = sel(and.21, cases=[literal.30, add.26], id=31, pos=[(0,31,24)])
+  cnt__1: bits[8] = bit_slice(sel.31, start=0, width=8, id=32, pos=[(0,31,24)])
+  literal.33: bits[1] = literal(value=1, id=33, pos=[(0,33,24)])
+  next_value.34: () = next_value(state_element=last, value=x, id=34, pos=[(0,29,16)])
+  next_value.35: () = next_value(state_element=cnt, value=cnt__1, id=35, pos=[(0,31,24)])
+  next_value.36: () = next_value(state_element=valid, value=literal.33, id=36, pos=[(0,33,24)])
+}

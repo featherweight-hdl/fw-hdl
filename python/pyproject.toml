@@ -26,6 +26,8 @@ dependencies = [
     # The transparent SPL→RTL lowering is centralized in zuspec.synth.spl
     # (CENTRALIZED-LOWERING-DESIGN.md); fw-hdl drives it as a runtime dependency.
     "zuspec-synth",
+    # The XLS back end (xls_flow, spl_flow; xls-phase0.md / xls-phase2.md).
+    "zuspec-be-xls",
 ]
 
 [project.optional-dependencies]
@@ -41,13 +43,18 @@ test = [
 [project.scripts]
 fw-hdl = "fw.hdl.cli:main"
 
-# NOTE: the `dv_flow.mgr` entry-point for the `fw.hdl.Synth` task is added in P4,
-# once fw/hdl/dfm.py + fw/hdl/flow.dv exist (PLAN.md §1.6).  Registering it before
-# those files exist would break plugin discovery.
+# dv-flow packages provided by fw-hdl's Python (PLAN.md §1.6): `fw.hdl.spl`, the
+# SPL -> RTL steps (fw/hdl/spl.dv, xls-phase2.md). The `fw.hdl.Synth` task of P4
+# will register here too.
+[project.entry-points."dv_flow.mgr"]
+fw-hdl = "fw.hdl.dfm_ext"
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["fw*"]
+
+[tool.setuptools.package-data]
+"fw.hdl" = ["*.dv"]
 
 [tool.pytest.ini_options]
 testpaths = ["../tests/python"]

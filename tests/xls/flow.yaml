@@ -1,0 +1,17 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+fragment:
+  name: xls
+
+  tasks:
+  # XLS back end, phase X0 (xls-phase0.md CH-6). The SV static subset runs on
+  # Verilator (the normative reference) and, through the static front end and
+  # zuspec-be-xls, in our XLS IR interpreter; the results must match. Also runs
+  # the be-xls unit tests. Both suites are pytest; this task runs them so that
+  # `dfm run tests` gates them. With opt_main on PATH (or $XLS_BIN set) they also
+  # check the IR against XLS itself.
+  - name: xls-conformance
+    desc: XLS back-end conformance -- the static subset on Verilator vs the emitted XLS IR, plus the be-xls unit tests
+    # A test run, not a build artifact: it has no inputs for dv-flow to hash,
+    # so without this it would be reported up to date after the first run.
+    uptodate: false
+    run: cd ${{ srcdir }}/../.. && packages/python/bin/pytest -q -p no:cacheprovider tests/xls packages/zuspec-be-xls/tests

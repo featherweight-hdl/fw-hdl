@@ -1,0 +1,51 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+fragment:
+  name: compose
+
+  tasks:
+  # T1 (xls-phase2.md): rle_enc8 -> pkt_framer -> crc32_stream, each block by XLS,
+  # integrated by signature. This is the pipeline spelled out step by step; the
+  # libproject recipe wraps the same four tasks.
+  - name: chain-corpus
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      base: ../corpus
+      include: [crc32_pkg.sv, rle_pkg.sv, rle8_pkg.sv]
+
+  - name: chain-src
+    uses: std.FileSet
+    needs: [chain-corpus]
+    with:
+      type: systemVerilogSource
+      include: [chain_pkg.sv]
+
+  - name: chain-part
+    uses: fw.hdl.spl.Partition
+    needs: [chain-src]
+    with:
+      top: chain_top
+      xls: [rle_enc8_t, pkt_framer, crc32_stream]
+
+  - name: chain-codegen
+    uses: synth.xls.Codegen
+    needs: [chain-part]
+    with:
+      pipeline_stages: 2
+
+  - name: chain-sig
+    uses: zuspec.xls.Signature
+    needs: [chain-part, chain-codegen]
+
+  - name: chain-rtl
+    uses: fw.hdl.spl.Integrate
+    needs: [chain-part, chain-sig]
+
+  # The same pipeline as one libproject recipe (project.spl.utils.xls-rtl).
+  - name: chain-rtl-recipe
+    uses: project.spl.utils.xls-rtl
+    needs: [chain-src]
+    with:
+      top: chain_top
+      xls: [rle_enc8_t, pkt_framer, crc32_stream]
+      pipeline_stages: 2

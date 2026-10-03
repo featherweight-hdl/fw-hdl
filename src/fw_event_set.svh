@@ -1,5 +1,7 @@
 
-typedef class fw_awaitable_if;   // forward: add() wires a source's production in
+// An interface class is forward-declared as `typedef interface class` (LRM
+// 6.18); slang rejects plain `typedef class` for one.
+typedef interface class fw_awaitable_if;   // forward: add() wires a source's production in
 typedef class fw_component;      // forward: an optional owner, for the debug context
 
 // fw_event_set -- the MONITOR side: a list of event sources you wait on.

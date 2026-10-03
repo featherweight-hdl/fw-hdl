@@ -1,0 +1,89 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+package:
+  name: fw.hdl.spl
+  desc: fw-hdl's steps of the SPL -> RTL pipeline -- partition a structural component, integrate its blocks
+  doc: |
+    Registered by the fw-hdl Python package (entry point `dv_flow.mgr`), so any
+    flow whose Python environment has fw-hdl installed can name these tasks.
+    The libproject recipe `project.spl.utils.xls-rtl` wires them to
+    `synth.xls.Codegen` and `zuspec.xls.Signature`. See `xls-phase2.md`.
+
+  tasks:
+  - name: Partition
+    desc: Read a structural fw-hdl component and emit its XLS blocks, plus the shell that integrates them
+    doc: |
+      Step A of the SPL -> RTL pipeline:
+
+      ```
+      Partition ─► xlsIR ─────────────────► synth.xls.Codegen ─► xlsModuleSignature ─┐
+                └► blockSignaturePrediction ─────────────────────► zuspec.xls.Signature ─► blockSignature ─┐
+                └► splPartition ──────────────────────────────────────────────────────────────────────────► Integrate ─► systemVerilogSource
+      ```
+
+      `top` is a *structural* component: no `run()`, only ports, child
+      components and `fw_channel`s, built and connected in straight-line
+      `build()`/`connect()`. `xls` lists the child classes XLS implements
+      (a class name, or the typedef naming a specialization). In this release
+      every child must be listed.
+
+      Each listed class is checked against the static subset here, so an
+      unsupported construct is reported on its SV line before any tool runs.
+
+      Outputs:
+
+      * `splPartition` -- `partition.json`: the top's pins, channels,
+        children and connections. Integration reads this, not the SV.
+      * `xlsIR` -- `<module>.ir` per class (one per class, not per instance).
+      * `blockSignaturePrediction` -- `<module>.pred.json` per class: the
+        ports XLS codegen is expected to produce with its default naming.
+
+      A module is named after its class: `pkg::cls` becomes `pkg__cls`.
+    consumes:
+    - filetype: systemVerilogSource
+    - filetype: verilogSource
+    with:
+      top:
+        doc: The structural top component (class name or typedef)
+        type: str
+      xls:
+        doc: Child classes to implement with XLS
+        type: list
+        value: []
+    shell: pytask
+    run: fw.hdl.dfm_tasks.Partition
+
+  - name: Integrate
+    desc: Build the RTL top that instantiates every block and wires its channels
+    doc: |
+      Step C of the SPL -> RTL pipeline. Reads the `splPartition` shell and one
+      `blockSignature` per child module -- never a block's Verilog -- and
+      writes a structural top:
+
+      * each child becomes an instance of its block's module;
+      * each `fw_channel #(T, DEPTH)` becomes an `fw_rv_fifo` of that width
+        and depth (DEPTH 0 is a wire);
+      * each of the top's own ports becomes ready/valid pins `<port>`,
+        `<port>_vld`, `<port>_rdy`, plus `clk` and `rst`.
+
+      Any block with a `blockSignature` can be integrated. That includes a
+      hand-written module: give it a signature file instead of running XLS.
+
+      Outputs:
+
+      * `systemVerilogSource` -- everything to compile, in order: the FIFO,
+        each block's module, then the top (fileset param `top`);
+      * `blockSignature` -- the top's own signature, so this top can be a
+        block of a larger design.
+    consumes:
+    - filetype: splPartition
+    - filetype: blockSignature
+    # The output is exactly the compile list. Passing inputs through would also
+    # forward each block's .sv from Codegen, so it would be compiled twice.
+    passthrough: none
+    with:
+      top_name:
+        doc: Module name of the top. Default -- the top class's module name.
+        type: str
+        value: ""
+    shell: pytask
+    run: fw.hdl.dfm_tasks.Integrate

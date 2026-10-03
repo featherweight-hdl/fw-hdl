@@ -15,6 +15,7 @@ package:
       url: https://github.com/edapack/yosys-bin
       src: gh-rls
       cache: true
+      dep-set: default
     - name: nextpnr
       url: https://github.com/edapack/nextpnr-bin
       src: gh-rls
@@ -28,6 +29,10 @@ package:
     # previously only available via a local editable install).
     - name: dv-flow-libformal
       url: https://github.com/dv-flow/dv-flow-libformal.git
+    # The synth.xls.* tasks (XLS IR -> Verilog) of the SPL -> RTL flow
+    # (xls-phase2.md, BLK-2).
+    - name: dv-flow-libsynth
+      url: https://github.com/dv-flow/dv-flow-libsynth.git
     - name: pytest-dfm
       url: https://github.com/dv-flow/pytest-dfm.git
 
@@ -35,12 +40,14 @@ package:
       url: https://github.com/zuspec/zuspec-ir-core.git
     - name: zuspec-synth
       url: https://github.com/zuspec/zuspec-synth.git
-    - name: zuspec-be-sv
-      url: https://github.com/zuspec/zuspec-be-sv.git
     - name: zuspec-be-sw
       url: https://github.com/zuspec/zuspec-be-sw.git
+    - name: zuspec-be-sv
+      url: https://github.com/zuspec/zuspec-be-sv.git
     - name: zuspec-fe-sv
       url: https://github.com/zuspec/zuspec-fe-sv.git
+    - name: zuspec-be-xls
+      url: https://github.com/zuspec/zuspec-be-xls.git
     - name: pyslang
       src: pypi
     - name: sphinx

@@ -32,6 +32,7 @@ _STD = _SRC / "std"
 # interface/module units the packages and tops reference).
 FW_LIB_FILES: List[str] = [
     str(_SRC / "fw_clock_xtor_if.sv"),
+    str(_SRC / "fw_clock_period_xtor_if.sv"),
     str(_SRC / "fw_hdl_pkg.sv"),
     str(_SRC / "fw_root.sv"),
     str(_STD / "fw_put_xtor_if.sv"),
@@ -70,8 +71,13 @@ class Parser:
         return sm
 
     # -- parsing ---------------------------------------------------------
-    def parse(self, files: List[str], *, include_lib: bool = True) -> bool:
+    def parse(self, files: List[str], *, include_lib: bool = True,
+              include_root: bool = True) -> bool:
         """Parse *files* (plus the fw-hdl library unless ``include_lib`` is False).
+
+        ``include_root=False`` leaves out the ``fw_root`` module. A class-only
+        design never instantiates it, and slang then elaborates it as a top
+        with its default ``Tbind=int``, which does not type-check.
 
         Returns True on a zero-error compilation.
         """
@@ -87,6 +93,8 @@ class Parser:
             self._trees = []
 
             lib_files = list(FW_LIB_FILES) if include_lib else []
+            if not include_root:
+                lib_files = [f for f in lib_files if not f.endswith("fw_root.sv")]
             for path in lib_files + list(files):
                 tree = syntax.SyntaxTree.fromFile(path, self.source_manager, options)
                 self._trees.append(tree)

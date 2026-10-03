@@ -21,4 +21,8 @@ package fw_std_pkg;
     // fw_put_xtor_if (a separate compilation unit) and implements fw_put_if.
     `include "fw_put_xtor_bridge.svh"
 
+    // Joins a put port to a get port: a FIFO (DEPTH >= 1) or a rendezvous
+    // (DEPTH == 0) between two components.
+    `include "fw_channel.svh"
+
 endpackage
