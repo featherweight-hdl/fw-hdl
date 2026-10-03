@@ -598,14 +598,18 @@ synthesis.
    out-of-bounds reads, E2 divisor guards), which DSLX code doesn't have. `opt_main`
    should remove them; where it doesn't, the report shows the cost, which is itself a
    finding.
-5. **SVUnit on Verilator.** ~~Open~~ **Hit and worked around in TB-1.** Verilator
-   5.050 and 5.052 (also our 5.049-devel; 5.046 is fine) reject SVUnit's
+5. **SVUnit on Verilator.** ~~Open~~ **Hit and worked around in TB-1.** Every Verilator
+   since v5.048 (5.050, 5.052, 5.053 devel; v5.046 is fine) rejects SVUnit's
    `svunit_testsuite` class with "Duplicate declaration of VARSCOPE …
    i__Vloopsize". SVUnit 3.38.1 and `main` are both affected. Renaming one `foreach`
    loop variable fixes it, so `hdltest.svunit.Lib` stages a renamed copy
-   (`verilator_compat`, on by default). This is a Verilator regression and should be
-   reported upstream with a reduced test case; a two-method class does not
-   reproduce it.
+   (`verilator_compat`, on by default). It is a Verilator regression.
+   - The trigger, reduced to a 30-line test case: an in-class method and an
+     out-of-block method each loop `foreach (q[i])` over the same member, with method
+     calls in the body.
+   - The likely cause is Verilator be7d26c5b, which added `__Vloopsize`.
+   - The report is ready to file in `~/projects/verilator/bug-reports/`, with an
+     SVUnit pull-request item (the one-line rename).
 6. **A broken bench can still pass.** ~~Open~~ **Hit in EX-1.** Yosys's iCE40 cell
    models give input ports default values, and Verilator 5.049 drives the *connected*
    net with them (against LRM 23.2.2.4). The iCE40 netlist held the bench's reset low,
