@@ -220,4 +220,20 @@ package micro_fn_pkg;
         return x;
     endfunction
 
+    // E21: a static function of a parameterized class, the SV form of a
+    // DSLX parametric function; two specializations are two IR functions
+    class e21_rot_c #(int W = 8);
+        static function bit [W-1:0] rotl1(bit [W-1:0] x, bit [W-1:0] mask);
+            return {x[W-2:0], ^(x & mask)};
+        endfunction
+    endclass
+
+    function automatic bit [4:0] e21_param_w5(bit [4:0] x);
+        return e21_rot_c#(5)::rotl1(x, 5'b10100);
+    endfunction
+
+    function automatic bit [7:0] e21_param_w8(bit [7:0] x);
+        return e21_rot_c#(8)::rotl1(x, 8'b10111000);
+    endfunction
+
 endpackage

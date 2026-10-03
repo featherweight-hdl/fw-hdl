@@ -111,6 +111,13 @@ class StaticMapper:
     def key(sym) -> str:
         return f"{sym.name}@{sym.location}"
 
+    @staticmethod
+    def fn_key(sub) -> str:
+        """A function's identity. The hierarchical path tells apart the copies
+        of a static function in two specializations of one parameterized class
+        (`lfsr_c#(7)::lfsr`, `lfsr_c#(8)::lfsr`), which share a location."""
+        return f"{sub.hierarchicalPath}@{sub.location}"
+
     # ------------------------------------------------------------------
     # Types
     # ------------------------------------------------------------------
@@ -452,10 +459,10 @@ class StaticMapper:
         return ir.ExprCall(func=ir.ExprAttribute(value=ir.TypeExprRefSelf(), attr=name),
                            args=args)
 
-    def request_function(self, sub, node) -> str:
-        key = self.key(sub)
+    def request_function(self, sub, node, name: Optional[str] = None) -> str:
+        key = self.fn_key(sub)
         if key not in self._fn_names:
-            name = sub.name
+            name = name or sub.name
             used = set(self._fn_names.values())
             n, i = name, 0
             while n in used:
@@ -696,7 +703,7 @@ class StaticMapper:
     def map_function(self, sub) -> ir.Function:
         if sub.subroutineKind != ast.SubroutineKind.Function:
             raise self.fail(f"{sub.name!r} is a task; only functions can be called", sub)
-        name = self._fn_names[self.key(sub)]
+        name = self._fn_names[self.fn_key(sub)]
         saved = (self.locals, self.local_names, self.params, self.ret_var, self.in_function)
         self.locals, self.local_names, self.params = {}, set(), {}
         self.in_function = sub.name
@@ -798,11 +805,14 @@ class StaticMapper:
         comp.proc_processes = [run_fn]
         return comp
 
-    def map_functions(self, subs) -> List[ir.Function]:
-        """Map free-standing functions (and what they call): the function corpus."""
+    def map_functions(self, subs, names=None) -> List[ir.Function]:
+        """Map free-standing functions (and what they call): the function corpus.
+
+        *names*, if given, holds an IR name for each of *subs* (None keeps the
+        SV name)."""
         self.fields, self.port_dirs = {}, {}
-        for s in subs:
-            self.request_function(s, s)
+        for s, n in zip(subs, names or [None] * len(subs)):
+            self.request_function(s, s, n)
         while self._fn_queue:
             sub = self._fn_queue.pop(0)
             fn = self.map_function(sub)

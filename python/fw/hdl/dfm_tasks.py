@@ -127,3 +127,156 @@ async def Integrate(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
             FileSet(src=input.name, filetype="blockSignature", basedir=rundir,
                     files=[f"{top_sig.name}.sig.json"])]
     return TaskDataResult(status=0, changed=True, output=out)
+
+
+async def XlsIR(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
+    """fw.hdl.xls.IR: one XLS IR package per entry of `top` -- a function or a
+    component class."""
+    from zuspec.be.xls.lower_proc import lower_component
+    from zuspec.be.xls.printer import format_package
+    from zuspec.be.xls.signature import CodegenOptions, predict_signature
+
+    from fw.hdl.spl_flow import module_name
+    from fw.hdl.xls_flow import (_find_class, _find_functions, _parse, sv_function_package,
+                                 sv_to_component)
+    p = input.params
+    tops = list(p.top or [])
+    if not tops:
+        return TaskDataResult(status=1, changed=False, output=[], markers=[TaskMarker(
+            msg="fw.hdl.xls.IR: `top` names no function or class", severity=SeverityE.Error)])
+    files, incdirs = _sv_inputs(input)
+    config = FlowConfig(incdirs=incdirs)
+    rundir = input.rundir
+    os.makedirs(rundir, exist_ok=True)
+    irs, preds, markers = [], [], []
+    for top in tops:
+        reporter = ErrorReporter()
+        try:
+            # A function if one has that name (or path); otherwise a class.
+            parser = _parse(files, config, reporter)
+            try:
+                _find_functions(parser, [top])
+                is_fn = True
+            except XlsFlowError as e:
+                if "ambiguous" in str(e):
+                    raise
+                _find_class(parser, top)
+                is_fn = False
+            module = module_name(top)
+            if is_fn:
+                pkg = sv_function_package(files, top, module, config, reporter)
+            else:
+                comp = sv_to_component(files, top, config, reporter)
+                pkg = lower_component(comp)
+                ir.save_signature(predict_signature(comp, CodegenOptions(module_name=module)),
+                                  os.path.join(rundir, f"{module}.pred.json"))
+                preds.append(f"{module}.pred.json")
+        except (FwHdlError, XlsFlowError) as e:
+            markers += _markers(reporter, e)
+            continue
+        with open(os.path.join(rundir, f"{module}.ir"), "w") as f:
+            f.write(format_package(pkg))
+        irs.append(f"{module}.ir")
+    if markers:
+        return TaskDataResult(status=1, changed=True, output=[], markers=markers)
+    out = [FileSet(src=input.name, filetype="xlsIR", basedir=rundir, files=irs)]
+    if preds:
+        out.append(FileSet(src=input.name, filetype="blockSignaturePrediction",
+                           basedir=rundir, files=preds))
+    return TaskDataResult(status=0, changed=True, output=out)
+
+
+def _api_error(msg: str) -> TaskDataResult:
+    return TaskDataResult(status=1, changed=False, output=[], markers=[TaskMarker(
+        msg=msg, severity=SeverityE.Error)])
+
+
+async def ApiFunctions(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
+    """fw.hdl.api.Functions: the call API of SV functions."""
+    from fw.hdl import fn_api
+    from fw.hdl.spl_flow import module_name
+    from fw.hdl.xls_flow import _find_functions, _parse
+    p = input.params
+    names = list(p.functions or [])
+    if not names:
+        return _api_error("fw.hdl.api.Functions: `functions` is empty")
+    files, incdirs = _sv_inputs(input)
+    reporter = ErrorReporter()
+    try:
+        parser = _parse(files, FlowConfig(incdirs=incdirs), reporter)
+        subs = _find_functions(parser, names)
+        name = p.name or fn_api.default_api_name([s.hierarchicalPath for s in subs])
+        # The module of each function is named as fw.hdl.xls.IR names it,
+        # after the entry it was given by.
+        mods = {s.hierarchicalPath: module_name(n) for s, n in zip(subs, names)}
+        api = fn_api.api_from_subroutines(name, subs, lambda s: mods[s.hierarchicalPath])
+    except (FwHdlError, XlsFlowError, ValueError) as e:
+        return TaskDataResult(status=1, changed=True, output=[], markers=_markers(reporter, e))
+    api.sources = files
+    rundir = input.rundir
+    os.makedirs(rundir, exist_ok=True)
+    with open(os.path.join(rundir, f"{api.pkg}.sv"), "w") as f:
+        f.write(fn_api.api_pkg_sv(api))
+    api.save(os.path.join(rundir, f"{api.name}.api.json"))
+    return TaskDataResult(status=0, changed=True, output=[
+        FileSet(src=input.name, filetype="systemVerilogSource", basedir=rundir,
+                files=[f"{api.pkg}.sv"], attributes=[f"api={api.name}"]),
+        FileSet(src=input.name, filetype="fwFnApi", basedir=rundir,
+                files=[f"{api.name}.api.json"], attributes=[f"api={api.name}"])])
+
+
+def _one_api(input: TaskDataInput):
+    from fw.hdl import fn_api
+    apis = _files(input, "fwFnApi")
+    if len(apis) != 1:
+        return None, _api_error(f"needs exactly one fwFnApi input, got {len(apis)}")
+    return fn_api.FnApi.load(apis[0]), None
+
+
+async def ApiModelBinding(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
+    """fw.hdl.api.ModelBinding: <api>_harness, with the SV functions answering."""
+    from fw.hdl import fn_api
+    api, err = _one_api(input)
+    if err:
+        return err
+    rundir = input.rundir
+    os.makedirs(rundir, exist_ok=True)
+    with open(os.path.join(rundir, f"{api.name}_model.sv"), "w") as f:
+        f.write(fn_api.model_harness_sv(api))
+    return TaskDataResult(status=0, changed=True, output=[
+        FileSet(src=input.name, filetype="systemVerilogSource", basedir=rundir,
+                files=[f"{api.name}_model.sv"], attributes=[f"harness={api.name}_harness"])])
+
+
+async def ApiXlsBinding(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
+    """fw.hdl.api.XlsBinding: <api>_harness, with the XLS modules answering."""
+    from fw.hdl import fn_api
+    api, err = _one_api(input)
+    if err:
+        return err
+    mods = {}
+    for path in _files(input, "xlsModuleSignature"):
+        with open(path) as f:
+            text = f.read()
+        try:
+            m = fn_api.fn_module_from_signature(text)
+        except ValueError:
+            continue            # a proc's signature: not this API's
+        mods[m.module] = m
+    missing = [f.module for f in api.functions if f.module not in mods]
+    if missing:
+        return _api_error(f"XlsBinding: no xlsModuleSignature for module(s) {missing}; "
+                          f"run synth.xls.Codegen on fw.hdl.xls.IR's output for each function")
+    try:
+        text = fn_api.xls_binding_sv(api, mods, period=input.params.clock_period,
+                                     reset_cycles=input.params.reset_cycles,
+                                     timeout_cycles=input.params.timeout_cycles)
+    except ValueError as e:
+        return _api_error(str(e))
+    rundir = input.rundir
+    os.makedirs(rundir, exist_ok=True)
+    with open(os.path.join(rundir, f"{api.name}_xls.sv"), "w") as f:
+        f.write(text)
+    return TaskDataResult(status=0, changed=True, output=[
+        FileSet(src=input.name, filetype="systemVerilogSource", basedir=rundir,
+                files=[f"{api.name}_xls.sv"], attributes=[f"harness={api.name}_harness"])])

@@ -1,6 +1,6 @@
 # XLS examples: SystemVerilog ports of XLS designs, from source to gates
 
-Status: **plan for review**, 2026-10-03. Builds on `xls-phase0.md` (the SV static subset
+Status: **in progress**, 2026-10-03 (approved; progress in §11 and §15). Builds on `xls-phase0.md` (the SV static subset
 and be-xls) and `xls-phase2.md` (the SPL → RTL pipeline). The back end (place and route
 to an FPGA) is scoped in §9 but deferred.
 
@@ -45,7 +45,7 @@ What the examples are for:
 examples/xls/<name>/
   README.md          what the design does; the DSLX → SV mapping, with every deviation; how to run
   orig/              the upstream files, byte-for-byte (license headers intact)
-    <file>.x
+    xls/.../<file>.x each at its upstream path, so DSLX imports resolve with --dslx_path=orig
     UPSTREAM         repo, tag, commit, path and sha256 of each copied file
   <name>_pkg.sv      the SV port (header: "Derived from XLS <path>, Copyright The XLS Authors, Apache-2.0")
   <name>_unit_test.sv  SVUnit tests: each upstream #[test] / #[test_proc] as an `SVTEST, calling the API
@@ -139,7 +139,11 @@ not something we claim:
    - rerun all three levels after each change.
 
    `git diff` shows only `flow.yaml`. The same script against `dslx_glue/` shows what
-   the hand-written glue must track, such as latency.
+   the hand-written glue must track. **Measured on E1** (EX-1): a latency change does
+   *not* break a well-written glue, because it waits on the output valid. Port-level
+   options do break it. With `reset: rst_n, reset_active_low: true`, all five fw-hdl
+   levels pass (the generated bench wires `.rst_n(!rst)`), and the glue fails to
+   compile (`Pin not found: 'rst'`). The README says exactly this, not more.
 4. **It's their framework.** The tests use stock SVUnit: its release, its macros, its
    runner. There is no fw-hdl test language. An SV verification engineer recognizes
    the test file on sight. The API is a class handle, so the same calls drop into a
@@ -176,8 +180,8 @@ results. So the gap is structural, not tooling we chose not to write.
 ## 3. The example set
 
 Sources are pinned to **xlsynth `v0.59.0`** (`3f668e9b`). That is the tag our XLS tools
-come from, so the original DSLX parses with the tools in the flow. The paths below are
-from google/xls `main` (2026-10-02); EX-0 confirms them at the pin.
+come from, so the original DSLX parses with the tools in the flow. EX-0 confirmed every
+path below at the pin.
 
 ### 3.1 First cut: ten examples
 
@@ -250,7 +254,9 @@ examples/xls/
 
 - `dfm run crc32.all` runs one example: both paths, the tests at all three levels,
   equivalence, synthesis.
-- `dfm run crc32.test -D level=gates` runs the tests at one level.
+- `dfm run tests --views gates` runs every example's tests at one level;
+  `dfm run tests --tests crc32 --views rtl` narrows to one example. The other levels'
+  images are not built (`std.TestRunner` prunes the graph).
 - `dfm run all` runs every example; `dfm run report` writes the results table.
 - A **quick subset** (E1, E2, E3, E9: small and fast) joins the fw-hdl `tests` root, so
   the examples cannot rot. The full set is a separate root, because E8 and E10
@@ -366,7 +372,7 @@ It also writes **the integration table** (§2.2): one row per example and level
 (`model`, `rtl`, and `gates` for each target). Each row has:
 - the test file's sha256;
 - tests passed out of tests run;
-- wall time;
+- wall time, and the simulation time of the last pass (risk 6);
 - the glue lines the user wrote: 0 on our path, and `dslx_glue/` for E1's DSLX row.
 
 It writes `examples/xls/RESULTS.md` (and JSON). The **expectation is parity**: the
@@ -412,27 +418,72 @@ synthesis.
 
 | # | Gap | Needed by | Proposal |
 |---|---|---|---|
-| G-1 | **No dv-flow task makes XLS IR from an SV function.** `fw.hdl.spl.Partition` takes component classes; functions go through the Python API only. | E1–E8, E10 | `fw.hdl.xls.IR`: `top` names a package function, a static class function, or a component class; outputs `xlsIR` (+ the predicted signature for a class). Partition keeps its job (whole designs). |
+| G-1 | ~~**No dv-flow task makes XLS IR from an SV function.**~~ **Done (GAP-1).** | E1–E8, E10 | `fw.hdl.xls.IR`: each `top` entry (a function by path, `crc32_pkg::main`, or by unambiguous name; or a component class) becomes one `xlsIR` package, whose module is named `pkg__name`. A class also gets its predicted signature. Partition keeps its job (whole designs). |
 | G-2 | **No non-blocking receive** (`recv_non_blocking`) | E3 proc half | an SV `try_get(x)` → `bit` in `fw_get_if`, lowered to XLS `receive(..., blocking=false)` (a new P row). Or drop E3's proc half for now (D-7). |
-| G-3 | **Parametric functions.** SV has none; the idiom is a static function of a parameterized class. Is a static class function as a function top supported? | E3, E4, E6 | verify in EX-0; if not, add it to the FE (T7 already elaborates specializations for components) |
+| G-3 | ~~**Parametric functions.**~~ **Done (EX-0).** SV has none; the idiom is a static function of a parameterized class. | E3, E4, E6 | One specialization already worked. Two specializations of one class collided (both became IR `lfsr`), because the FE keyed a function by name and location. It is now keyed by hierarchical path (`lfsr_c#(7)::lfsr`). Micro test E21; the `lfsr7`/`lfsr8` ports are proven equivalent to the DSLX originals. |
+| G-12 | **A parametric DSLX function cannot be an IR top**, on the DSLX path either. `gcd.x`, `fir_filter.x` and `dot_product.x` have no concrete wrapper (`lfsr.x` does: `lfsr7`, `lfsr8`). | E4, E6 | each example keeps a short `dslx_top.x` beside `orig/` that imports the original and instantiates it at the widths the SV port uses. `orig/` stays untouched (D-3). |
 | G-4 | `std::` helpers | E4, E5, E8 | `examples/xls/common/xls_std_pkg.sv`, to be promoted to `fw_std` if users want it |
-| G-5 | No equivalence task | §7 | `synth.xls.Equiv` (libsynth) |
-| G-6 | **Yosys reading our Verilog.** XLS's SV output puts asserts in `always` blocks with `$fatal`, and Integrate's top is SV. Yosys's built-in reader may refuse either. | §6 | test in YS-2. Fixes in order: codegen with asserts behind `` `ifndef SYNTHESIS `` (the Synth task defines it); `read_verilog -sv`; `sv2v` (shipped in yosys-bin); ask edapack to bundle yosys-slang. |
+| G-5 | ~~No equivalence task~~ **Done (GAP-2).** | §7 | `synth.xls.Equiv` (libsynth) |
+| G-6 | **Yosys reading our Verilog.** ~~XLS's SV output puts asserts in `always` blocks with `$fatal`~~ | §6 | **Tested (YS-2).** `read_verilog -sv` takes XLS's SV for crc32, sha256, idct and both RLE procs, SVA asserts included. It rejects **AES** (and `aes_ctr`): XLS assigns whole rows of 2-D unpacked arrays ("Insufficient number of array indices"). Both sv2v and XLS's Verilog-2001 output read fine. `Synth`'s `frontend: auto` tries Yosys's reader, then sv2v, with a note. Integrate's top is not tested yet. |
 | G-7 | **Test levels need views.** The `spl`/`rtl` views and the ready/valid transactors as a library protocol are still open in `xls-phase2.md` (VIEW-1, VIEW-2). | §2.2 | do VIEW-1/2 as part of this work, then add `gates` as a third view |
 | G-8 | ~~**No SVUnit in the flow.**~~ **Done (TB-1).** | §2.2 | `hdltest.svunit` in dv-flow-libhdltest (`Lib`, `TestRunner`, `Check`). The generated runner replaces SVUnit's Perl `runSVUnit`; build and run go through `hdlsim.<sim>.SimImage`/`SimRun`, so every hdlsim simulator works. The verdict is an `hdlsim.TestResult`, and failing checks become markers at the test line. SVUnit is found from the `install` parameter, then `$SVUNIT_INSTALL`, then the IVPM copy (`$IVPM_PACKAGES/svunit`, pinned at v3.38.1 by libhdltest's `ivpm.yaml`), then `packages/svunit` above the flow. |
-| G-9 | **No call API for a function.** The proto kit gives components an API (interface class + bridge + transactor), but nothing gives one to a package function. | E1–E8, E10 | generate it from the SV signatures: `<pkg>_api` (one task per exported function), `<pkg>_api_model` (calls the function) and `<pkg>_api_xtor` (bridge onto a valid-pipelined transactor whose latency comes from the XLS signature). Output alongside the `xlsIR` by the G-1 task (D-12). |
-| G-10 | **No gate-level simulation flow.** | §2.2 `gates` | `synth.yosys.Synth` also writes a simulation netlist (`write_verilog -noattr`) and names the Yosys cell models for the target, as a fileset `SimImage` can take |
-| G-11 | XLS function modules have no handshake by default | G-9 | `synth.xls.Codegen` parameters for `--input_valid_signal`/`--output_valid_signal` (and the signature records them) |
+| G-9 | ~~**No call API for a function.**~~ **Done (TB-2).** | E1–E8, E10 | Package `fw.hdl.api`, generated from the SV signatures (D-12). `Functions` writes `<api>_pkg`: the interface class, the proxy a test gets from `get()`, and `<api>_model`. Each level supplies a module named `<api>_harness` that registers its binding: `ModelBinding` (the SV function answers) or `XlsBinding` (per function, a transactor interface on the XLS module's pins, the bridge class, clock and reset). It is a separate package from `fw.hdl.xls`, because the `model` level needs no XLS. |
+| G-10 | ~~**No gate-level simulation flow.**~~ **Done (TB-4).** | §2.2 `gates` | `synth.yosys.Synth` (`sim_netlist`, on by default) outputs, as `verilogSource`, the target's cell models from Yosys's data directory and then `netlist.v`. The netlist's top keeps the XLS module's name and ports, so `XlsBinding`'s harness runs on it unchanged. Verified on generic, iCE40 and ECP5. |
+| G-11 | ~~XLS function modules have no handshake by default~~ **Done (GAP-4).** | G-9 | `synth.xls.Codegen` parameters `input_valid_signal`/`output_valid_signal`; the signature records them and the latency |
 
 ## 11. Work items
 
 ### 11.1 Examples (EX)
-- ☐ **EX-0** Clone xlsynth `v0.59.0`, confirm each §3.1 path, and copy `orig/` with
+- ☑ **EX-0** Clone xlsynth `v0.59.0`, confirm each §3.1 path, and copy `orig/` with
   `UPSTREAM`. Run each original through `DslxToIR` + `Codegen` (the DSLX path alone),
   so we know the reference half works before porting. Check G-3.
-- ☐ **EX-1** `crc32`, end to end, with every task explicit. This is the template:
+  - All 17 files are in `examples/xls/*/orig/`, plus `examples/xls/NOTICE`.
+  - Upstream's 38 `#[test]`/`#[test_proc]` pass in `dslx_interpreter_main`, run on the
+    `orig/` copies. The release interpreter has no JIT, so `gcd.x`'s quickcheck is
+    skipped; E4's equivalence check (§7) proves it instead.
+  - Every non-parametric top goes through IR → `opt_main` → `codegen_main` (1 stage):
+
+    | top | opt IR nodes | Verilog lines |
+    |---|---|---|
+    | `crc32::main` | 128 | 81 |
+    | `adler32::main` | 6 | 35 |
+    | `lfsr7`, `lfsr8` | 5, 7 | 35 |
+    | `prefix_sum` | 82 | 198 |
+    | `idct` | 1,883 | 2,754 |
+    | `sha256::main` | 4,964 | 3,959 |
+    | `RunLengthEncoder32`, `RunLengthDecoder32` (procs) | 36, 59 | 130, 138 |
+    | `aes::encrypt` | 4,248 | 3,463 |
+    | `aes_ctr` (proc) | 4,319 | 3,514 |
+
+    `adler32` is 6 nodes because one byte never reaches the modulus; `opt_main`
+    folds it away.
+  - G-3 is fixed. G-12 is new: the parametric files need a DSLX wrapper.
+  - Note for E10: `aes::encrypt` takes a `key_width` argument (128 or 256), so
+    the port covers both, as upstream does.
+- ◐ **EX-1** `crc32`, end to end, with every task explicit. This is the template:
   the README layout (test first), the SVUnit test at all three levels, both paths,
   Yosys ×3, `dslx_glue/` and the knob script.
+  - Done: `crc32_pkg.sv` (one deviation: DSLX's parameter `byte` is an SV keyword, so
+    `byte_`). Its optimized IR is **proven equivalent** to the DSLX's, and both are
+    128 nodes. `crc32_unit_test.sv` passes at `model` (time 0) and at `rtl` (time 95:
+    reset, then the 2-stage pipeline). Under `std.TestRunner` a planted wrong
+    expectation is reported as `fail crc32-model`, with a marker at the test line.
+  - Done since: Yosys ×3 on both paths, `equiv` (proven), and `gates` at all three
+    targets. `dfm run crc32.all` from a clean rundir takes 7.6 s, and the one test
+    file passes at five levels: `model`, `rtl`, `gates`, `gates-ice40`, `gates-ecp5`.
+    First QoR row (cells; 2 stages, unit delay model):
+
+    | target | SV path | DSLX path |
+    |---|---|---|
+    | generic | 109 | 108 |
+    | ice40 | 103 (44 LUT4, 59 FF) | 103 |
+    | ecp5 | 100 (41 LUT4, 59 FF) | 100 |
+
+    The generic gap is real but small. The two optimized IRs are proven equivalent
+    yet differ by one node (127 vs 126), and ABC maps them to a slightly different
+    XOR/XNOR/NOT mix. The FPGA targets come out identical.
+  - Since then: `dslx_glue/` (TB-5), the README (test first), and the knob script, run
+    and recorded. Left for your review: the glue's fairness, and the README.
 - ☐ **EX-2** The compound tasks `fn-pipeline` and `proc-pipeline`; port E2, E3 (fn),
   E5.
 - ☐ **EX-3** E4, E6, E7: parametric code, signed arithmetic, the `>>>` trap.
@@ -444,36 +495,73 @@ synthesis.
 - ☐ **EX-7** `examples/xls/README.md`, `NOTICE`, the quick subset in `tests`.
 
 ### 11.2 Yosys in libsynth (YS)
-- ☐ **YS-1** `synth.yosys` package:
+- ☑ **YS-1** `synth.yosys` package:
   - the `Synth` task (`target`, typed common params, defines and incdirs, liberty);
   - `stat -json` output, netlist formats, `args` placed before the writes;
   - docs, held to the libproject docs gate.
-- ☐ **YS-2** Front-end checks (G-6): XLS Verilog from both SV modes, the Integrate
-  top, and the fallbacks.
-- ☐ **YS-3** Diagnostics: Yosys messages become markers, mapped through
-  `verilog_source()`.
+  - Targets: `generic`, `ice40`, `ecp5`, `nexus`, `machxo2`, `machxo3`, `gowin`,
+    `gatemate`, `xilinx`. Yosys 0.69 has no `synth_ecp5`/`synth_nexus` any more; they
+    are `synth_lattice -family`. It also has no `-retime`/`-abc9`, so those are not
+    typed parameters; `synth_args` carries any family-only flag.
+  - The default top is the `module=` attribute that `synth.xls.Codegen` now sets.
+    Fileset `params` do not survive between dv-flow tasks; attributes do.
+  - Yosys's own ECP5 cell model declares some flops twice (Verilator MODDUP warnings).
+    That is upstream and harmless.
+- ◐ **YS-2** Front-end checks (G-6): XLS Verilog from both SV modes, the Integrate
+  top, and the fallbacks. Done for XLS's SV of every example (the DSLX path); AES needs
+  sv2v. The Integrate top is still to do.
+- ◐ **YS-3** Diagnostics: Yosys messages become markers, mapped through
+  `verilog_source()`. Basic form done with YS-1: `ERROR:` and `Warning:` lines, located
+  where Yosys gives a file and line, deduplicated, mapped through `verilog_source()`.
+  Still to do: check the mapping on a real XLS-Verilog error.
 - ☐ **YS-4** `Script`; move `AgentSkill` over.
 - ☐ **YS-5** Migration (§6.3): deprecation in libyosys, then edapack stops shipping it.
 
 ### 11.3 Gaps (GAP)
-- ☐ **GAP-1** `fw.hdl.xls.IR` (G-1).
-- ☐ **GAP-2** `synth.xls.Equiv` (G-5).
+- ☑ **GAP-1** `fw.hdl.xls.IR` (G-1). Functions are found by hierarchical path or an
+  unambiguous name (a bare name that two functions share is an error naming both).
+- ☑ **GAP-2** `synth.xls.Equiv` (G-5). The verdict is `equivalent`, `not-equivalent`
+  (with the counterexample), `inconclusive` (a timeout; a warning unless
+  `require_proof`), or `error`. Written as `equiv.json`.
 - ☐ **GAP-3** `try_get` (G-2), if D-7 keeps E3's proc half.
-- ☐ **GAP-4** Codegen valid signals (G-11).
+- ☑ **GAP-4** Codegen valid signals (G-11). Also added to libsynth along the way:
+  `synth.xls.DslxTest` (upstream's own tests, failures as markers at the assert), and
+  each `dslxSource` fileset's base on the DSLX import path, so `orig/` trees import as
+  upstream does.
 
 ### 11.4 Tests and the integration story (TB)
 - ☑ **TB-1** SVUnit in the flow (G-8): dv-flow-libhdltest, with 16 tests passing,
   including SVUnit runs on Verilator for pass, fail-as-data, `gate`, and two suites.
   It is in fw-hdl's `ivpm.yaml`.
-- ☐ **TB-2** The function call API (G-9): the interface class, the model binding and
-  the transactor binding, generated from the SV.
-- ☐ **TB-3** Levels as views (G-7). Finish VIEW-1/2 of `xls-phase2.md`, then add
+- ☑ **TB-2** The function call API (G-9): the interface class, the model binding and
+  the transactor binding, generated from the SV. `hdltest.svunit.TestRunner` gained a
+  `harness` parameter (modules instantiated beside the suites), which is how a level's
+  `<api>_harness` enters the bench without the test bench changing.
+- ☑ **TB-3** Levels as views (G-7). Finish VIEW-1/2 of `xls-phase2.md`, then add
   `level={model,rtl,gates}` as one flow parameter. The test file and the TB top stay
   fixed.
-- ☐ **TB-4** The gate-level view (G-10), generic first, then `ice40` and `ecp5` cell
-  models.
-- ☐ **TB-5** E1's `dslx_glue/` and the knob script, plus a review of the glue for
+  - dv-flow already has the mechanism. The image and run are `select:` families over
+    `level` (`img.model`, `img.rtl`), so a level nobody asks for is never built. The
+    checks are a `matrix:` tagged `std.Test` with `view`, under a `std.TestRunner` root.
+    So the knob is `dfm run tests --views rtl`, not `-D level=` (§5 is updated).
+  - E1 runs `model`, `rtl`, `gates`, `gates-ice40` and `gates-ecp5` this way, plus
+    `dslx-rtl` and `dslx-gates` for the contrast. VIEW-1/2 of `xls-phase2.md` (views
+    of a *component* design) are not needed for function examples; they come back
+    with E9.
+- ☑ **TB-4** The gate-level view (G-10), generic first, then `ice40` and `ecp5` cell
+  models. Verilator warns UNOPTFLAT on the netlists' bit-blasted output flops; it is a
+  performance note, not an error.
+- ◐ **TB-5** E1's `dslx_glue/` and the knob script, plus a review of the glue for
   fairness.
+  - `dslx_glue/` is 62 lines in two files. It contains the API package with the types
+    restated by hand, a one-call-at-a-time transactor, and the bench. It passes at
+    `dslx-rtl` and `dslx-gates`. The fw-hdl path generates 99 lines, pipelined and with
+    a model binding; the user writes none of them.
+  - The first version of the glue hung: it sampled reset at time 0, before the
+    harness's value reached the interface, so it presented its call during reset. That
+    is recorded in the README as what writing glue costs. The generated binding
+    presents calls from a clocked process, so it cannot make that mistake.
+  - The knob script ran (§2.2 point 3). The fairness review is yours.
 - ☐ **TB-6** `report.py` and `RESULTS.md`: the QoR table and the integration table
   (§8).
 
@@ -518,13 +606,20 @@ synthesis.
    (`verilator_compat`, on by default). This is a Verilator regression and should be
    reported upstream with a reduced test case; a two-method class does not
    reproduce it.
-6. **Gate-level simulation is slow** for E8 and E10 (tens of thousands of cells).
+6. **A broken bench can still pass.** ~~Open~~ **Hit in EX-1.** Yosys's iCE40 cell
+   models give input ports default values, and Verilator 5.049 drives the *connected*
+   net with them (against LRM 23.2.2.4). The iCE40 netlist held the bench's reset low,
+   and the test still passed; only the pass time (55 instead of 95) showed it.
+   `synth.yosys.Synth` now defines `NO_ICE40_DEFAULT_ASSIGNMENTS` for those models.
+   The mitigation in general is the integration table's sim time per level: a level
+   that answers sooner than its latency allows is a finding.
+7. **Gate-level simulation is slow** for E8 and E10 (tens of thousands of cells).
    Run `gates` for those on the generic netlist with few tests in the full run only,
    and say so in the table.
-7. **The contrast must be fair.** If `dslx_glue/` looks padded, the point is lost.
+8. **The contrast must be fair.** If `dslx_glue/` looks padded, the point is lost.
    It is written as an expert would and reviewed (TB-5). §2.3 also says exactly
    which part of the gap is structural.
-8. **Upstream churn.** DSLX syntax changes between releases (`lfsr_proc.x` at HEAD
+9. **Upstream churn.** DSLX syntax changes between releases (`lfsr_proc.x` at HEAD
    uses the new `impl` proc style). Pinning the tag avoids this; re-pinning is a
    deliberate task.
 
@@ -562,3 +657,28 @@ synthesis.
   - D-11 to D-13 are decided. D-12 depends on the path: generated on the fw-hdl flow,
     hand-written on the XLS path.
   - Risk 5 occurred (a Verilator regression) and is worked around.
+- 2026-10-03: implementation, round 1 (approved; committed first: libhdltest on its
+  `main`, the plan and `ivpm.yaml` on `xls-backend`).
+  - **EX-0** done. All 17 originals are in `orig/`, and upstream's 38 tests pass from
+    there. The DSLX path compiles every non-parametric top. G-3 is fixed (functions
+    are keyed by hierarchical path). G-12 is new (parametric DSLX tops need a
+    wrapper).
+  - **GAP-1, GAP-2, GAP-4, TB-2, TB-3, TB-4, YS-1** done; YS-2 and YS-3 in part.
+    - New fw-hdl dv-flow packages `fw.hdl.xls` (`IR`) and `fw.hdl.api` (`Functions`,
+      `ModelBinding`, `XlsBinding`).
+    - libsynth gained `synth.xls.DslxTest`, `synth.xls.Equiv`, Codegen's valid
+      signals, and `synth.yosys.Synth`. libhdltest's `TestRunner` gained `harness`.
+  - **EX-1** runs end to end (`dfm run crc32.all`, 7.6 s from clean). It checks
+    upstream's test, proves equivalence, runs Yosys ×3 on both paths, and runs the one
+    test file at five fw-hdl levels and two DSLX-path levels.
+  - Findings:
+    - Yosys's reader rejects XLS's AES output (sv2v fallback).
+    - Fileset `params` do not cross dv-flow tasks; use `attributes`.
+    - dv-flow's up-to-date check does not see a change to a task's implementation;
+      clear the rundir when developing tasks.
+    - Verilator drives connected nets with input-port defaults (iCE40 cell models).
+    - The first hand-written glue hung on a time-0 reset race.
+  - Tests: libsynth 36, libhdltest 17, `tests/xls` + zuspec-be-xls 119 and 29 (the
+    function tests rerun after the lookup change), fw-hdl `test_fn_api` 7.
+    Docs gates: libsynth and libhdltest 100%; fw.hdl's new packages are fully
+    documented (the 2 gaps are older `tests/formal` tasks).

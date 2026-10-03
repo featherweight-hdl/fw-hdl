@@ -1,0 +1,15 @@
+The examples under this directory are derived from the XLS project.
+
+* Each example's orig/ directory holds unmodified copies of XLS source files,
+  with their license headers. orig/UPSTREAM records the repository, tag,
+  commit and sha256 of every copied file.
+* The SystemVerilog ports (<name>_pkg.sv) and their tests (<name>_unit_test.sv)
+  are derived works of those files.
+
+XLS: https://github.com/google/xls (the copies come from the xlsynth release
+tree, https://github.com/xlsynth/xlsynth)
+Copyright The XLS Authors
+Licensed under the Apache License, Version 2.0
+(http://www.apache.org/licenses/LICENSE-2.0)
+
+fw-hdl is also licensed under the Apache License, Version 2.0; see ../../LICENSE.

@@ -1,0 +1,10 @@
+# Upstream source of the files under orig/, copied byte for byte.
+# Each keeps its path in the upstream tree, so DSLX imports
+# (`import xls.modules.rle.rle_common`) resolve with --dslx_path=orig.
+repo:   https://github.com/xlsynth/xlsynth
+tag:    v0.59.0
+commit: 3f668e9bf228c0260eaa77b4a4e0be18369c3af0
+files:
+  a7709d9b0c3fe6de4952c76b2d49c7ee2185d9a484afb47e2f2681389a54a00c  xls/modules/rle/rle_common.x
+  8a689a9f1de369c20ce898cb56e22f2f8f5afaff3dec9af39d48b72e787ff2e3  xls/modules/rle/rle_enc.x
+  9cb75616ddd2fa3fe67f068d56dca915570735e1578f9e11b5a23484efb41f32  xls/modules/rle/rle_dec.x

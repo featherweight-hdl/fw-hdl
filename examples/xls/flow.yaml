@@ -1,0 +1,26 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+# XLS examples: SV ports of XLS designs, with the original DSLX beside them.
+# See README.md and ../../xls-examples.md.
+package:
+  name: xls_examples
+  imports:
+  - hdlsim
+  - hdlsim.vlt
+  - hdltest.svunit
+  - synth.xls
+  - synth.yosys
+  - fw.hdl.xls
+  - fw.hdl.api
+
+  tasks:
+  # SVUnit itself, shared by every example's tests.
+  - name: svunit
+    uses: hdltest.svunit.Lib
+
+  - root: tests
+    desc: Every example's SVUnit tests, at every level (--views model,rtl,gates)
+    uses: std.TestRunner
+    needs: [crc32.test]
+
+  fragments:
+  - crc32/flow.yaml

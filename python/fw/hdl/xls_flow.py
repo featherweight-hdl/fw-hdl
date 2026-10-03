@@ -6,7 +6,7 @@ and lower with ``zuspec-be-xls``.
 """
 from __future__ import annotations
 
-from typing import List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence
 
 import zuspec.ir.core as ir
 from pyslang import ast
@@ -76,28 +76,48 @@ def sv_to_structure(files: Sequence[str], top: str,
         _find_class(parser, top), spelling=top)
 
 
-def sv_to_functions(files: Sequence[str], names: Sequence[str],
-                    config: Optional[FlowConfig] = None,
-                    reporter: Optional[ErrorReporter] = None) -> List[ir.Function]:
-    """Map the named package-level (or static class) functions, and their callees."""
-    config = config or FlowConfig()
-    reporter = reporter or ErrorReporter()
-    parser = _parse(files, config, reporter)
-    found = {}
+def _find_functions(parser: Parser, names: Sequence[str]):
+    """The function each entry of *names* names. An entry is a hierarchical
+    path (`crc32_pkg::main`, `lfsr_c#(7)::lfsr`) or a bare name; a bare name
+    that more than one function has is an error."""
+    cands = {n: {} for n in names}
 
     def visit(sym):
-        if sym.kind == ast.SymbolKind.Subroutine and getattr(sym, "name", None) in names \
+        if sym.kind == ast.SymbolKind.Subroutine \
                 and sym.subroutineKind == ast.SubroutineKind.Function \
-                and sym.body is not None and sym.name not in found:
-            found[sym.name] = sym
+                and sym.body is not None:
+            hp = sym.hierarchicalPath
+            for n in names:
+                if n == hp or n == sym.name:
+                    cands[n].setdefault(hp, sym)
         return True
 
     parser.get_root().visit(visit)
-    missing = [n for n in names if n not in found]
+    missing = [n for n in names if not cands[n]]
     if missing:
         raise XlsFlowError(f"function(s) not found: {missing}")
+    for n in names:
+        if len(cands[n]) > 1:
+            raise XlsFlowError(f"function name {n!r} is ambiguous; name one of: "
+                               f"{sorted(cands[n])}")
+    return [next(iter(cands[n].values())) for n in names]
+
+
+def sv_to_functions(files: Sequence[str], names: Sequence[str],
+                    config: Optional[FlowConfig] = None,
+                    reporter: Optional[ErrorReporter] = None,
+                    rename: Optional[Dict[str, str]] = None) -> List[ir.Function]:
+    """Map the named package-level (or static class) functions, and their callees.
+
+    *rename* gives an entry of *names* another IR function name (a function
+    top becomes its module's name)."""
+    config = config or FlowConfig()
+    reporter = reporter or ErrorReporter()
+    parser = _parse(files, config, reporter)
+    subs = _find_functions(parser, names)
+    rename = rename or {}
     return StaticMapper(config, reporter, parser.source_manager).map_functions(
-        [found[n] for n in names])
+        subs, [rename.get(n) for n in names])
 
 
 def sv_to_xls(files: Sequence[str], top: str, config: Optional[FlowConfig] = None,
@@ -120,5 +140,20 @@ def sv_functions_to_xls(files: Sequence[str], names: Sequence[str], top: Optiona
     return pkg
 
 
+def sv_function_package(files: Sequence[str], top: str, module: str,
+                        config: Optional[FlowConfig] = None,
+                        reporter: Optional[ErrorReporter] = None):
+    """The XLS package whose top is the function *top* (a hierarchical path
+    or an unambiguous name), renamed *module*: the name codegen gives the
+    module (`crc32_pkg::main` -> `crc32_pkg__main`)."""
+    from zuspec.be.xls import xir
+    from zuspec.be.xls.lower_fn import lower_functions
+    fns = sv_to_functions(files, [top], config, reporter, rename={top: module})
+    pkg = xir.Package(name=module)
+    lower_functions(pkg, fns)
+    pkg.top = module
+    return pkg
+
+
 __all__ = ["XlsFlowError", "FwHdlError", "sv_to_component", "sv_to_structure", "sv_to_functions",
-           "sv_to_xls", "sv_functions_to_xls"]
+           "sv_to_xls", "sv_functions_to_xls", "sv_function_package"]

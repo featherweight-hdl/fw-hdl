@@ -1,0 +1,141 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+package:
+  name: fw.hdl.api
+  desc: The call API of SV functions, and its bindings for each test level
+  doc: |
+    Registered by the fw-hdl Python package (entry point `dv_flow.mgr`).
+
+    A test calls the design through an **API**: an interface class with one
+    task per function. It is generated from the SV function signatures, so
+    the user writes none of it. The test gets the API from `<api>_pkg::get()`
+    and never names a binding, so the same test file runs at every level:
+
+    | level | binding task | the API is answered by |
+    |---|---|---|
+    | `model` | `ModelBinding` | the SV functions themselves |
+    | `rtl` | `XlsBinding` | the XLS modules, through a transactor on their pins |
+    | `gates` | `XlsBinding` | the synthesized netlist of those modules (same pins) |
+
+    ```
+    SV ─► Functions ─► <api>_pkg.sv (interface class, proxy, model class)
+                    └► fwFnApi ─┬► ModelBinding ─────────────────────► <api>_harness (model)
+                                └► XlsBinding ◄─ xlsModuleSignature ─► <api>_harness (rtl, gates)
+    ```
+
+    Every binding defines a module named `<api>_harness`: the test bench
+    instantiates it (for SVUnit, `hdltest.svunit.TestRunner`'s `harness`
+    parameter), and the level decides which file defines it.
+
+    In a test:
+
+    ```systemverilog
+    import crc32_pkg_api_pkg::*;
+    crc32_pkg_api api;
+    function void build(); svunit_ut = new(name); api = get(); endfunction
+    `SVTEST(crc32_one_char)
+        bit [31:0] crc;
+        api.main("1", crc);
+        `FAIL_UNLESS_EQUAL(crc, 32'h83DCEFB7)
+    `SVTEST_END
+    ```
+
+    See `xls-examples.md` §2.2 (G-9, TB-2).
+
+    **File type** `fwFnApi` -- `<api>.api.json`: the API's functions, their
+    argument and result types, and the module XLS makes of each.
+
+  tasks:
+  - name: Functions
+    desc: Generate the call API of SV functions -- an interface class, its proxy and the model class
+    doc: |
+      `functions` names the functions, by path (`crc32_pkg::main`) or by an
+      unambiguous name, as for `fw.hdl.xls.IR`. Each becomes a task of the
+      API, with the function's name and arguments, plus an `output` for the
+      result named `result`. A task, not a function, because a call takes
+      time when RTL answers it.
+
+      Outputs:
+
+      * `systemVerilogSource` -- `<api>_pkg.sv`, package `<api>_pkg`:
+        - `interface class <api>`;
+        - `get()`, which returns the proxy a test holds, and `bind_api()`,
+          with which a binding registers itself;
+        - `class <api>_model`, which calls the SV functions. Compile the SV
+          sources before this file at every level, since the API uses their
+          types.
+      * `fwFnApi` -- `<api>.api.json`, for the binding tasks.
+
+      The API is named `name` or, by default, after the first function's
+      package: `crc32_pkg::main` gives `crc32_pkg_api`.
+    consumes:
+    - filetype: systemVerilogSource
+    - filetype: verilogSource
+    passthrough: none
+    with:
+      functions:
+        doc: Functions to export (paths, or unambiguous names), one API task each
+        type: list
+        value: []
+      name:
+        doc: The API's name. Default -- <package of the first function>_api.
+        type: str
+        value: ""
+    shell: pytask
+    run: fw.hdl.dfm_tasks.ApiFunctions
+
+  - name: ModelBinding
+    desc: The `model` level -- an <api>_harness in which the SV functions answer the API
+    doc: |
+      Consumes the `fwFnApi` of `Functions`. Output -- `systemVerilogSource`,
+      `<api>_model.sv`: `module <api>_harness`, which binds `<api>_model` at
+      time 0.
+    consumes:
+    - filetype: fwFnApi
+    passthrough: none
+    shell: pytask
+    run: fw.hdl.dfm_tasks.ApiModelBinding
+
+  - name: XlsBinding
+    desc: The `rtl` and `gates` levels -- an <api>_harness in which the XLS modules answer the API
+    doc: |
+      Consumes the `fwFnApi` of `Functions` and the `xlsModuleSignature` of
+      each function's module (from `synth.xls.Codegen` on `fw.hdl.xls.IR`'s
+      output). Codegen must be given `input_valid_signal` and
+      `output_valid_signal`.
+
+      Output -- `systemVerilogSource`, `<api>_xls.sv`:
+
+      * per function, `interface <module>_xtor_if`: a call queues its
+        arguments; one call is presented per clock with the input valid, and
+        results are collected in order on the output valid. So calls from
+        several threads pipeline, and the latency is whatever the signature
+        says;
+      * `class <api>_xls`, the bridge: the API, answered by those interfaces;
+      * `module <api>_harness`: a clock (`clock_period`), a reset held for
+        `reset_cycles`, each module wired to its interface, the bridge bound
+        as the API, and a watchdog that ends the run with `$fatal` after
+        `timeout_cycles`.
+
+      The modules themselves are not in the output: compile the XLS Verilog
+      for `rtl`, or the netlist for `gates`. Port names and widths come from
+      the signatures, so the binding does not change when the pipeline
+      does.
+    consumes:
+    - filetype: fwFnApi
+    - filetype: xlsModuleSignature
+    passthrough: none
+    with:
+      clock_period:
+        doc: Period of the harness clock, in simulation time units
+        type: int
+        value: 10
+      reset_cycles:
+        doc: Clock cycles reset is held at the start
+        type: int
+        value: 4
+      timeout_cycles:
+        doc: Fail the run ($fatal) after this many cycles, so a hung call cannot stall it; 0 -- never
+        type: int
+        value: 100000
+    shell: pytask
+    run: fw.hdl.dfm_tasks.ApiXlsBinding

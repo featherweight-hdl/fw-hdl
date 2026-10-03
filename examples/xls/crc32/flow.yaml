@@ -1,0 +1,248 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+# E1, crc32: the template example. Every task is spelled out here; the other
+# examples use the compound tasks of ../flow.yaml, which run the same graph.
+fragment:
+  name: crc32
+
+  tasks:
+  # ---- Sources --------------------------------------------------------
+  - name: orig
+    desc: The upstream DSLX, unmodified (orig/UPSTREAM)
+    uses: std.FileSet
+    with:
+      type: dslxSource
+      base: orig
+      include: [xls/examples/crc32/crc32.x]
+
+  - name: src
+    desc: The SV port
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      include: [crc32_pkg.sv]
+
+  - name: unit-tests
+    desc: crc32.x's tests as SVUnit tests, calling the API
+    uses: std.FileSet
+    with:
+      type: svunitTest
+      include: [crc32_unit_test.sv]
+
+  # ---- The SV path: SV -> XLS IR -> Verilog ---------------------------
+  - name: ir
+    uses: fw.hdl.xls.IR
+    needs: [src]
+    with:
+      top: [crc32_pkg::main]
+
+  - name: rtl
+    uses: synth.xls.Codegen
+    needs: [ir]
+    with:
+      pipeline_stages: 2
+      input_valid_signal: input_valid
+      output_valid_signal: output_valid
+
+  # ---- The DSLX path: upstream's own tests, then DSLX -> XLS IR --------
+  - name: dslx-test
+    uses: synth.xls.DslxTest
+    needs: [orig]
+
+  - name: dslx-ir
+    uses: synth.xls.DslxToIR
+    needs: [orig]
+    with:
+      top: main
+
+  - name: dslx-rtl
+    uses: synth.xls.Codegen
+    needs: [dslx-ir]
+    with:
+      module_name: crc32_dslx
+      pipeline_stages: 2
+      input_valid_signal: input_valid
+      output_valid_signal: output_valid
+
+  # ---- The two paths against each other ------------------------------
+  - name: equiv
+    desc: The SV port's optimized IR against the DSLX's, for every input
+    uses: synth.xls.Equiv
+    needs: [rtl, dslx-rtl]
+
+  # ---- The API, and what answers it at each level ---------------------
+  - name: api
+    uses: fw.hdl.api.Functions
+    needs: [src]
+    with:
+      functions: [crc32_pkg::main]
+
+  - name: dut-model
+    desc: Level model -- the SV function answers
+    uses: fw.hdl.api.ModelBinding
+    needs: [api]
+
+  - name: bind-rtl
+    uses: fw.hdl.api.XlsBinding
+    needs: [api, rtl]
+
+  - name: dut-rtl
+    desc: Level rtl -- the XLS module answers, through its transactor
+    passthrough: all
+    needs: [rtl, bind-rtl]
+
+  # ---- Yosys ----------------------------------------------------------
+  - name: synth
+    desc: Yosys, for each target (synth.generic, synth.ice40, synth.ecp5)
+    strategy:
+      select:
+        axes:
+          target: [generic, ice40, ecp5]
+      body:
+      - uses: synth.yosys.Synth
+        needs: [rtl]
+        with:
+          target: "${{ this.target }}"
+
+  - name: dslx-synth
+    desc: Yosys on the DSLX path's Verilog, for the area comparison
+    strategy:
+      select:
+        axes:
+          target: [generic, ice40, ecp5]
+      body:
+      - uses: synth.yosys.Synth
+        needs: [dslx-rtl]
+        with:
+          target: "${{ this.target }}"
+
+  - name: dut-gates
+    desc: Level gates -- the generic Yosys netlist answers, through the same transactor
+    passthrough: all
+    needs: [synth.generic, bind-rtl]
+
+  - name: dut-gates-ice40
+    desc: Level gates-ice40 -- the iCE40 netlist, with Yosys's iCE40 cell models
+    passthrough: all
+    needs: [synth.ice40, bind-rtl]
+
+  - name: dut-gates-ecp5
+    desc: Level gates-ecp5 -- the ECP5 netlist, with Yosys's ECP5 cell models
+    passthrough: all
+    needs: [synth.ecp5, bind-rtl]
+
+  # ---- The tests: one file, every level -------------------------------
+  - name: runner
+    uses: hdltest.svunit.TestRunner
+    needs: [unit-tests]
+    with:
+      harness: [crc32_pkg_api_harness]
+
+  - name: img
+    strategy:
+      select:
+        axes:
+          level: [model, rtl, gates, gates-ice40, gates-ecp5]
+      body:
+      - uses: hdlsim.vlt.SimImage
+        needs: [xls_examples.svunit, src, api, "dut-${{ this.level }}", runner]
+        with:
+          top: [testrunner]
+
+  - name: run
+    strategy:
+      select:
+        axes:
+          level: [model, rtl, gates, gates-ice40, gates-ecp5]
+      body:
+      - uses: hdlsim.vlt.SimRun
+        needs: ["img.${{ this.level }}"]
+        with:
+          mode: test
+
+  - name: test
+    strategy:
+      matrix:
+        view: [model, rtl, gates, gates-ice40, gates-ecp5]
+        case:
+        - {name: crc32}
+      body:
+      - name: "${{ this.view }}-${{ this.case.name }}"
+        uses: hdltest.svunit.Check
+        needs: ["run.${{ this.view }}"]
+        with:
+          name: "crc32-${{ this.view }}"
+        tags:
+        - std.Test: {case: "${{ this.case.name }}", view: "${{ this.view }}"}
+
+  # ---- The contrast: the same test file on the DSLX path (section 2.3) --
+  # Nothing is generated here. dslx_glue/ is what a user writes by hand, and
+  # the DSLX path has no model level.
+  - name: dslx-glue
+    desc: Hand-written -- the API, the transactor and the bench for the DSLX module
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      base: dslx_glue
+      include: [crc32_pkg_api_pkg.sv, crc32_dslx_harness.sv]
+
+  - name: dut-dslx-rtl
+    desc: Level dslx-rtl -- the DSLX path's module, through the hand-written glue
+    passthrough: all
+    needs: [dslx-rtl]
+
+  - name: dut-dslx-gates
+    desc: Level dslx-gates -- its generic netlist, through the same glue
+    passthrough: all
+    needs: [dslx-synth.generic]
+
+  - name: dslx-img
+    strategy:
+      select:
+        axes:
+          level: [dslx-rtl, dslx-gates]
+      body:
+      - uses: hdlsim.vlt.SimImage
+        needs: [xls_examples.svunit, "dut-${{ this.level }}", dslx-glue, runner]
+        with:
+          top: [testrunner]
+
+  - name: dslx-run
+    strategy:
+      select:
+        axes:
+          level: [dslx-rtl, dslx-gates]
+      body:
+      - uses: hdlsim.vlt.SimRun
+        needs: ["dslx-img.${{ this.level }}"]
+        with:
+          mode: test
+
+  - name: dslx-tests
+    strategy:
+      matrix:
+        view: [dslx-rtl, dslx-gates]
+        case:
+        - {name: crc32}
+      body:
+      - name: "${{ this.view }}-${{ this.case.name }}"
+        uses: hdltest.svunit.Check
+        needs: ["dslx-run.${{ this.view }}"]
+        with:
+          name: "crc32-${{ this.view }}"
+        tags:
+        - std.Test: {case: "${{ this.case.name }}", view: "${{ this.view }}"}
+
+  # ---- Everything -----------------------------------------------------
+  - root: all
+    desc: "E1 end to end: both paths, equivalence, Yosys on both, and the tests at every level"
+    needs:
+    - dslx-test
+    - equiv
+    - synth.generic
+    - synth.ice40
+    - synth.ecp5
+    - dslx-synth.generic
+    - dslx-synth.ice40
+    - dslx-synth.ecp5
+    - test
+    - dslx-tests

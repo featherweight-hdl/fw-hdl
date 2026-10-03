@@ -1,0 +1,52 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+package:
+  name: fw.hdl.xls
+  desc: fw-hdl SV to XLS IR -- functions and component classes, one IR package each
+  doc: |
+    Registered by the fw-hdl Python package (entry point `dv_flow.mgr`).
+
+    ```
+    systemVerilogSource ─► IR ─► xlsIR ─► synth.xls.Codegen ─► Verilog module, signature
+    ```
+
+    `fw.hdl.spl.Partition` does the same for the XLS blocks of a whole
+    structural design; this task takes the blocks one at a time, and also
+    takes functions. See `xls-examples.md` (G-1).
+
+  tasks:
+  - name: IR
+    desc: Map SV functions or component classes in the static subset to XLS IR packages
+    doc: |
+      Each entry of `top` becomes one `xlsIR` package, `<module>.ir`, and so
+      one module when `synth.xls.Codegen` runs on it. An entry is:
+
+      * **a function** -- a package or static class function, named by its
+        path (`crc32_pkg::main`, `lfsr_pkg::lfsr_c#(7)::lfsr`) or, when only
+        one function has it, its name. Its callees are mapped with it. A
+        static function of a parameterized class is the SV form of a DSLX
+        parametric function; each specialization is a function of its own.
+      * **a component class** -- a class name, or a typedef naming a
+        specialization. It becomes a proc, as in `Partition`, and its
+        predicted signature is written too.
+
+      The module is named after the entry: `pkg::name` becomes `pkg__name`
+      (for a function, the package's top function is renamed to match).
+
+      Each entry is checked against the static subset. An unsupported
+      construct is an error marker on its SV line; every entry is checked
+      before the task fails.
+
+      Outputs:
+
+      * `xlsIR` -- `<module>.ir` for each entry;
+      * `blockSignaturePrediction` -- `<module>.pred.json` for each class.
+    consumes:
+    - filetype: systemVerilogSource
+    - filetype: verilogSource
+    with:
+      top:
+        doc: Functions (paths or names) and component classes to map, one IR package each
+        type: list
+        value: []
+    shell: pytask
+    run: fw.hdl.dfm_tasks.XlsIR
