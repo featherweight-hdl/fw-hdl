@@ -46,7 +46,7 @@ package:
       select:
         axes:
           example: [crc32, adler32, lfsr, gcd, prefix_sum, fir_dot, idct_chen, sha256, rle, rle_loop, aes, aes_ctr]
-          level: [model, rtl, gates, gates-ice40, gates-ecp5, dslx-rtl, dslx-gates]
+          level: [model, rtl, gates, gates-ice40, gates-ecp5, dslx-rtl, dslx-gates, rtl-p1000, rtl-p2000, rtl-p4000]
       body:
       - uses: hdlsim.vlt.SimImage
         needs: [svunit, "${{ this.example }}.bench-${{ this.level }}"]
@@ -59,12 +59,17 @@ package:
       select:
         axes:
           example: [crc32, adler32, lfsr, gcd, prefix_sum, fir_dot, idct_chen, sha256, rle, rle_loop, aes, aes_ctr]
-          level: [model, rtl, gates, gates-ice40, gates-ecp5, dslx-rtl, dslx-gates]
+          level: [model, rtl, gates, gates-ice40, gates-ecp5, dslx-rtl, dslx-gates, rtl-p1000, rtl-p2000, rtl-p4000]
       body:
       - uses: hdlsim.vlt.SimRun
         needs: ["img.${{ this.example }}.${{ this.level }}"]
         with:
           mode: test
+
+  - root: quick
+    desc: "The quick subset (xls-examples.md D-9): crc32, adler32, lfsr and rle, every level"
+    uses: std.TestRunner
+    needs: [crc32.test, crc32.dslx-tests, adler32.test, lfsr.test, rle.test]
 
   - root: tests
     desc: Every example's SVUnit tests at every level (--tests <example>, --views <level>)

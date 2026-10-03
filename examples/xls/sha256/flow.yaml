@@ -148,6 +148,77 @@ fragment:
   - name: bench-gates-ecp5
     passthrough: all
     needs: [src, api, synth.ecp5, bind-xls, runner]
+  # ---- EX-4: a clock-period sweep (asap7 delay model) -----------------
+  # XLS schedules the same IR to a period instead of a stage count: 1000 ps
+  # gives 113 stages, 2000 ps 46, 4000 ps 24 (250 ps cannot be met). The area
+  # is Yosys's generic netlist; the rtl-p<period> levels run the same test
+  # file against each pipeline.
+  - name: sweep-rtl
+    strategy:
+      select:
+        axes:
+          period: [1000, 2000, 4000]
+      body:
+      - uses: synth.xls.Codegen
+        needs: [ir]
+        with:
+          clock_period_ps: "${{ this.period }}"
+          delay_model: asap7
+          input_valid_signal: input_valid
+          output_valid_signal: output_valid
+
+  - name: sweep-synth
+    strategy:
+      select:
+        axes:
+          period: [1000, 2000, 4000]
+      body:
+      - uses: synth.yosys.Synth
+        needs: ["sweep-rtl.${{ this.period }}"]
+        with:
+          target: generic
+          sim_netlist: false
+
+  - name: sweep-bind
+    strategy:
+      select:
+        axes:
+          period: [1000, 2000, 4000]
+      body:
+      - uses: fw.hdl.api.XlsBinding
+        needs: [api, "sweep-rtl.${{ this.period }}"]
+
+  - name: bench-rtl-p1000
+    passthrough: all
+    needs: [src, api, sweep-rtl.1000, sweep-bind.1000, runner]
+
+  - name: bench-rtl-p2000
+    passthrough: all
+    needs: [src, api, sweep-rtl.2000, sweep-bind.2000, runner]
+
+  - name: bench-rtl-p4000
+    passthrough: all
+    needs: [src, api, sweep-rtl.4000, sweep-bind.4000, runner]
+
+  - root: sweep
+    desc: "EX-4: sha256 scheduled at three clock periods -- stages against area, and the tests at each"
+    needs: [sweep-synth.1000, sweep-synth.2000, sweep-synth.4000, sweep-test]
+
+  - name: sweep-test
+    strategy:
+      matrix:
+        view: [rtl-p1000, rtl-p2000, rtl-p4000]
+        case:
+        - {name: sha256}
+      body:
+      - name: "${{ this.view }}-${{ this.case.name }}"
+        uses: hdltest.svunit.Check
+        needs: ["xls_examples.run.sha256.${{ this.view }}"]
+        with:
+          name: "sha256-${{ this.view }}"
+        tags:
+        - std.Test: {case: "${{ this.case.name }}", view: "${{ this.view }}"}
+
   # ---- The tests ------------------------------------------------------
   - name: test
     strategy:

@@ -74,6 +74,27 @@ fragment:
       pairs: [aes_pkg__create_key_schedule=__aes__create_key_schedule, aes_pkg__encrypt=__aes__encrypt, aes_pkg__decrypt=__aes__decrypt]
 
   # ---- Yosys ----------------------------------------------------------
+  # Yosys reads XLS's Verilog-2001 for AES: its SV (arrays of arrays) needs
+  # sv2v, and that takes three times the memory (14.7 GB against 4.9 GB for
+  # encrypt). Same IR, same module and ports; the SV is what `rtl` runs.
+  - name: rtl-v2001
+    uses: synth.xls.Codegen
+    needs: [ir]
+    with:
+      pipeline_stages: 2
+      system_verilog: false
+      input_valid_signal: input_valid
+      output_valid_signal: output_valid
+
+  - name: dslx-rtl-v2001
+    uses: synth.xls.Codegen
+    needs: [dslx-ir]
+    with:
+      pipeline_stages: 2
+      system_verilog: false
+      input_valid_signal: input_valid
+      output_valid_signal: output_valid
+
   - name: synth
     strategy:
       select:
@@ -81,7 +102,7 @@ fragment:
           target: [generic, ice40, ecp5]
       body:
       - uses: synth.yosys.Synth
-        needs: [rtl]
+        needs: [rtl-v2001]
         with:
           target: "${{ this.target }}"
 
@@ -92,7 +113,7 @@ fragment:
           target: [generic, ice40, ecp5]
       body:
       - uses: synth.yosys.Synth
-        needs: [dslx-rtl]
+        needs: [dslx-rtl-v2001]
         with:
           target: "${{ this.target }}"
 

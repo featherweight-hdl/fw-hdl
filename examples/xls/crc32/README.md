@@ -43,6 +43,53 @@ The user wrote the port and the test. Everything that connects the test to a lev
 is generated from the port's function signature (`fw.hdl.api`) and from XLS's module
 signature: the API, the model binding, the transactor, the bench.
 
+## The same tests, proven
+
+The file has three more tests, with free inputs (`formal-svunit.md`):
+
+- `crc32_affine`: `crc(a) ^ crc(b) ^ crc(c) == crc(a ^ b ^ c)`. This is the
+  `#[quickcheck]` property that XLS proves with `prove_quickcheck_main`.
+- `crc32_printable_nonzero`: `std::randomize(m) with { m inside {...}; }`.
+- `crc32_alpha_distinct`: a class with `rand` fields, a constraint block, a
+  subclass that narrows it, and an inline `with`.
+
+Each one runs in two ways, with no change to the file:
+
+- **Dynamically**, at every level above, on `` `FW_SAMPLES `` random samples
+  (64 by default). Verilator solves the constraints.
+- **Formally**, for every input the constraints allow. This proves the test on
+  the SV model.
+
+```
+python -m fw.hdl.formal examples/xls/crc32/crc32_pkg.sv \
+    --api crc32_pkg::main --tests examples/xls/crc32/crc32_unit_test.sv
+```
+
+```
+proven  crc32_one_char            0.00 s  no input reaches a failure (1 checks, 0 free values)
+proven  crc32_affine              3.98 s  no input reaches a failure (2 checks, 3 free values)
+proven  crc32_printable_nonzero   0.00 s  no input reaches a failure (2 checks, 1 free values)
+proven  crc32_alpha_distinct      0.00 s  no input reaches a failure (3 checks, 1 free values)
+4/4 proven
+```
+
+The command reads the test body with the same front end as the design:
+
+1. `std::randomize` and `randomize()` give free inputs, and their constraints
+   become assumptions.
+2. Every `FAIL_*` check becomes a proof obligation.
+3. `api.main` resolves straight to `crc32_pkg::main`.
+
+The solver is dv-solve; z3 and boolector give the same answers
+(`--solver z3`). A false check gives a counterexample, with its line and the
+value of every randomized input. The counterexample is also written as a replay
+file, `<test>.cex.json`.
+
+`tests/xls/test_formal_svunit.py` holds the tests of this command, including a
+mutant design. With a wrong polynomial, `crc32_one_char` fails, but
+`crc32_affine` still proves: a CRC is affine for any polynomial, so a property
+proves only what it says.
+
 ## The port
 
 [`crc32_pkg.sv`](crc32_pkg.sv) follows `crc32.x` line for line.

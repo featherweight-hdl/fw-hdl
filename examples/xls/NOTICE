@@ -3,8 +3,10 @@ The examples under this directory are derived from the XLS project.
 * Each example's orig/ directory holds unmodified copies of XLS source files,
   with their license headers. orig/UPSTREAM records the repository, tag,
   commit and sha256 of every copied file.
-* The SystemVerilog ports (<name>_pkg.sv) and their tests (<name>_unit_test.sv)
-  are derived works of those files.
+* The SystemVerilog ports (<name>_pkg.sv), their tests (<name>_unit_test.sv),
+  common/xls_std_pkg.sv (ports of DSLX standard library functions), and the
+  DSLX wrappers in <name>/dslx_top/ are derived works of those files.
+  gcd/dslx_top/gcd_tops.x contains a full copy of gcd.x.
 
 XLS: https://github.com/google/xls (the copies come from the xlsynth release
 tree, https://github.com/xlsynth/xlsynth)

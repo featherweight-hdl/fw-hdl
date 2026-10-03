@@ -51,6 +51,31 @@ fragment:
     with:
       pipeline_stages: 2
 
+  # Like for like with the DSLX path (upstream's two codegen
+  # specializations), for the QoR table; `rtl` also has the tests' two.
+  - name: ir-qor
+    uses: fw.hdl.xls.IR
+    needs: [src]
+    with:
+      top: [RunLengthEncoder32, RunLengthDecoder32]
+
+  - name: rtl-qor
+    uses: synth.xls.Codegen
+    needs: [ir-qor]
+    with:
+      pipeline_stages: 2
+
+  - name: synth-qor
+    strategy:
+      select:
+        axes:
+          target: [generic, ice40, ecp5]
+      body:
+      - uses: synth.yosys.Synth
+        needs: [rtl-qor]
+        with:
+          target: "${{ this.target }}"
+
   # ---- The DSLX path --------------------------------------------------
   - name: dslx-test
     uses: synth.xls.DslxTest
@@ -161,4 +186,7 @@ fragment:
     - dslx-synth.generic
     - dslx-synth.ice40
     - dslx-synth.ecp5
+    - synth-qor.generic
+    - synth-qor.ice40
+    - synth-qor.ecp5
     - test
