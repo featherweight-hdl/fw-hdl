@@ -41,8 +41,10 @@ package:
 
     See `xls-examples.md` §2.2 (G-9, TB-2).
 
-    **File type** `fwFnApi` -- `<api>.api.json`: the API's functions, their
+    **File types** `fwFnApi` -- `<api>.api.json`: the API's functions, their
     argument and result types, and the module XLS makes of each.
+    `fwCompApi` -- `<api>.comp.json`: the same for components (`Components`):
+    their ports, roles and payload types.
 
   tasks:
   - name: Functions
@@ -83,14 +85,57 @@ package:
     shell: pytask
     run: fw.hdl.dfm_tasks.ApiFunctions
 
+  - name: Components
+    desc: Generate the call API of SV components (procs) -- one task per port
+    doc: |
+      `components` names component classes, or typedefs naming a
+      specialization (`RunLengthEncoder32`), as for `fw.hdl.xls.IR`. Each
+      gets an interface class, `<component>_api`, with one task per port:
+
+      * a port the component gets from (its input) -- `<port>_put(input T v)`;
+      * a port the component puts to (its output) -- `<port>_get(output T v)`.
+
+      A test puts stimulus and gets results, as a DSLX `#[test_proc]` sends
+      and receives on the proc's channels. Put queues the value; get waits
+      for one.
+
+      Outputs:
+
+      * `systemVerilogSource` -- `<api>_pkg.sv`: per component, the
+        interface class, a function `get_<component>()` returning the proxy a
+        test holds, and `bind_<component>()`;
+      * `fwCompApi` -- `<api>.comp.json`, for `ModelBinding` and
+        `XlsBinding`.
+
+      The API is named `name` or, by default, after the first component's
+      package: `rle_pkg_api`.
+    consumes:
+    - filetype: systemVerilogSource
+    - filetype: verilogSource
+    passthrough: none
+    with:
+      components:
+        doc: Component classes or typedefs to export, one interface class each
+        type: list
+        value: []
+      name:
+        doc: The API's name. Default -- <package of the first component>_api.
+        type: str
+        value: ""
+    shell: pytask
+    run: fw.hdl.dfm_tasks.ApiComponents
+
   - name: ModelBinding
     desc: The `model` level -- an <api>_harness in which the SV functions answer the API
     doc: |
-      Consumes the `fwFnApi` of `Functions`. Output -- `systemVerilogSource`,
-      `<api>_model.sv`: `module <api>_harness`, which binds `<api>_model` at
-      time 0.
+      Consumes the `fwFnApi` of `Functions` or the `fwCompApi` of
+      `Components`. Output -- `systemVerilogSource`, `<api>_model.sv`:
+      `module <api>_harness`, which binds the model at time 0. For functions
+      the model calls the SV functions; for components it runs each
+      component on the fw-hdl runtime, its ports on queues.
     consumes:
     - filetype: fwFnApi
+    - filetype: fwCompApi
     passthrough: none
     shell: pytask
     run: fw.hdl.dfm_tasks.ApiModelBinding
@@ -98,10 +143,12 @@ package:
   - name: XlsBinding
     desc: The `rtl` and `gates` levels -- an <api>_harness in which the XLS modules answer the API
     doc: |
-      Consumes the `fwFnApi` of `Functions` and the `xlsModuleSignature` of
-      each function's module (from `synth.xls.Codegen` on `fw.hdl.xls.IR`'s
-      output). Codegen must be given `input_valid_signal` and
-      `output_valid_signal`.
+      Consumes the `fwFnApi` of `Functions` (or the `fwCompApi` of
+      `Components`) and the `xlsModuleSignature` of each module (from
+      `synth.xls.Codegen` on `fw.hdl.xls.IR`'s output). For functions,
+      Codegen must be given `input_valid_signal` and `output_valid_signal`.
+      For components, each input channel presents queued values on its
+      ready/valid pins and each output channel is always ready.
 
       Output -- `systemVerilogSource`, `<api>_xls.sv`:
 
@@ -122,6 +169,7 @@ package:
       does.
     consumes:
     - filetype: fwFnApi
+    - filetype: fwCompApi
     - filetype: xlsModuleSignature
     passthrough: none
     with:

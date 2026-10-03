@@ -23,6 +23,21 @@ package:
   - name: svunit
     uses: hdltest.svunit.Lib
 
+  # The fw-hdl library, for examples whose port is a component (a proc).
+  - name: fw-lib
+    desc: The fw-hdl SV library (fw_hdl_pkg, fw_std_pkg, the clock transactor)
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      base: ${{ rootdir }}/../../src
+      include:
+      - fw_hdl_pkg.sv
+      - fw_clock_xtor_if.sv
+      - std/fw_std_pkg.sv
+      incdirs:
+      - .
+      - std
+
   - name: img
     desc: "The test bench of one example at one level, compiled (img.<example>.<level>)"
     strategy:
@@ -52,7 +67,7 @@ package:
   - root: tests
     desc: Every example's SVUnit tests at every level (--tests <example>, --views <level>)
     uses: std.TestRunner
-    needs: [crc32.test, crc32.dslx-tests, adler32.test, lfsr.test, gcd.test, prefix_sum.test, fir_dot.test]
+    needs: [crc32.test, crc32.dslx-tests, adler32.test, lfsr.test, gcd.test, prefix_sum.test, fir_dot.test, idct_chen.test, sha256.test, rle.test]
 
   fragments:
   - crc32/flow.yaml
@@ -61,3 +76,6 @@ package:
   - gcd/flow.yaml
   - prefix_sum/flow.yaml
   - fir_dot/flow.yaml
+  - idct_chen/flow.yaml
+  - sha256/flow.yaml
+  - rle/flow.yaml

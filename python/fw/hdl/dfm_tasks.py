@@ -226,23 +226,29 @@ async def ApiFunctions(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResul
 
 
 def _one_api(input: TaskDataInput):
-    from fw.hdl import fn_api
-    apis = _files(input, "fwFnApi")
-    if len(apis) != 1:
-        return None, _api_error(f"needs exactly one fwFnApi input, got {len(apis)}")
-    return fn_api.FnApi.load(apis[0]), None
+    """The one API description among the inputs: a function API (fwFnApi)
+    or a component API (fwCompApi)."""
+    from fw.hdl import comp_api, fn_api
+    fns, comps = _files(input, "fwFnApi"), _files(input, "fwCompApi")
+    if len(fns) + len(comps) != 1:
+        return None, _api_error(f"needs exactly one fwFnApi or fwCompApi input, got "
+                                f"{len(fns) + len(comps)}")
+    if fns:
+        return fn_api.FnApi.load(fns[0]), None
+    return comp_api.CompApiSet.load(comps[0]), None
 
 
 async def ApiModelBinding(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
     """fw.hdl.api.ModelBinding: <api>_harness, with the SV functions answering."""
-    from fw.hdl import fn_api
+    from fw.hdl import comp_api, fn_api
     api, err = _one_api(input)
     if err:
         return err
+    gen = comp_api if isinstance(api, comp_api.CompApiSet) else fn_api
     rundir = input.rundir
     os.makedirs(rundir, exist_ok=True)
     with open(os.path.join(rundir, f"{api.name}_model.sv"), "w") as f:
-        f.write(fn_api.model_harness_sv(api))
+        f.write(gen.model_harness_sv(api))
     return TaskDataResult(status=0, changed=True, output=[
         FileSet(src=input.name, filetype="systemVerilogSource", basedir=rundir,
                 files=[f"{api.name}_model.sv"], attributes=[f"harness={api.name}_harness"])])
@@ -250,10 +256,12 @@ async def ApiModelBinding(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataRe
 
 async def ApiXlsBinding(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
     """fw.hdl.api.XlsBinding: <api>_harness, with the XLS modules answering."""
-    from fw.hdl import fn_api
+    from fw.hdl import comp_api, fn_api
     api, err = _one_api(input)
     if err:
         return err
+    if isinstance(api, comp_api.CompApiSet):
+        return _comp_xls_binding(input, api)
     mods = {}
     for path in _files(input, "xlsModuleSignature"):
         with open(path) as f:
@@ -271,6 +279,89 @@ async def ApiXlsBinding(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResu
         text = fn_api.xls_binding_sv(api, mods, period=input.params.clock_period,
                                      reset_cycles=input.params.reset_cycles,
                                      timeout_cycles=input.params.timeout_cycles)
+    except ValueError as e:
+        return _api_error(str(e))
+    rundir = input.rundir
+    os.makedirs(rundir, exist_ok=True)
+    with open(os.path.join(rundir, f"{api.name}_xls.sv"), "w") as f:
+        f.write(text)
+    return TaskDataResult(status=0, changed=True, output=[
+        FileSet(src=input.name, filetype="systemVerilogSource", basedir=rundir,
+                files=[f"{api.name}_xls.sv"], attributes=[f"harness={api.name}_harness"])])
+
+
+async def ApiComponents(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
+    """fw.hdl.api.Components: the call API of SV components (procs)."""
+    from pyslang import ast
+    from fw.hdl import comp_api
+    from fw.hdl.spl_flow import module_name
+    from fw.hdl.xls_flow import _find_class, _parse
+    from fw.hdl.fe.static_mapper import StaticMapper
+    p = input.params
+    names = list(p.components or [])
+    if not names:
+        return _api_error("fw.hdl.api.Components: `components` is empty")
+    files, incdirs = _sv_inputs(input)
+    reporter = ErrorReporter()
+    config = FlowConfig(incdirs=incdirs)
+    comps = []
+    try:
+        parser = _parse(files, config, reporter)
+        for n in names:
+            cls = _find_class(parser, n)
+            comp = StaticMapper(config, reporter, parser.source_manager).map_component(
+                cls, spelling=n)
+            # The package-qualified spelling: a typedef's or the class's path.
+            path = [None]
+
+            def visit(sym, n=n):
+                if path[0] is None and getattr(sym, "name", None) == n and sym.kind in (
+                        ast.SymbolKind.TypeAlias, ast.SymbolKind.ClassType,
+                        ast.SymbolKind.GenericClassDef):
+                    path[0] = sym.hierarchicalPath
+                return True
+            parser.get_root().visit(visit)
+            sv = path[0] or n
+            ports = []
+            for f in comp.fields:
+                if f.kind != ir.FieldKind.Port:
+                    continue
+                t = f.pragmas.get("sv_type", "")
+                role = "put" if isinstance(f.datatype, ir.DataTypeGetIF) else "get"
+                ports.append(comp_api.CompPort(f.name, role, t, f.datatype.element_type.bits))
+            comps.append(comp_api.CompApi(n, sv, module_name(n), ports))
+    except (FwHdlError, XlsFlowError, ValueError) as e:
+        return TaskDataResult(status=1, changed=True, output=[], markers=_markers(reporter, e))
+    pkg = comps[0].sv.split("::")[0] if "::" in comps[0].sv else comps[0].name
+    api = comp_api.CompApiSet(p.name or f"{pkg}_api", comps, files)
+    rundir = input.rundir
+    os.makedirs(rundir, exist_ok=True)
+    with open(os.path.join(rundir, f"{api.pkg}.sv"), "w") as f:
+        f.write(comp_api.api_pkg_sv(api))
+    api.save(os.path.join(rundir, f"{api.name}.comp.json"))
+    return TaskDataResult(status=0, changed=True, output=[
+        FileSet(src=input.name, filetype="systemVerilogSource", basedir=rundir,
+                files=[f"{api.pkg}.sv"], attributes=[f"api={api.name}"]),
+        FileSet(src=input.name, filetype="fwCompApi", basedir=rundir,
+                files=[f"{api.name}.comp.json"], attributes=[f"api={api.name}"])])
+
+
+def _comp_xls_binding(input: TaskDataInput, api) -> TaskDataResult:
+    from zuspec.be.xls.signature import signature_from_codegen
+    from fw.hdl import comp_api
+    sigs = {}
+    for path in _files(input, "xlsModuleSignature"):
+        with open(path) as f:
+            sig = signature_from_codegen(f.read())
+        sigs[sig.name] = sig
+    missing = [c.module for c in api.components if c.module not in sigs]
+    if missing:
+        return _api_error(f"XlsBinding: no xlsModuleSignature for module(s) {missing}; "
+                          f"run synth.xls.Codegen on fw.hdl.xls.IR's output for each component")
+    try:
+        text = comp_api.xls_binding_sv(api, sigs, period=input.params.clock_period,
+                                       reset_cycles=input.params.reset_cycles,
+                                       timeout_cycles=input.params.timeout_cycles)
     except ValueError as e:
         return _api_error(str(e))
     rundir = input.rundir

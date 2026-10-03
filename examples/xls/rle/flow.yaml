@@ -1,0 +1,164 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+# E9, rle: run-length encoder and decoder procs; recv_if/send_if as get/put
+# under `if`, struct payloads. The tests are upstream's #[test_proc]s,
+# calling the components through their generated API (fw.hdl.api.Components).
+# XLS's equivalence checker takes functions only, so the procs are checked by
+# the tests at every level and by upstream's own test procs.
+fragment:
+  name: rle
+
+  tasks:
+  # ---- Sources --------------------------------------------------------
+  - name: orig
+    desc: The upstream DSLX, unmodified (orig/UPSTREAM)
+    uses: std.FileSet
+    with:
+      type: dslxSource
+      base: orig
+      include:
+      - xls/modules/rle/rle_common.x
+      - xls/modules/rle/rle_enc.x
+      - xls/modules/rle/rle_dec.x
+
+  - name: src
+    desc: The SV port, after the fw-hdl library it builds on
+    uses: std.FileSet
+    needs: [xls_examples.fw-lib]
+    with:
+      type: systemVerilogSource
+      include: [rle_pkg.sv]
+
+  - name: unit-tests
+    desc: The upstream test procs as SVUnit tests, calling the component API
+    uses: std.FileSet
+    with:
+      type: svunitTest
+      include: [rle_unit_test.sv]
+
+  # ---- The SV path: each specialization a block -----------------------
+  # RunLengthEncoder32/RunLengthDecoder32 are upstream's codegen
+  # specializations (count width 2); the _32_32 ones are the tests' common
+  # specialization.
+  - name: ir
+    uses: fw.hdl.xls.IR
+    needs: [src]
+    with:
+      top: [RunLengthEncoder32, RunLengthDecoder32, RunLengthEncoder32_32, RunLengthDecoder32_32]
+
+  - name: rtl
+    uses: synth.xls.Codegen
+    needs: [ir]
+    with:
+      pipeline_stages: 2
+
+  # ---- The DSLX path --------------------------------------------------
+  - name: dslx-test
+    uses: synth.xls.DslxTest
+    needs: [orig]
+
+  - name: dslx-ir
+    uses: synth.xls.DslxToIR
+    needs: [orig]
+    with:
+      tops: [RunLengthEncoder32, RunLengthDecoder32]
+
+  - name: dslx-rtl
+    uses: synth.xls.Codegen
+    needs: [dslx-ir]
+    with:
+      pipeline_stages: 2
+
+  # ---- Yosys ----------------------------------------------------------
+  - name: synth
+    strategy:
+      select:
+        axes:
+          target: [generic, ice40, ecp5]
+      body:
+      - uses: synth.yosys.Synth
+        needs: [rtl]
+        with:
+          target: "${{ this.target }}"
+
+  - name: dslx-synth
+    strategy:
+      select:
+        axes:
+          target: [generic, ice40, ecp5]
+      body:
+      - uses: synth.yosys.Synth
+        needs: [dslx-rtl]
+        with:
+          target: "${{ this.target }}"
+
+  # ---- The API, and what answers it at each level ---------------------
+  - name: api
+    uses: fw.hdl.api.Components
+    needs: [src]
+    with:
+      # The count-width-2 specialization first: Verilator 5.049 swaps the
+      # nested types of two specializations of one class depending on the
+      # order they are first named (fixed in 5.053; see README.md).
+      components: [RunLengthEncoder32, RunLengthEncoder32_32, RunLengthDecoder32_32]
+
+  - name: dut-model
+    uses: fw.hdl.api.ModelBinding
+    needs: [api]
+
+  - name: bind-xls
+    uses: fw.hdl.api.XlsBinding
+    needs: [api, rtl]
+
+  - name: runner
+    uses: hdltest.svunit.TestRunner
+    needs: [unit-tests]
+    with:
+      harness: [rle_pkg_api_harness]
+
+  - name: bench-model
+    passthrough: all
+    needs: [src, api, dut-model, runner]
+
+  - name: bench-rtl
+    passthrough: all
+    needs: [src, api, rtl, bind-xls, runner]
+
+  - name: bench-gates
+    passthrough: all
+    needs: [src, api, synth.generic, bind-xls, runner]
+
+  - name: bench-gates-ice40
+    passthrough: all
+    needs: [src, api, synth.ice40, bind-xls, runner]
+
+  - name: bench-gates-ecp5
+    passthrough: all
+    needs: [src, api, synth.ecp5, bind-xls, runner]
+
+  # ---- The tests ------------------------------------------------------
+  - name: test
+    strategy:
+      matrix:
+        view: [model, rtl, gates, gates-ice40, gates-ecp5]
+        case:
+        - {name: rle}
+      body:
+      - name: "${{ this.view }}-${{ this.case.name }}"
+        uses: hdltest.svunit.Check
+        needs: ["xls_examples.run.rle.${{ this.view }}"]
+        with:
+          name: "rle-${{ this.view }}"
+        tags:
+        - std.Test: {case: "${{ this.case.name }}", view: "${{ this.view }}"}
+
+  - root: all
+    desc: "rle end to end: both paths, Yosys on both, the tests at every level"
+    needs:
+    - dslx-test
+    - synth.generic
+    - synth.ice40
+    - synth.ecp5
+    - dslx-synth.generic
+    - dslx-synth.ice40
+    - dslx-synth.ecp5
+    - test

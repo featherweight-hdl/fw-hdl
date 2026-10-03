@@ -35,4 +35,27 @@ package xls_std_pkg;
         endfunction
     endclass
 
+    // std::rotr<N>(x: bits[N], y: bits[N]) -> bits[N]
+    class rotr_c #(int unsigned N = 32);
+        static function bit [N-1:0] rotr(bit [N-1:0] x, bit [N-1:0] y);
+            bit [N-1:0] y_mod = y % N'(N);
+            return (x >> y_mod) | (x << (N'(N) - y_mod));
+        endfunction
+    endclass
+
+    // std::ceil_div<N>(x: uN[N], y: uN[N]) -> uN[N]
+    class ceil_div_c #(int unsigned N = 32);
+        static function bit [N-1:0] ceil_div(bit [N-1:0] x, bit [N-1:0] y);
+            // DSLX defines x / 0 as all ones, so `usual` is all ones + 1 = 0
+            // there. The static subset makes the divisor guard explicit (D-1).
+            bit [N-1:0] usual = (y != 0) ? (x - 1'b1) / y + 1'b1 : '0;
+            return (x > 0) ? usual : '0;
+        endfunction
+    endclass
+
+    // std::round_up_to_nearest(x: u32, y: u32) -> u32
+    function automatic bit [31:0] round_up_to_nearest(bit [31:0] x, bit [31:0] y);
+        return 32'(ceil_div_c#(32)::ceil_div(x, y) * y);
+    endfunction
+
 endpackage

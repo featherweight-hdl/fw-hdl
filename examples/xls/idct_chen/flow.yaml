@@ -1,0 +1,171 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+# E7, idct_chen: the JPEG 8x8 inverse DCT (Chen); a signed datapath, where DSLX >> on s32 is SV >>>.
+# The same graph as crc32/flow.yaml (the template example, which comments
+# every step). Tests run through ../flow.yaml's img/run families.
+fragment:
+  name: idct_chen
+
+  tasks:
+  # ---- Sources --------------------------------------------------------
+  - name: orig
+    desc: The upstream DSLX, unmodified (orig/UPSTREAM)
+    uses: std.FileSet
+    with:
+      type: dslxSource
+      base: orig
+      include: [xls/examples/jpeg/idct_chen.x]
+
+  - name: src
+    desc: The SV port
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      include: [idct_chen_pkg.sv]
+
+  - name: unit-tests
+    desc: The upstream tests as SVUnit tests, calling the API
+    uses: std.FileSet
+    with:
+      type: svunitTest
+      include: [idct_chen_unit_test.sv]
+
+  # ---- The SV path ----------------------------------------------------
+  - name: ir
+    uses: fw.hdl.xls.IR
+    needs: [src]
+    with:
+      top: [idct_chen_pkg::idct_row, idct_chen_pkg::idct]
+
+  - name: rtl
+    uses: synth.xls.Codegen
+    needs: [ir]
+    with:
+      pipeline_stages: 2
+      input_valid_signal: input_valid
+      output_valid_signal: output_valid
+
+  # ---- The DSLX path --------------------------------------------------
+  - name: dslx-test
+    uses: synth.xls.DslxTest
+    needs: [orig]
+
+  - name: dslx-ir
+    uses: synth.xls.DslxToIR
+    needs: [orig]
+    with:
+      tops: [idct_row, idct]
+
+  - name: dslx-rtl
+    uses: synth.xls.Codegen
+    needs: [dslx-ir]
+    with:
+      pipeline_stages: 2
+      input_valid_signal: input_valid
+      output_valid_signal: output_valid
+
+  - name: equiv
+    desc: Each SV function's optimized IR against its DSLX original's
+    uses: synth.xls.Equiv
+    needs: [rtl, dslx-rtl]
+    with:
+      # A minute for the solver; a function whose inputs total 20 bits or
+      # fewer is then compared on every input instead.
+      timeout_s: 60
+      pairs: [idct_chen_pkg__idct_row=__idct_chen__idct_row, idct_chen_pkg__idct=__idct_chen__idct]
+
+  # ---- Yosys ----------------------------------------------------------
+  - name: synth
+    strategy:
+      select:
+        axes:
+          target: [generic, ice40, ecp5]
+      body:
+      - uses: synth.yosys.Synth
+        needs: [rtl]
+        with:
+          target: "${{ this.target }}"
+
+  - name: dslx-synth
+    strategy:
+      select:
+        axes:
+          target: [generic, ice40, ecp5]
+      body:
+      - uses: synth.yosys.Synth
+        needs: [dslx-rtl]
+        with:
+          target: "${{ this.target }}"
+
+  # Yosys has no simulation model of the ECP5 DSP block (MULT18X18D), so
+  # the gates-ecp5 level simulates a netlist made without DSPs. The area
+  # numbers are synth.ecp5's, with DSPs.
+  - name: synth-ecp5-sim
+    uses: synth.yosys.Synth
+    needs: [rtl]
+    with:
+      target: ecp5
+      dsp: false
+
+  # ---- The API, and what answers it at each level ---------------------
+  - name: api
+    uses: fw.hdl.api.Functions
+    needs: [src]
+    with:
+      functions: [idct_chen_pkg::idct_row, idct_chen_pkg::idct]
+
+  - name: dut-model
+    uses: fw.hdl.api.ModelBinding
+    needs: [api]
+
+  - name: bind-xls
+    uses: fw.hdl.api.XlsBinding
+    needs: [api, rtl]
+
+  - name: runner
+    uses: hdltest.svunit.TestRunner
+    needs: [unit-tests]
+    with:
+      harness: [idct_chen_pkg_api_harness]
+  - name: bench-model
+    passthrough: all
+    needs: [src, api, dut-model, runner]
+  - name: bench-rtl
+    passthrough: all
+    needs: [src, api, rtl, bind-xls, runner]
+  - name: bench-gates
+    passthrough: all
+    needs: [src, api, synth.generic, bind-xls, runner]
+  - name: bench-gates-ice40
+    passthrough: all
+    needs: [src, api, synth.ice40, bind-xls, runner]
+  - name: bench-gates-ecp5
+    passthrough: all
+    needs: [src, api, synth-ecp5-sim, bind-xls, runner]
+  # ---- The tests ------------------------------------------------------
+  - name: test
+    strategy:
+      matrix:
+        view: [model, rtl, gates, gates-ice40, gates-ecp5]
+        case:
+        - {name: idct_chen}
+      body:
+      - name: "${{ this.view }}-${{ this.case.name }}"
+        uses: hdltest.svunit.Check
+        needs: ["xls_examples.run.idct_chen.${{ this.view }}"]
+        with:
+          name: "idct_chen-${{ this.view }}"
+        tags:
+        - std.Test: {case: "${{ this.case.name }}", view: "${{ this.view }}"}
+
+  - root: all
+    desc: "idct_chen end to end: both paths, equivalence, Yosys on both, the tests at every level"
+    needs:
+    - dslx-test
+    - equiv
+    - synth.generic
+    - synth.ice40
+    - synth.ecp5
+    - dslx-synth.generic
+    - dslx-synth.ice40
+    - dslx-synth.ecp5
+    - test
