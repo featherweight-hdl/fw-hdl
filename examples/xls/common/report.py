@@ -32,6 +32,7 @@ EXAMPLES = [
     ("crc32", "crc32", "crc32_unit_test.sv"),
     ("adler32", "adler32", "adler32_unit_test.sv"),
     ("lfsr", "lfsr", "lfsr_unit_test.sv"),
+    ("lfsr_proc", "lfsr", "lfsr_proc_unit_test.sv"),
     ("gcd", "gcd", "gcd_unit_test.sv"),
     ("prefix_sum", "prefix_sum", "prefix_sum_unit_test.sv"),
     ("fir_dot", "fir_dot", "fir_dot_unit_test.sv"),
@@ -155,13 +156,17 @@ def integration(rundir: str, ex: str, exdir: str, test: str) -> List[Dict]:
         summary = re.search(r"\]\[testrunner\]: (PASSED|FAILED)", log)
         wall = re.search(r"walltime_s=([\d.]+)", _read(os.path.join(run, "sim.time")))
         img = os.path.join(rundir, f"xls_examples.img.{ex}.{lvl}")
-        # The image build: from Verilator's first output in obj_dir to the
-        # linked simv (task data records no durations).
+        # The image build: from build.f, which the task writes just before it
+        # runs Verilator, to the linked simv (task data records no durations).
+        # Not obj_dir's oldest file: Verilator leaves unchanged outputs alone,
+        # so on a rebuild those date from an earlier build.
         build = None
-        objs = glob.glob(os.path.join(img, "obj_dir", "*"))
+        bf = os.path.join(img, "build.f")
         sv = os.path.join(img, "obj_dir", "simv")
-        if objs and os.path.isfile(sv):
-            build = round(os.path.getmtime(sv) - min(os.path.getmtime(o) for o in objs), 1)
+        if os.path.isfile(bf) and os.path.isfile(sv):
+            build = round(os.path.getmtime(sv) - os.path.getmtime(bf), 1)
+            if build < 0:   # build.f rewritten, image up to date: not measured
+                build = None
         rows.append({
             "example": ex, "level": lvl, "test_sha256": sha,
             "passed": len(passed), "run": len(passed) + len(failed),
@@ -209,7 +214,8 @@ def md(q: List[Dict], it: List[Dict], sw: List[Dict]) -> str:
           "pipeline latency); a level that answers sooner than its latency allows is a "
           "finding (xls-examples.md risk 6). Glue lines are what a user writes by hand to "
           "run the test at that level: none on the fw-hdl path; `crc32/dslx_glue/` on the "
-          "DSLX path.", "",
+          "DSLX path. lfsr_proc's test depends on timing (it polls, so it is not a Kahn "
+          "process network); it is expected to fail at rtl and gates (lfsr/README.md).", "",
           "## QoR: the SV port against the original", "",
           "| example | path | IR nodes | latency | generic | ice40 | ecp5 | equivalence |",
           "|---|---|---|---|---|---|---|---|"]
@@ -226,8 +232,8 @@ def md(q: List[Dict], it: List[Dict], sw: List[Dict]) -> str:
                      f"{p['latency'] if p['latency'] is not None else '-'} | "
                      + " | ".join(cell_summary(t, p["cells"][t]) for t in TARGETS)
                      + f" | {eqs if path == 'sv' else ''} |")
-    o += ["", "Cells are Yosys's `stat`, summed over an example's modules. Procs (rle, "
-          "aes_ctr) have no equivalence check: XLS's checker takes functions only.", ""]
+    o += ["", "Cells are Yosys's `stat`, summed over an example's modules. Procs (lfsr_proc, "
+          "rle, aes_ctr) have no equivalence check: XLS's checker takes functions only.", ""]
     if sw:
         o += ["## sha256 at three clock periods (asap7 delay model)", "",
               "| clock period (ps) | pipeline latency | generic cells | the same tests |",

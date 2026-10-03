@@ -424,7 +424,7 @@ synthesis.
 | G-12 | **A parametric DSLX function cannot be an IR top**, on the DSLX path either. `gcd.x`, `fir_filter.x` and `dot_product.x` have no concrete wrapper (`lfsr.x` does: `lfsr7`, `lfsr8`). | E4, E6 | each example keeps a short `dslx_top.x` beside `orig/` that imports the original and instantiates it at the widths the SV port uses. `orig/` stays untouched (D-3). |
 | G-4 | `std::` helpers | E4, E5, E8 | `examples/xls/common/xls_std_pkg.sv`, to be promoted to `fw_std` if users want it |
 | G-5 | ~~No equivalence task~~ **Done (GAP-2).** | §7 | `synth.xls.Equiv` (libsynth) |
-| G-6 | **Yosys reading our Verilog.** ~~XLS's SV output puts asserts in `always` blocks with `$fatal`~~ | §6 | **Tested (YS-2).** `read_verilog -sv` takes XLS's SV for crc32, sha256, idct and both RLE procs, SVA asserts included. It rejects **AES** (and `aes_ctr`): XLS assigns whole rows of 2-D unpacked arrays ("Insufficient number of array indices"). Both sv2v and XLS's Verilog-2001 output read fine. `Synth`'s `frontend: auto` tries Yosys's reader, then sv2v, with a note. Integrate's top is not tested yet. |
+| G-6 | **Yosys reading our Verilog.** ~~XLS's SV output puts asserts in `always` blocks with `$fatal`~~ | §6 | **Tested (YS-2).** `read_verilog -sv` takes XLS's SV for crc32, sha256, idct and both RLE procs, SVA asserts included. It rejects **AES** (and `aes_ctr`): XLS assigns whole rows of 2-D unpacked arrays ("Insufficient number of array indices"). Both sv2v and XLS's Verilog-2001 output read fine. `Synth`'s `frontend: auto` tries Yosys's reader, then sv2v, with a note. Integrate's top reads after a fix to `fw_rv_fifo` (YS-2). |
 | G-7 | **Test levels need views.** The `spl`/`rtl` views and the ready/valid transactors as a library protocol are still open in `xls-phase2.md` (VIEW-1, VIEW-2). | §2.2 | do VIEW-1/2 as part of this work, then add `gates` as a third view |
 | G-8 | ~~**No SVUnit in the flow.**~~ **Done (TB-1).** | §2.2 | `hdltest.svunit` in dv-flow-libhdltest (`Lib`, `TestRunner`, `Check`). The generated runner replaces SVUnit's Perl `runSVUnit`; build and run go through `hdlsim.<sim>.SimImage`/`SimRun`, so every hdlsim simulator works. The verdict is an `hdlsim.TestResult`, and failing checks become markers at the test line. SVUnit is found from the `install` parameter, then `$SVUNIT_INSTALL`, then the IVPM copy (`$IVPM_PACKAGES/svunit`, pinned at v3.38.1 by libhdltest's `ivpm.yaml`), then `packages/svunit` above the flow. |
 | G-9 | ~~**No call API for a function.**~~ **Done (TB-2).** | E1–E8, E10 | Package `fw.hdl.api`, generated from the SV signatures (D-12). `Functions` writes `<api>_pkg`: the interface class, the proxy a test gets from `get()`, and `<api>_model`. Each level supplies a module named `<api>_harness` that registers its binding: `ModelBinding` (the SV function answers) or `XlsBinding` (per function, a transactor interface on the XLS module's pins, the bridge class, clock and reset). It is a separate package from `fw.hdl.xls`, because the `model` level needs no XLS. |
@@ -569,7 +569,9 @@ synthesis.
   - Found: Yosys needs 14.7 GB per AES module through sv2v and 4.9 GB on XLS's
     Verilog-2001 (`Codegen system_verilog: false`). The AES examples synthesize the
     latter, and the README says to use `-j 4`.
-  - To do: the gate levels (rerunning after the memory fix).
+  - To do: the gate levels. The rerun after the memory fix was stopped by the
+    host (low memory, with another session's jobs running too) before any AES synth
+    finished. Rerun `aes.all` and `aes_ctr.all` alone, at `-j 1` or `-j 2`.
 - ◐ **EX-7** `examples/xls/README.md`, `NOTICE`, the quick subset in `tests`.
   - Done: the index README, a README per example (the test first, then the mapping
     and every deviation), NOTICE (now covering `dslx_top/` and the std ports), and a
@@ -591,9 +593,12 @@ synthesis.
     Fileset `params` do not survive between dv-flow tasks; attributes do.
   - Yosys's own ECP5 cell model declares some flops twice (Verilator MODDUP warnings).
     That is upstream and harmless.
-- ◐ **YS-2** Front-end checks (G-6): XLS Verilog from both SV modes, the Integrate
+- ☑ **YS-2** Front-end checks (G-6): XLS Verilog from both SV modes, the Integrate
   top, and the fallbacks. Done for XLS's SV of every example (the DSLX path); AES needs
-  sv2v. The Integrate top is still to do.
+  sv2v or XLS's Verilog-2001. The Integrate top (`rle_loop`) failed at first:
+  `fw_rv_fifo`'s `next()` used a cast and a `return ?:` that Yosys's reader rejects.
+  Rewritten as `if`/`else`, it reads with `frontend=yosys`. `Synth` now records the
+  frontend it actually used (`frontend=yosys` or `frontend=sv2v`) on the netlist.
 - ◐ **YS-3** Diagnostics: Yosys messages become markers, mapped through
   `verilog_source()`. Basic form done with YS-1: `ERROR:` and `Warning:` lines, located
   where Yosys gives a file and line, deduplicated, mapped through `verilog_source()`.
@@ -785,3 +790,19 @@ synthesis.
     function tests rerun after the lookup change), fw-hdl `test_fn_api` 7.
     Docs gates: libsynth and libhdltest 100%; fw.hdl's new packages are fully
     documented (the 2 gaps are older `tests/formal` tasks).
+- 2026-10-03: implementation, round 2 ("build out the full suite").
+  - E2 to E10 are ported: adler32, lfsr (fn and proc), gcd, prefix_sum, fir_dot,
+    idct_chen, sha256, rle (enc, dec, and the `rle_loop` composition through
+    Integrate), aes and aes_ctr. EX-3, EX-4, EX-5, GAP-3 and YS-2 are done.
+  - Ten examples pass one SVUnit test file at all five levels. aes and aes_ctr pass at
+    `model` and `rtl`; their gate levels are still to run (EX-6). lfsr_proc passes at
+    `model` and, by design, not at `rtl`/`gates`: its test depends on when the proc
+    polls (D-7).
+  - GAP-3: `fw_get_nb_if` gives a port `try_get`, which be-xls lowers to XLS's
+    non-blocking receive. It is opt-in, because polling gives up level-independent
+    results.
+  - Findings: `block` is an XLS IR keyword (be-xls escapes all of them); Yosys needs
+    up to 14.7 GB per AES module through sv2v (4.9 GB on XLS's Verilog-2001);
+    `fw_rv_fifo`'s `next()` was not readable by Yosys (rewritten); `aes_ctr` at the
+    pinned tag does one op per channel, so the P10 rejection was a `main` artifact.
+  - `common/report.py` writes `examples/xls/RESULTS.md` and `results.json`.
