@@ -33,6 +33,14 @@ package:
     # (xls-phase2.md, BLK-2).
     - name: dv-flow-libsynth
       url: https://github.com/dv-flow/dv-flow-libsynth.git
+    # FPGA back end: place and route, packing, programming
+    # (xls-examples.md section 9).
+    - name: dv-flow-libfpga
+      url: https://github.com/dv-flow/dv-flow-libfpga.git
+    # SVUnit tests as dv-flow tasks (hdltest.svunit); brings SVUnit itself
+    # into packages/svunit (xls-examples.md section 2.2).
+    - name: dv-flow-libhdltest
+      url: https://github.com/dv-flow/dv-flow-libhdltest.git
     - name: pytest-dfm
       url: https://github.com/dv-flow/pytest-dfm.git
 
