@@ -484,12 +484,57 @@ synthesis.
     XOR/XNOR/NOT mix. The FPGA targets come out identical.
   - Since then: `dslx_glue/` (TB-5), the README (test first), and the knob script, run
     and recorded. Left for your review: the glue's fairness, and the README.
-- ☐ **EX-2** The compound tasks `fn-pipeline` and `proc-pipeline`; port E2, E3 (fn),
+- ◐ **EX-2** The compound tasks `fn-pipeline` and `proc-pipeline`; port E2, E3 (fn),
   E5.
-- ☐ **EX-3** E4, E6, E7: parametric code, signed arithmetic, the `>>>` trap.
-- ☐ **EX-4** E8 (`sha256`), with a clock-period sweep (`clock_period_ps` at three
+  - **No compounds.** dv-flow compounds cannot carry this pipeline. A compound's
+    parameters are not visible inside a `select:` body it contains. Its inner tasks
+    cannot be named from outside, and tests inside it are invisible to
+    `std.TestRunner`. So `../flow.yaml` instead has shared `img`/`run` families over
+    *example × level*, and each example offers `bench-<level>` tasks and its own
+    test matrix. The per-example fragments are generated from one template and
+    checked in, so each is readable on its own.
+  - E2 adler32, E3 lfsr7/lfsr8 and E5 prefix_sum are done. Each is proven equivalent
+    to its DSLX, with the same optimized node counts, and passes upstream's tests at
+    all five levels. E3's proc half waits on GAP-3.
+  - Found and fixed on the way:
+    - `$clog2` of a constant was not in the subset;
+    - parameter values inside function bodies did not count as constants;
+    - arrays cross the XLS binding with element 0 in the *low* bits, as XLS flattens
+      them (`{>>{}}` had the order reversed);
+    - several libsynth tasks gained list forms: DslxToIR `tops`, Equiv `pairs`, and
+      Synth running one Yosys per module.
+- ☑ **EX-3** E4, E6, E7: parametric code, signed arithmetic, the `>>>` trap.
+  - **E4 gcd.** Euclid and binary are static functions of a parameterized class, with
+    `std::iterative_div_mod` ported to `common/xls_std_pkg.sv`. Euclid is proven
+    equivalent (995 nodes on both paths). Binary defeats the solver, so the new
+    exhaustive fallback in `Equiv` proves it on all 65,536 inputs. It proves Euclid ≡
+    binary, upstream's quickcheck, the same way. G-12 bites here: gcd.x's functions are
+    parametric and not `pub`, so the DSLX side is `dslx_top/gcd_tops.x`, a copy of
+    gcd.x with concrete wrappers appended.
+  - **E6 fir_dot.** The FIR filter at 4/6 and the dot products at 32/4 and 8/2 are
+    proven equivalent, each in under 0.05 s. Yosys has no simulation model of the ECP5
+    DSP (`MULT18X18D`), so `gates-ecp5` simulates a netlist made without DSPs.
+    `Synth` now warns about cells without a model.
+  - **E7 idct_chen.** Every signed `>>` is `>>>`. Both functions are proven
+    equivalent, `idct` at 1,883 nodes on both paths, and all five tests pass at every
+    level.
+- ◐ **EX-4** E8 (`sha256`), with a clock-period sweep (`clock_period_ps` at three
   points), reported as stages vs area.
-- ☐ **EX-5** E9 (`rle`): two procs, composed by Integrate; identity loopback.
+  - Done: the port, with Digest as a packed struct and `dslx_top/` flattening the
+    tuple for comparison. The three tests pass at all five levels, including the
+    110k-cell generic netlist (16 min end to end). `compute_pad_bits` is proven;
+    `sha256` is *inconclusive* within the solver budget. Both netlists have 4,961
+    nodes, but identical counts are not a proof.
+  - To do: the clock-period sweep.
+- ◐ **EX-5** E9 (`rle`): two procs, composed by Integrate; identity loopback.
+  - Done: the encoder and decoder procs, at the specializations the test procs spawn.
+    Upstream's six `#[test_proc]`s pass at all five levels through the new component
+    API (`fw.hdl.api.Components`). It has one task per port, `<port>_put` or
+    `<port>_get`. The model binding runs the SV components on the fw-hdl runtime, and
+    the XLS binding drives and collects each ready/valid channel.
+  - Verilator 5.049 swaps two specializations' nested types depending on which is
+    named first; 5.053 is fixed. The example names the count-width-2 one first.
+  - To do: the composition through Integrate (identity loopback).
 - ☐ **EX-6** E10 (`aes`): the function, the rejected faithful `aes_ctr`
   (the diagnostic is captured in the README), and the restructured port.
 - ☐ **EX-7** `examples/xls/README.md`, `NOTICE`, the quick subset in `tests`.
