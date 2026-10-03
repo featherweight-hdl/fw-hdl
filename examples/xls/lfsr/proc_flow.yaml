@@ -1,0 +1,135 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+# E3, second half -- lfsr_proc: a proc that polls (recv_non_blocking, as
+# fw_get_nb_if's try_get), on lfsr.x's functions. Its upstream test proc is
+# timing-dependent; see README.md. user_module is parametric in DSLX with no
+# concrete top outside the test, so the DSLX side is upstream's test only.
+fragment:
+  name: lfsr_proc
+
+  tasks:
+  - name: orig
+    uses: std.FileSet
+    with:
+      type: dslxSource
+      base: orig
+      include: [xls/examples/lfsr.x, xls/examples/lfsr_proc.x]
+
+  - name: src
+    desc: The lfsr functions and the proc, after the fw-hdl library
+    uses: std.FileSet
+    needs: [xls_examples.fw-lib]
+    with:
+      type: systemVerilogSource
+      include: [lfsr_pkg.sv, lfsr_proc_pkg.sv]
+
+  - name: unit-tests
+    uses: std.FileSet
+    with:
+      type: svunitTest
+      include: [lfsr_proc_unit_test.sv]
+
+  - name: ir
+    uses: fw.hdl.xls.IR
+    needs: [src]
+    with:
+      top: [user_module8]
+
+  - name: rtl
+    uses: synth.xls.Codegen
+    needs: [ir]
+    with:
+      pipeline_stages: 2
+
+  - name: dslx-test
+    uses: synth.xls.DslxTest
+    needs: [orig]
+
+  - name: synth
+    strategy:
+      select:
+        axes:
+          target: [generic, ice40, ecp5]
+      body:
+      - uses: synth.yosys.Synth
+        needs: [rtl]
+        with:
+          target: "${{ this.target }}"
+
+  - name: api
+    uses: fw.hdl.api.Components
+    needs: [src]
+    with:
+      components: [user_module8]
+      name: lfsr_proc_pkg_api
+
+  - name: dut-model
+    uses: fw.hdl.api.ModelBinding
+    needs: [api]
+
+  - name: bind-xls
+    uses: fw.hdl.api.XlsBinding
+    needs: [api, rtl]
+
+  - name: runner
+    uses: hdltest.svunit.TestRunner
+    needs: [unit-tests]
+    with:
+      harness: [lfsr_proc_pkg_api_harness]
+
+  - name: bench-model
+    passthrough: all
+    needs: [src, api, dut-model, runner]
+
+  - name: bench-rtl
+    passthrough: all
+    needs: [src, api, rtl, bind-xls, runner]
+
+  - name: bench-gates
+    passthrough: all
+    needs: [src, api, synth.generic, bind-xls, runner]
+
+  - name: bench-gates-ice40
+    passthrough: all
+    needs: [src, api, synth.ice40, bind-xls, runner]
+
+  - name: bench-gates-ecp5
+    passthrough: all
+    needs: [src, api, synth.ecp5, bind-xls, runner]
+
+  # The suite runs the test at `model` only. At the other levels the proc
+  # polls on its own clock and sees each seed one activation later than the
+  # DSLX interpreter's schedule assumes, so the transcribed test fails there
+  # by design: it is timing-dependent (README.md). `timing` runs those
+  # levels, to show it.
+  - name: test
+    strategy:
+      matrix:
+        view: [model]
+        case:
+        - {name: lfsr_proc}
+      body:
+      - name: "${{ this.view }}-${{ this.case.name }}"
+        uses: hdltest.svunit.Check
+        needs: ["xls_examples.run.lfsr_proc.${{ this.view }}"]
+        with:
+          name: "lfsr_proc-${{ this.view }}"
+        tags:
+        - std.Test: {case: "${{ this.case.name }}", view: "${{ this.view }}"}
+
+  - name: timing
+    desc: "The timing-dependent test at the levels where it is expected to fail"
+    strategy:
+      matrix:
+        view: [rtl, gates, gates-ice40, gates-ecp5]
+        case:
+        - {name: lfsr_proc}
+      body:
+      - name: "${{ this.view }}-${{ this.case.name }}"
+        uses: hdltest.svunit.Check
+        needs: ["xls_examples.run.lfsr_proc.${{ this.view }}"]
+        with:
+          name: "lfsr_proc-${{ this.view }}"
+
+  - root: all
+    desc: "lfsr_proc: upstream's test proc, Yosys, and the test at model (and, failing by design, at the other levels)"
+    needs: [dslx-test, synth.generic, synth.ice40, synth.ecp5, test, timing]

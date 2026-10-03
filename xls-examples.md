@@ -196,7 +196,7 @@ path below at the pin.
 | E7 | `idct_chen` | `xls/examples/jpeg/idct_chen.x` | fn | signed datapath; **DSLX `>>` on a signed value is arithmetic, so the port needs `>>>`** (the porting trap to document); `s32[8]` arrays | F5 |
 | E8 | `sha256` | `xls/examples/sha256.x` | fn | a large unrolled function (64 rounds); tuple → packed struct; a clock-period sweep that shows XLS pipelining | F4 |
 | E9 | `rle` | `xls/modules/rle/{rle_common,rle_enc,rle_dec}.x` | proc ×2 | `recv_if`/`send_if` → `get`/`put` under `if` (P7); struct payloads; **composition**: encoder → decoder through `fw.hdl.spl.Integrate`, with identity checked end to end | — |
-| E10 | `aes` | `xls/modules/aes/{aes_common,constants,aes,aes_ctr}.x` | fn + proc | AES-128 encrypt as a large function, then `aes_ctr` as a proc. The upstream proc does several sends and receives on one channel per activation, so the faithful port is **rejected with a located diagnostic** (P10) and the README shows the restructured port, the "next rung" of `killer-app.md` §1.4 | F2 |
+| E10 | `aes` | `xls/modules/aes/{aes_common,constants,aes,aes_ctr}.x` | fn + proc | AES-128/256 key schedule, encrypt and decrypt as large functions over `u8[4][4]`, then `aes_ctr` as a proc. ~~The upstream proc does several sends and receives on one channel per activation, so the faithful port is rejected (P10).~~ **Corrected in EX-6:** that was google/xls `main`; at the pinned tag `aes_ctr` does one operation per channel, and the faithful port is accepted | F2 |
 
 Why these ten:
 - **They cover the subset.** Functions and procs; scalars, arrays, structs; signed and
@@ -419,7 +419,7 @@ synthesis.
 | # | Gap | Needed by | Proposal |
 |---|---|---|---|
 | G-1 | ~~**No dv-flow task makes XLS IR from an SV function.**~~ **Done (GAP-1).** | E1–E8, E10 | `fw.hdl.xls.IR`: each `top` entry (a function by path, `crc32_pkg::main`, or by unambiguous name; or a component class) becomes one `xlsIR` package, whose module is named `pkg__name`. A class also gets its predicted signature. Partition keeps its job (whole designs). |
-| G-2 | **No non-blocking receive** (`recv_non_blocking`) | E3 proc half | an SV `try_get(x)` → `bit` in `fw_get_if`, lowered to XLS `receive(..., blocking=false)` (a new P row). Or drop E3's proc half for now (D-7). |
+| G-2 | ~~**No non-blocking receive**~~ **Done (GAP-3).** | E3 proc half | `fw_get_nb_if` (extends `fw_get_if`) adds `try_get(inout t)`; `v = port.t.try_get(x)` lowers to XLS `receive(..., blocking=false)` with `x = valid ? data : x`. **Opt-in, not on `fw_get_if`:** blocking get/put keep a network a Kahn process network (fw_channel.svh); a polling port gives that up, so only components that declare one lose it. `fw_channel` gains `get_nb_ex`. |
 | G-3 | ~~**Parametric functions.**~~ **Done (EX-0).** SV has none; the idiom is a static function of a parameterized class. | E3, E4, E6 | One specialization already worked. Two specializations of one class collided (both became IR `lfsr`), because the FE keyed a function by name and location. It is now keyed by hierarchical path (`lfsr_c#(7)::lfsr`). Micro test E21; the `lfsr7`/`lfsr8` ports are proven equivalent to the DSLX originals. |
 | G-12 | **A parametric DSLX function cannot be an IR top**, on the DSLX path either. `gcd.x`, `fir_filter.x` and `dot_product.x` have no concrete wrapper (`lfsr.x` does: `lfsr7`, `lfsr8`). | E4, E6 | each example keeps a short `dslx_top.x` beside `orig/` that imports the original and instantiates it at the widths the SV port uses. `orig/` stays untouched (D-3). |
 | G-4 | `std::` helpers | E4, E5, E8 | `examples/xls/common/xls_std_pkg.sv`, to be promoted to `fw_std` if users want it |
@@ -518,15 +518,25 @@ synthesis.
   - **E7 idct_chen.** Every signed `>>` is `>>>`. Both functions are proven
     equivalent, `idct` at 1,883 nodes on both paths, and all five tests pass at every
     level.
-- ◐ **EX-4** E8 (`sha256`), with a clock-period sweep (`clock_period_ps` at three
+- ☑ **EX-4** E8 (`sha256`), with a clock-period sweep (`clock_period_ps` at three
   points), reported as stages vs area.
   - Done: the port, with Digest as a packed struct and `dslx_top/` flattening the
     tuple for comparison. The three tests pass at all five levels, including the
     110k-cell generic netlist (16 min end to end). `compute_pad_bits` is proven;
     `sha256` is *inconclusive* within the solver budget. Both netlists have 4,961
     nodes, but identical counts are not a proof.
-  - To do: the clock-period sweep.
-- ◐ **EX-5** E9 (`rle`): two procs, composed by Integrate; identity loopback.
+  - Since: the sweep (`dfm run sha256.sweep`), asap7 delay model:
+
+    | period | stages | generic cells | tests |
+    |---|---|---|---|
+    | (2 stages, unit model) | 3 | 109,731 | 3/3 |
+    | 4000 ps | 24 | 126,843 | 3/3 |
+    | 2000 ps | 46 | 144,406 | 3/3 |
+    | 1000 ps | 113 | 196,519 | 3/3 |
+
+    250 ps cannot be met (XLS suggests 358). The same test file passes against every
+    pipeline (levels `rtl-p<period>`); its pass time tracks the latency.
+- ☑ **EX-5** E9 (`rle`): two procs, composed by Integrate; identity loopback.
   - Done: the encoder and decoder procs, at the specializations the test procs spawn.
     Upstream's six `#[test_proc]`s pass at all five levels through the new component
     API (`fw.hdl.api.Components`). It has one task per port, `<port>_put` or
@@ -534,10 +544,39 @@ synthesis.
     the XLS binding drives and collects each ready/valid channel.
   - Verilator 5.049 swaps two specializations' nested types depending on which is
     named first; 5.053 is fixed. The example names the count-width-2 one first.
-  - To do: the composition through Integrate (identity loopback).
-- ☐ **EX-6** E10 (`aes`): the function, the rejected faithful `aes_ctr`
+  - Since: the composition, `rle_loop` (not upstream). `rle_pkg::rle_loopback` joins the
+    encoder and decoder by an `fw_channel`; Partition → XLS per block → Signature →
+    Integrate builds the top. Identity holds at `model` and `rtl`. The component API
+    maps a structural top with the structure mapper and spells its payloads as
+    declared, and XlsBinding reads Integrate's `blockSignature`.
+  - Like for like (upstream's two specializations, `rtl-qor`), the SV path is
+    *smaller*: 89 vs 95 IR nodes, 309 vs 432 generic cells, 105 vs 144 flops. The
+    state is the same size, so it is in how the two front ends lower a proc. To look
+    into.
+- ◐ **EX-6** E10 (`aes`): the function, the rejected faithful `aes_ctr`
   (the diagnostic is captured in the README), and the restructured port.
-- ☐ **EX-7** `examples/xls/README.md`, `NOTICE`, the quick subset in `tests`.
+  - `aes`: key schedule, encrypt, decrypt over `typedef bit [7:0] Block [4][4]`. 2-D
+    arrays map to XLS arrays of arrays, and the RTL binding packs N-dimensional
+    arrays row-major, element 0 low. The six tests pass at `model` and `rtl`. All
+    three equivalences are inconclusive within the budget; the node counts match
+    (494/494, 2,234/2,234, 4,247/4,248).
+  - **Correction:** at the pinned tag `aes_ctr` does one op per channel per
+    activation, so there is no P10 rejection to show. It ports faithfully. The key and
+    the channel blocks are packed arrays with descending ranges, so DSLX element `k`
+    of `n` is index `n-1-k`. Upstream's test proc passes at `model` and `rtl`.
+  - Found: an argument named `block` is an XLS IR keyword. be-xls now suffixes `_`
+    to every name in `IR_KEYWORDS` (found by trying each with opt_main).
+  - Found: Yosys needs 14.7 GB per AES module through sv2v and 4.9 GB on XLS's
+    Verilog-2001 (`Codegen system_verilog: false`). The AES examples synthesize the
+    latter, and the README says to use `-j 4`.
+  - To do: the gate levels (rerunning after the memory fix).
+- ◐ **EX-7** `examples/xls/README.md`, `NOTICE`, the quick subset in `tests`.
+  - Done: the index README, a README per example (the test first, then the mapping
+    and every deviation), NOTICE (now covering `dslx_top/` and the std ports), and a
+    test that every `orig/` file matches UPSTREAM's sha256.
+  - The quick subset exists (`dfm run quick`: crc32, adler32, lfsr, lfsr_proc, rle)
+    but is **not** in the fw-hdl `tests` root yet. It would make that root need the XLS
+    tools, and they have no package yet (X1-0). Wire it in with X1-0.
 
 ### 11.2 Yosys in libsynth (YS)
 - ☑ **YS-1** `synth.yosys` package:
@@ -568,7 +607,17 @@ synthesis.
 - ☑ **GAP-2** `synth.xls.Equiv` (G-5). The verdict is `equivalent`, `not-equivalent`
   (with the counterexample), `inconclusive` (a timeout; a warning unless
   `require_proof`), or `error`. Written as `equiv.json`.
-- ☐ **GAP-3** `try_get` (G-2), if D-7 keeps E3's proc half.
+- ☑ **GAP-3** `try_get` (G-2), if D-7 keeps E3's proc half.
+  - As G-2 says; the first version had `output t`, which SV resets on every call, so
+    the model "polled" its state away. It is `inout`.
+  - **E3's proc half (`lfsr_proc`)** ports and lowers. Its upstream test is
+    timing-dependent: it assumes the interpreter's schedule. It passes at `model`. At
+    `rtl` and all three netlists it fails the same way (1, 3, ...): the pipelined proc
+    polls again before the seed arrives. The suite runs `model`; `lfsr_proc.timing`
+    runs the rest, failing by design. This is the clearest demonstration of why the
+    other tests are level-independent: they are KPNs.
+  - The `model` binding's outputs are now a rendezvous (a component's put waits for
+    the test's get), so a polling proc cannot run ahead in zero time.
 - ☑ **GAP-4** Codegen valid signals (G-11). Also added to libsynth along the way:
   `synth.xls.DslxTest` (upstream's own tests, failures as markers at the assert), and
   each `dslxSource` fileset's base on the DSLX import path, so `orig/` trees import as
@@ -607,8 +656,13 @@ synthesis.
     is recorded in the README as what writing glue costs. The generated binding
     presents calls from a clocked process, so it cannot make that mistake.
   - The knob script ran (§2.2 point 3). The fairness review is yours.
-- ☐ **TB-6** `report.py` and `RESULTS.md`: the QoR table and the integration table
-  (§8).
+- ☑ **TB-6** `report.py` and `RESULTS.md`: the QoR table and the integration table
+  (§8). `common/report.py` reads a run directory. It produces the integration table
+  (test sha256 per example, pass counts, the sim time of the last pass, run and
+  build wall times, glue lines), the QoR table (IR nodes, latency, cells per target
+  with the headline cell classes, the equivalence verdict and how it was reached)
+  and the sweep table. Image build times come from file timestamps, since dv-flow
+  records no durations.
 
 ## 12. Decisions for review
 
@@ -620,7 +674,7 @@ synthesis.
 | D-4 | Yosys task shape | one `Synth` with `target`, not one task per family (§6.2) |
 | D-5 | `FormalPrepare` | to dv-flow-libformal, not libsynth |
 | D-6 | Results | generated; `RESULTS.md` committed as a snapshot |
-| D-7 | E3's proc half (needs non-blocking receive) | keep it, and add `try_get` (GAP-3); it is small and FPGA demos need it |
+| D-7 | E3's proc half (needs non-blocking receive) | keep it, and add `try_get` (GAP-3); it is small and FPGA demos need it. **Done, opt-in:** `fw_get_nb_if`, not a method on every `fw_get_if` (G-2). Review this choice. |
 | D-8 | Overlap with `tests/xls/corpus` (C1–C3) | keep both; the corpus tests our subset, the examples are faithful ports |
 | D-9 | Regression | a quick subset (E1, E2, E3, E9) in `tests`; the full set as its own root |
 | D-10 | Back-end library (§9) | **Decided:** `dv-flow-libfpga` (repo created; added to `ivpm.yaml`) |

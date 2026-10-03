@@ -39,8 +39,14 @@ module fw_rv_fifo #(
         assign out_vld  = (count != '0);
         assign out_data = mem[rd];
 
+        // Written for Yosys's own reader too: it takes neither a cast whose
+        // width is a parameter (AW'(...)) nor `return` of a ?: expression.
+        // (p == DEPTH - 1) compares at integer width; DEPTH - 1 fits in AW bits.
         function automatic logic [AW-1:0] next(logic [AW-1:0] p);
-            return (p == AW'(DEPTH - 1)) ? '0 : p + 1'b1;
+            if (p == DEPTH - 1)
+                next = '0;
+            else
+                next = p + 1'b1;
         endfunction
 
         always_ff @(posedge clk) begin

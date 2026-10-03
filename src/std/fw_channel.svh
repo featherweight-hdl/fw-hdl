@@ -12,7 +12,8 @@ typedef class fw_channel;
 // put() and get() are blocking, with no peek and no try, so a network of
 // components joined by channels is a Kahn process network: each channel's
 // value stream depends on neither timing nor DEPTH, unless the network
-// deadlocks (xls-phase2.md §4).
+// deadlocks (xls-phase2.md §4). A consumer that polls connects to get_nb_ex
+// (fw_get_nb_if, try_get) instead, and opts out of that guarantee.
 //
 // DEPTH is how many values the channel holds:
 //   * DEPTH >= 1 -- a FIFO: put() blocks while DEPTH values are waiting.
@@ -51,9 +52,29 @@ class fw_channel_get_ex #(type T = int, int DEPTH = 1) extends fw_export #(fw_ge
     endtask
 endclass
 
+// The get side for a consumer that polls (fw_get_nb_if).
+class fw_channel_get_nb_ex #(type T = int, int DEPTH = 1) extends fw_export #(fw_get_nb_if #(T))
+        implements fw_get_nb_if #(T);
+    local fw_channel #(T, DEPTH) m_ch;
+
+    function new(string name, fw_channel #(T, DEPTH) ch);
+        super.new(name, ch, this);
+        m_ch = ch;
+    endfunction
+
+    virtual task get(output T t);
+        m_ch.ch_get(t);
+    endtask
+
+    virtual function bit try_get(inout T t);
+        return m_ch.ch_try_get(t);
+    endfunction
+endclass
+
 class fw_channel #(type T = int, int DEPTH = 1) extends fw_component;
     fw_channel_put_ex #(T, DEPTH) put_ex;
     fw_channel_get_ex #(T, DEPTH) get_ex;
+    fw_channel_get_nb_ex #(T, DEPTH) get_nb_ex;
 
     local T            m_q[$];
     // Completed puts and gets, so a rendezvous put can wait for its own value
@@ -65,6 +86,7 @@ class fw_channel #(type T = int, int DEPTH = 1) extends fw_component;
         super.new(name, parent);
         put_ex = new("put_ex", this);
         get_ex = new("get_ex", this);
+        get_nb_ex = new("get_nb_ex", this);
     endfunction
 
     task ch_put(input T t);
@@ -83,6 +105,14 @@ class fw_channel #(type T = int, int DEPTH = 1) extends fw_component;
         t = m_q.pop_front();
         m_n_get++;
     endtask
+
+    function bit ch_try_get(inout T t);
+        if (m_q.size() == 0)
+            return 1'b0;
+        t = m_q.pop_front();
+        m_n_get++;
+        return 1'b1;
+    endfunction
 
     // How many values are waiting (for tests and debug).
     function int size();

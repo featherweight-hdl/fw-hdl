@@ -14,6 +14,7 @@ package fw_std_pkg;
     // Transaction-level protocol APIs (interface classes).
     `include "fw_put_if.svh"      // put(t)            -- write to an output, no handshake
     `include "fw_get_if.svh"      // get(t)            -- sample an input, no handshake
+    `include "fw_get_nb_if.svh"   // + try_get(t)      -- poll an input (opt-in; not KPN)
     `include "fw_reqrsp_if.svh"   // call(out, in)     -- blocking request/response
     `include "fw_mem_if.svh"      // read/write(addr)  -- protocol-independent memory access
 

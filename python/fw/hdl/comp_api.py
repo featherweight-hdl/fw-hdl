@@ -19,7 +19,10 @@ functions, the test holds the API and each level supplies a module named
                                       collected on its ready/valid pins
 
 Put queues the value; get waits until there is one. So a test can put a whole
-stimulus and then get the results, or interleave the two.
+stimulus and then get the results, or interleave the two. At `model`, a
+component's own put waits until the test has taken the value (a rendezvous),
+so a component that never blocks on input -- one that polls -- cannot run
+ahead without bound.
 """
 from __future__ import annotations
 
@@ -37,6 +40,7 @@ class CompPort:
     role: str        # "put" (the component's input) or "get" (its output)
     type: str        # SV payload type, as spelled inside its package (Spec::T)
     bits: int
+    nb: bool = False # the component polls this input (fw_get_nb_if)
 
 
 @dc.dataclass
@@ -146,18 +150,31 @@ def model_harness_sv(api: CompApiSet) -> str:
         cid = ident(c.name)
         for p in c.ports:
             if p.role == "put":
-                o += [f"    class {cid}_{p.name}_src implements fw_get_if #({p.type});",
+                iface = "fw_get_nb_if" if p.nb else "fw_get_if"
+                o += [f"    class {cid}_{p.name}_src implements {iface} #({p.type});",
                       f"        {p.type} q[$];",
                       f"        virtual task get(output {p.type} t);",
                       "            wait (q.size() > 0);",
                       "            t = q.pop_front();",
-                      "        endtask",
-                      "    endclass"]
+                      "        endtask"]
+                if p.nb:
+                    o += [f"        virtual function bit try_get(inout {p.type} t);",
+                          "            if (q.size() == 0) return 1'b0;",
+                          "            t = q.pop_front();",
+                          "            return 1'b1;",
+                          "        endfunction"]
+                o += ["    endclass"]
             else:
+                # A rendezvous: the component's put returns once the test
+                # has taken the value.
                 o += [f"    class {cid}_{p.name}_snk implements fw_put_if #({p.type});",
                       f"        {p.type} q[$];",
+                      "        longint unsigned n_put, n_taken;",
                       f"        virtual task put(input {p.type} t);",
+                      "            longint unsigned seq;",
                       "            q.push_back(t);",
+                      "            seq = ++n_put;",
+                      "            wait (n_taken >= seq);",
                       "        endtask",
                       "    endclass"]
         o += [f"    class {cid}_model implements {api.pkg}::{cid}_api;"]
@@ -171,7 +188,8 @@ def model_harness_sv(api: CompApiSet) -> str:
             else:
                 o += [f"        virtual {_task(p)};",
                       f"            wait ({p.name}.q.size() > 0);",
-                      f"            v = {p.name}.q.pop_front();", "        endtask"]
+                      f"            v = {p.name}.q.pop_front();",
+                      f"            {p.name}.n_taken++;", "        endtask"]
         o += ["    endclass", ""]
     o += [f"    class {api.name}_top extends fw_component;"]
     for c in api.components:
@@ -179,7 +197,7 @@ def model_harness_sv(api: CompApiSet) -> str:
         o.append(f"        {c.sv} {cid}_dut;")
         o.append(f"        {cid}_model {cid}_m = new;")
         for p in c.ports:
-            iface = "fw_get_if" if p.role == "put" else "fw_put_if"
+            iface = ("fw_get_nb_if" if p.nb else "fw_get_if") if p.role == "put" else "fw_put_if"
             o.append(f"        fw_export #({iface} #({p.type})) {cid}_{p.name}_e;")
     o += ["        function new(string name, fw_component parent);",
           "            super.new(name, parent);", "        endfunction",

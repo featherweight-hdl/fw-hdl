@@ -75,6 +75,7 @@ class StaticMapper:
         self.in_function: Optional[str] = None
         self.lvalue: List[ir.Expr] = []
         self.port_dirs: Dict[str, str] = {}       # port name -> "get" | "put"
+        self.port_nb: set = set()                 # get ports that may poll (fw_get_nb_if)
         self.cls_name: Optional[str] = None
         self.cls_spelling: Optional[str] = None
         # Functions reached by calls, mapped on demand.
@@ -583,6 +584,9 @@ class StaticMapper:
             if e.isNonBlocking:
                 raise self.fail("non-blocking assignment in a class method", e)
             target = self.lvalue_expr(e.left)
+            nb = self.try_get(e.right)
+            if nb is not None:
+                return [ir.StmtAssign(targets=[target], value=nb)]
             self.lvalue.append(target)
             try:
                 value = self.expr(e.right)
@@ -627,6 +631,28 @@ class StaticMapper:
         if name not in self.fields or name not in self.port_dirs:
             return None
         return self.fields[name], name
+
+    def try_get(self, e) -> Optional[ir.Expr]:
+        """`<port>.t.try_get(x)` on an fw_get_nb_if port: an awaited call
+        whose argument is the output x and whose value is the valid bit
+        (GAP-3; lowered to XLS's non-blocking receive). None otherwise."""
+        if e.kind != EK.Call or e.isSystemCall or e.subroutineName != "try_get":
+            return None
+        port = self._port_of(e.thisClass, e)
+        if port is None:
+            return None
+        idx, pname = port
+        if self.in_function is not None:
+            raise self.fail("channel operations are only allowed in run()", e)
+        if pname not in self.port_nb:
+            raise self.fail(f"{pname}.t.try_get(): the port must be an fw_get_nb_if to poll",
+                            e)
+        if len(e.arguments) != 1 or e.arguments[0].kind != EK.Assignment:
+            raise self.fail(f"expected `v = {pname}.t.try_get(x)`", e)
+        x = self.lvalue_expr(e.arguments[0].left)
+        ref = ir.ExprRefField(base=ir.TypeExprRefSelf(), index=idx)
+        return ir.ExprAwait(value=ir.ExprCall(func=ir.ExprAttribute(value=ref, attr="try_get"),
+                                              args=[x]))
 
     def call_stmt(self, e) -> List[ir.Stmt]:
         if e.isSystemCall:
@@ -763,15 +789,20 @@ class StaticMapper:
         if inner is None or inner.kind != ast.SymbolKind.ClassType or inner.genericClass is None:
             raise self.fail(f"port {m.name!r}: cannot read its interface type", m)
         api = inner.genericClass.name
-        if api not in ("fw_get_if", "fw_put_if"):
+        if api not in ("fw_get_if", "fw_get_nb_if", "fw_put_if"):
             raise self.fail(f"port {m.name!r} uses {api}; the static subset has channel "
-                            f"ports only (fw_get_if / fw_put_if)", m)
+                            f"ports only (fw_get_if / fw_get_nb_if / fw_put_if)", m)
+        nb = api == "fw_get_nb_if"
+        if nb:
+            api = "fw_get_if"
         elem = None
         for x in inner:
             if x.kind == ast.SymbolKind.TypeParameter and x.name == "T":
                 elem = x.targetType.type
         et = self.dtype(elem, m, f"payload of port {m.name!r}", decl=True)
         self.port_dirs[m.name] = "get" if api == "fw_get_if" else "put"
+        if nb:
+            self.port_nb.add(m.name)
         dt = ir.DataTypeGetIF(element_type=et) if api == "fw_get_if" else \
             ir.DataTypePutIF(element_type=et)
         # The payload type as SV spells it from outside the class, for
@@ -781,13 +812,13 @@ class StaticMapper:
         if elem.isAlias and f"::{self.cls_name}::" in sv_type:
             sv_type = f"{self.cls_spelling}::{elem.name}"
         return ir.Field(name=m.name, datatype=dt, kind=ir.FieldKind.Port, loc=self.loc(m),
-                        pragmas={"sv_type": sv_type})
+                        pragmas={"sv_type": sv_type, **({"get_nb": True} if nb else {})})
 
     def map_component(self, cls, spelling: Optional[str] = None) -> ir.DataTypeComponent:
         """Map component class *cls*. ``spelling`` is how SV names it from
         outside: the class name, or a typedef of a parameterized class's
         specialization; it names the component and its class-scoped types."""
-        self.fields, self.port_dirs = {}, {}
+        self.fields, self.port_dirs, self.port_nb = {}, {}, set()
         self.cls_name, self.cls_spelling = cls.name, spelling or cls.name
         fields: List[ir.Field] = []
         run = None
@@ -824,7 +855,7 @@ class StaticMapper:
 
         *names*, if given, holds an IR name for each of *subs* (None keeps the
         SV name)."""
-        self.fields, self.port_dirs = {}, {}
+        self.fields, self.port_dirs, self.port_nb = {}, {}, set()
         for s, n in zip(subs, names or [None] * len(subs)):
             self.request_function(s, s, n)
         while self._fn_queue:

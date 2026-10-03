@@ -24,7 +24,7 @@ test run by hand-written glue on the plain-XLS path, for contrast.
 |---|---|---|---|
 | E1 | [crc32](crc32) | `examples/crc32/crc32.x` | the template; the plain-XLS contrast (`dslx_glue/`) |
 | E2 | [adler32](adler32) | `examples/adler32/adler32.x` | `%` by a constant; a one-trip loop |
-| E3 | [lfsr](lfsr) | `examples/lfsr.x` | a parametric function at two widths |
+| E3 | [lfsr](lfsr) | `examples/lfsr.x`, `lfsr_proc.x` | a parametric function at two widths; a proc that polls (`lfsr_proc`) |
 | E4 | [gcd](gcd) | `examples/gcd.x` | two algorithms; the quickcheck as a proof |
 | E5 | [prefix_sum](prefix_sum) | `examples/prefix_sum.x` | arrays in and out |
 | E6 | [fir_dot](fir_dot) | `examples/fir_filter.x`, `dot_product.x` | signed multiply-accumulate |
