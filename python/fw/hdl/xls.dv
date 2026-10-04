@@ -15,6 +15,7 @@ package:
 
   tasks:
   - name: IR
+    scope: export
     desc: Map SV functions or component classes in the static subset to XLS IR packages
     doc: |
       Each entry of `top` becomes one `xlsIR` package, `<module>.ir`, and so

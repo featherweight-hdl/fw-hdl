@@ -48,6 +48,7 @@ package:
 
   tasks:
   - name: Functions
+    scope: export
     desc: Generate the call API of SV functions -- an interface class, its proxy and the model class
     doc: |
       `functions` names the functions, by path (`crc32_pkg::main`) or by an
@@ -86,6 +87,7 @@ package:
     run: fw.hdl.dfm_tasks.ApiFunctions
 
   - name: Components
+    scope: export
     desc: Generate the call API of SV components (procs) -- one task per port
     doc: |
       `components` names component classes, or typedefs naming a
@@ -126,6 +128,7 @@ package:
     run: fw.hdl.dfm_tasks.ApiComponents
 
   - name: ModelBinding
+    scope: export
     desc: The `model` level -- an <api>_harness in which the SV functions answer the API
     doc: |
       Consumes the `fwFnApi` of `Functions` or the `fwCompApi` of
@@ -141,6 +144,7 @@ package:
     run: fw.hdl.dfm_tasks.ApiModelBinding
 
   - name: XlsBinding
+    scope: export
     desc: The `rtl` and `gates` levels -- an <api>_harness in which the XLS modules answer the API
     doc: |
       Consumes the `fwFnApi` of `Functions` (or the `fwCompApi` of

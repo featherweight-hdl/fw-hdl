@@ -576,6 +576,13 @@ synthesis.
   - Done: the index README, a README per example (the test first, then the mapping
     and every deviation), NOTICE (now covering `dslx_top/` and the std ports), and a
     test that every `orig/` file matches UPSTREAM's sha256.
+  - Published docs (2026-10-04): `docs/` is a Sphinx site (`docs/README.md`). Each
+    example has a page: its README, the port's reference (sphinx-systemverilog,
+    from the doc comments), and listings of the tests, the flow and the original
+    DSLX. `methodology/` explains the approach, and `reference/` covers the core
+    classes and the fw.hdl tasks (sphinx-dv-flow; those tasks now declare
+    `scope: export`). It builds clean under `-W`. Defects found in the two doc tools
+    are in `docs/tool-issues.md`.
   - The quick subset exists (`dfm run quick`: crc32, adler32, lfsr, lfsr_proc, rle)
     but is **not** in the fw-hdl `tests` root yet. It would make that root need the XLS
     tools, and they have no package yet (X1-0). Wire it in with X1-0.
@@ -811,3 +818,7 @@ synthesis.
     `fw_rv_fifo`'s `next()` was not readable by Yosys (rewritten); `aes_ctr` at the
     pinned tag does one op per channel, so the P10 rejection was a `main` artifact.
   - `common/report.py` writes `examples/xls/RESULTS.md` and `results.json`.
+- 2026-10-04: docs. `docs/` stood up with methodology, example and reference pages
+  (EX-7). The fw.hdl tasks declare `scope: export` (`adler32.all`, `rle.all` rerun
+  and pass). `docs/tool-issues.md` records 8 sphinx-systemverilog and 3 sphinx-dv-flow
+  findings, including a confirmed bug (S-1, byte offsets as character offsets).

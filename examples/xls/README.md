@@ -62,7 +62,7 @@ The flows need, on `PATH` or as noted:
 dfm run tests                                    # every example's tests, every level
 dfm run tests --tests crc32,rle --views rtl      # some of them; other images aren't built
 dfm run crc32.all                                # one example end to end
-dfm run quick                                    # the quick subset (crc32, adler32, lfsr, rle)
+dfm run quick                                    # the quick subset (crc32, adler32, lfsr, lfsr_proc, rle)
 python3 common/report.py                         # RESULTS.md from what the runs left
 ```
 

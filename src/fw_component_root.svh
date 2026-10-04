@@ -55,7 +55,7 @@ class fw_component_root #(type Tb=fw_component) extends Tb;
     // Emit the static bind-map artifact (design §9).
     //
     // OPT-IN, because writing a file into every existing run's directory is a
-    // behavior change nobody asked for:
+    // behavior change nobody asked for::
     //
     //     +fw_bindmap             -> write ./fw_bindmap.json
     //     +fw_bindmap=<path>      -> write <path>

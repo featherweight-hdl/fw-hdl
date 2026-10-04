@@ -60,3 +60,14 @@ package:
       src: pypi
     - name: sphinx
       src: pypi
+    # The docs (docs/README.md): MyST pages, SystemVerilog and dv-flow autodoc.
+    - name: myst-parser
+      src: pypi
+    - name: sphinx-copybutton
+      src: pypi
+    - name: furo
+      src: pypi
+    - name: sphinx-systemverilog
+      src: pypi
+    - name: sphinx-dv-flow
+      url: https://github.com/dv-flow/sphinx-dv-flow.git

@@ -20,6 +20,8 @@
 //
 // --- The plusargs ------------------------------------------------------------
 //
+// The console reads these::
+//
 //   +fw_dbg                 attach a text sink to the component's context
 //   +fw_dbg_level=<0..5>    how deep to listen (default 3 = FW_L_OP)
 //   +fw_dbg_kinds=<mask>    which kinds (default all; see the FW_K_* bits)

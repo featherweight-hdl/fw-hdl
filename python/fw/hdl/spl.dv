@@ -10,6 +10,7 @@ package:
 
   tasks:
   - name: Partition
+    scope: export
     desc: Read a structural fw-hdl component and emit its XLS blocks, plus the shell that integrates them
     doc: |
       Step A of the SPL -> RTL pipeline:
@@ -53,6 +54,7 @@ package:
     run: fw.hdl.dfm_tasks.Partition
 
   - name: Integrate
+    scope: export
     desc: Build the RTL top that instantiates every block and wires its channels
     doc: |
       Step C of the SPL -> RTL pipeline. Reads the `splPartition` shell and one

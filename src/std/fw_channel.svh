@@ -1,27 +1,5 @@
 typedef class fw_channel;
 
-// A point-to-point channel between two components that both hold PORTS: a
-// producer's `fw_port #(fw_put_if #(T))` and a consumer's
-// `fw_port #(fw_get_if #(T))`. A port can only connect to an export, so two
-// ports need this object between them:
-//
-//     fw_channel #(pkt_t, 2) ch;          // in build(): ch = new("ch", this);
-//     prod.out.connect(ch.put_ex);        // in connect()
-//     cons.in.connect(ch.get_ex);
-//
-// put() and get() are blocking, with no peek and no try, so a network of
-// components joined by channels is a Kahn process network: each channel's
-// value stream depends on neither timing nor DEPTH, unless the network
-// deadlocks (xls-phase2.md §4). A consumer that polls connects to get_nb_ex
-// (fw_get_nb_if, try_get) instead, and opts out of that guarantee.
-//
-// DEPTH is how many values the channel holds:
-//   * DEPTH >= 1 -- a FIFO: put() blocks while DEPTH values are waiting.
-//   * DEPTH == 0 -- a rendezvous: put() returns once a get() has taken the
-//     value, so a producer never runs ahead of its consumer.
-// A synthesis flow maps the same DEPTH onto RTL: a ready/valid wire for 0, a
-// ready/valid FIFO otherwise.
-
 // The put side: an export that is its own imp, as fw_put_xtor_bridge is.
 class fw_channel_put_ex #(type T = int, int DEPTH = 1) extends fw_export #(fw_put_if #(T))
         implements fw_put_if #(T);
@@ -71,6 +49,27 @@ class fw_channel_get_nb_ex #(type T = int, int DEPTH = 1) extends fw_export #(fw
     endfunction
 endclass
 
+// A point-to-point channel between two components that both hold PORTS: a
+// producer's `fw_port #(fw_put_if #(T))` and a consumer's
+// `fw_port #(fw_get_if #(T))`. A port can only connect to an export, so two
+// ports need this object between them:
+//
+//     fw_channel #(pkt_t, 2) ch;          // in build(): ch = new("ch", this);
+//     prod.out.connect(ch.put_ex);        // in connect()
+//     cons.in.connect(ch.get_ex);
+//
+// put() and get() are blocking, with no peek and no try, so a network of
+// components joined by channels is a Kahn process network: each channel's
+// value stream depends on neither timing nor DEPTH, unless the network
+// deadlocks (xls-phase2.md §4). A consumer that polls connects to get_nb_ex
+// (fw_get_nb_if, try_get) instead, and opts out of that guarantee.
+//
+// DEPTH is how many values the channel holds:
+//   * DEPTH >= 1 -- a FIFO: put() blocks while DEPTH values are waiting.
+//   * DEPTH == 0 -- a rendezvous: put() returns once a get() has taken the
+//     value, so a producer never runs ahead of its consumer.
+// A synthesis flow maps the same DEPTH onto RTL: a ready/valid wire for 0, a
+// ready/valid FIFO otherwise.
 class fw_channel #(type T = int, int DEPTH = 1) extends fw_component;
     fw_channel_put_ex #(T, DEPTH) put_ex;
     fw_channel_get_ex #(T, DEPTH) get_ex;
