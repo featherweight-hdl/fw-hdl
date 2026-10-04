@@ -684,7 +684,7 @@ synthesis.
 | D-4 | Yosys task shape | one `Synth` with `target`, not one task per family (§6.2) |
 | D-5 | `FormalPrepare` | to dv-flow-libformal, not libsynth |
 | D-6 | Results | generated; `RESULTS.md` committed as a snapshot |
-| D-7 | E3's proc half (needs non-blocking receive) | keep it, and add `try_get` (GAP-3); it is small and FPGA demos need it. **Done, opt-in:** `fw_get_nb_if`, not a method on every `fw_get_if` (G-2). Review this choice. |
+| D-7 | E3's proc half (needs non-blocking receive) | keep it, and add `try_get` (GAP-3); it is small and FPGA demos need it. **Done, opt-in:** `fw_get_nb_if`, not a method on every `fw_get_if` (G-2). Reviewed and accepted (2026-10-04). |
 | D-8 | Overlap with `tests/xls/corpus` (C1–C3) | keep both; the corpus tests our subset, the examples are faithful ports |
 | D-9 | Regression | a quick subset (E1, E2, E3, E9) in `tests`; the full set as its own root |
 | D-10 | Back-end library (§9) | **Decided:** `dv-flow-libfpga` (repo created; added to `ivpm.yaml`) |
