@@ -17,7 +17,24 @@ Then open `docs/_build/html/index.html`. `-W` keeps the build honest: a warning 
 an error. Use `-E` after changing SV sources, since the SV index is cached.
 
 The dependencies are in `ivpm.yaml` (myst-parser, sphinx-copybutton, furo,
-sphinx-systemverilog, sphinx-dv-flow). Graphviz's `dot` draws the diagrams.
+sphinx-systemverilog, sphinx-dv-flow), and, for a docs-only environment, in
+`docs/requirements.txt`. Graphviz's `dot` draws the diagrams.
+
+## Publishing
+
+The docs are published to `dvkit.org/featherweight-hdl/fw-hdl/`, and only by the
+DVKit docs pipeline. `.forgejo/workflows/docs.yml` builds them on every push (with
+`-W` and sanity checks) and uploads the HTML as the artifact
+`docs-featherweight-hdl-fw-hdl`. The host side fetches it, and a run on `main` goes
+live automatically; other branches are staged for review. Nothing in this repo
+deploys, and nothing should: a deploy replaces the whole dvkit.org site.
+
+The job installs `docs/requirements.txt` into a fresh Python 3.10 venv, not the
+ivpm environment, because the docs need no EDA tools. Keep the two lists in step.
+`dv-flow-mgr` and `sphinx-dv-flow` are pinned to commits; bump them deliberately.
+
+The sanity checks count pages and rendered objects per section. Raise the page floor
+(85 today; a good build has 98) as pages are added.
 
 ## Layout
 
@@ -27,6 +44,7 @@ methodology/          how fw-hdl works: components, synthesis, testing, flows
 examples/xls/         one page per XLS example; see below
 reference/            generated: the SV library by topic, macros, modules, tasks
 conf.py               the SV build units, and the README include hook
+requirements.txt      the docs toolchain, for CI
 tool-issues.md        defects found in the doc tools (not published)
 ```
 

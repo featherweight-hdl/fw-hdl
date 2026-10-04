@@ -1,0 +1,18 @@
+# What the docs build needs, and nothing else: the CI docs job
+# (.forgejo/workflows/docs.yml) installs exactly this into a fresh venv. The
+# development environment gets the same packages through ivpm.yaml.
+#
+# Python 3.10 is the floor: it is what the Forgejo runner image carries.
+
+sphinx>=7.2.5            # the include-read event (docs/conf.py)
+myst-parser
+sphinx-copybutton
+furo
+# docs/tool-issues.md records 0.6.1's defects and the workarounds conf.py and
+# the pages use; take a new minor version deliberately.
+sphinx-systemverilog>=0.6.1,<0.7
+
+# Not on PyPI at the needed revision; pinned to the commits the docs were
+# last built with. Bump deliberately.
+dv-flow-mgr @ git+https://git.dvkit.org/dv-flow/dv-flow-mgr.git@768fd140f8d131e46670d2432010c2adcae63b97
+sphinx-dv-flow @ git+https://git.dvkit.org/dv-flow/sphinx-dv-flow.git@2ca773c487796120736a4d5c7f06dda9aa02818a
