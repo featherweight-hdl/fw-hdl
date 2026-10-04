@@ -6,6 +6,7 @@ installed in the flow's environment (``python/pyproject.toml``).
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 from typing import List
 
@@ -401,3 +402,326 @@ def _comp_xls_binding(input: TaskDataInput, api) -> TaskDataResult:
         FileSet(src=input.name, filetype="systemVerilogSource", basedir=rundir,
                 files=[f"{api.name}_xls.sv"], attributes=[f"harness={api.name}_harness"])])
 
+
+async def FormalProve(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
+    """fw.hdl.formal.Prove: SVUnit tests proven for every input (formal-svunit.md)."""
+    from fw.hdl import fn_api
+    from fw.hdl.formal import prove
+    from dv_flow.libhdlsim.sim_check import _case_name
+    p = input.params
+    gate = bool(p.gate)
+    rundir = input.rundir
+    os.makedirs(rundir, exist_ok=True)
+    apis = _files(input, "fwFnApi")
+    if len(apis) > 1:
+        return _api_error(f"fw.hdl.formal.Prove: at most one fwFnApi input, got {len(apis)}")
+    tests = _files(input, "svunitTest")
+    if not tests:
+        return _api_error("fw.hdl.formal.Prove: no svunitTest input")
+    try:
+        solver = prove.Solver.named(p.solver or "dv-solve", float(p.timeout))
+    except FileNotFoundError as e:
+        return _api_error(f"fw.hdl.formal.Prove: {e}")
+    files, incdirs = _sv_inputs(input)
+    incdirs += [os.path.join(fs.basedir, d) for fs in getattr(input, "inputs", []) or []
+                if getattr(fs, "filetype", None) == "svunitTest"
+                for d in getattr(fs, "incdirs", []) or []]
+    incdirs += list(dict.fromkeys(os.path.dirname(t) for t in tests))
+    cfg = FlowConfig(incdirs=list(dict.fromkeys(incdirs)))
+    for d in p.defines or []:
+        k, _, v = str(d).partition("=")
+        cfg.defines[k] = v
+    api = fn_api.FnApi.load(apis[0]) if apis else None
+    t0 = time.time()
+    design_ir: List[str] = []
+    try:
+        results = prove.prove_files(files + tests, api=api, tests=list(p.tests or []) or None,
+                                    solver=solver, workdir=rundir, config=cfg,
+                                    design_ir=design_ir)
+    except RuntimeError as e:          # the sources do not parse
+        return _api_error(f"fw.hdl.formal.Prove: {e}")
+    walltime = time.time() - t0
+    prove.write_results(results, Path(rundir) / "results.json")
+    report = prove.report(results)
+    with open(os.path.join(rundir, "formal.log"), "w") as f:
+        f.write(report + "\n")
+
+    counts = {s: sum(r.status == s for r in results)
+              for s in (prove.PROVEN, prove.CEX, prove.VACUOUS, prove.UNKNOWN,
+                        prove.NOT_FORMAL)}
+    if counts[prove.UNKNOWN]:
+        status = "error"
+    elif counts[prove.CEX] or counts[prove.VACUOUS]:
+        status = "fail"
+    else:
+        status = "pass"
+    passed = status == "pass"
+
+    sev = SeverityE.Error if (gate and not passed) else SeverityE.Info
+    for r in results:
+        if r.status == prove.PROVEN:
+            continue
+        if r.status == prove.CEX:
+            path, line = r.obligation.file, r.obligation.line
+        else:
+            path, line = r.file, r.line
+        s = SeverityE.Warning if r.status == prove.NOT_FORMAL else sev
+        msg = f"{r.test}: {r.status}: {r.summary()}"
+        ctxt.add_marker(TaskMarker(severity=s, msg=msg, loc=TaskMarkerLoc(path=path, line=line))
+                        if path else TaskMarker(severity=s, msg=msg))
+
+    cex = [f"{r.test}.cex.json" for r in results if r.status == prove.CEX]
+    artifacts = [FileSet(src=input.name, filetype="fwFormalResults", basedir=rundir,
+                         files=["results.json"]),
+                 FileSet(src=input.name, filetype="simLog", basedir=rundir,
+                         files=["formal.log"])]
+    if cex:
+        artifacts.append(FileSet(src=input.name, filetype="fwFormalCex", basedir=rundir,
+                                 files=cex))
+    formal = len(results) - counts[prove.NOT_FORMAL]
+    stats = {f"tests_{k.replace('-', '_')}": v for k, v in counts.items()}
+    stats.update({"tests_run": formal, "tests_passed": counts[prove.PROVEN],
+                  "tests_failed": formal - counts[prove.PROVEN]})
+    name = _case_name(input)
+    tr = ctxt.mkDataItem(
+        "hdlsim.TestResult", testname=p.testname or "svunit",
+        sim=f"formal:{p.solver or 'dv-solve'}", status=status, passed=passed, run_status=0,
+        errors=formal - counts[prove.PROVEN], warnings=counts[prove.NOT_FORMAL], fatals=0,
+        seed=0, walltime_s=walltime, stats=stats, runinfo={"solver": " ".join(solver.cmd)},
+        artifacts=artifacts)
+    tr.name = name           # reserved by mkDataItem; see hdltest.svunit.Check
+    tr.src = name
+    ctxt.info(f"formal {status}: {counts[prove.PROVEN]} of {formal} tests proven"
+              + (f", {counts[prove.NOT_FORMAL]} not formal" if counts[prove.NOT_FORMAL] else ""))
+    output = [tr] + artifacts[:1] + artifacts[2:]
+    if design_ir:
+        # The design as the proofs encoded it, for synth.xls.Equiv against
+        # the IR XLS optimized (formal-svunit.md §6, the first link).
+        output.append(FileSet(src=input.name, filetype="xlsIR", basedir=rundir,
+                              files=[os.path.basename(f) for f in design_ir],
+                              attributes=["fwFormalDesign"]))
+    return TaskDataResult(status=1 if (gate and not passed) else 0, changed=True,
+                          output=output)
+
+
+async def FormalReplay(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
+    """fw.hdl.formal.Replay: the test files, with each counterexample's values."""
+    from fw.hdl.formal import replay
+    p = input.params
+    tests = _files(input, "svunitTest")
+    cex = _files(input, "fwFormalCex")
+    if p.tests:
+        want = set(p.tests)
+        cex = [c for c in cex if replay.load(c)["test"] in want]
+    rundir = input.rundir
+    try:
+        out = replay.replay_files(tests, cex, rundir)
+    except (replay.ReplayError, OSError) as e:
+        return _api_error(f"fw.hdl.formal.Replay: {e}")
+    # Each original's directory stays on the include path, for its `includes.
+    incdirs = list(dict.fromkeys(os.path.dirname(os.path.abspath(t)) for t in tests))
+    output = [FileSet(src=input.name, filetype="svunitTest", basedir=rundir,
+                      files=[os.path.basename(f) for f in out], incdirs=incdirs)]
+    names = [replay.load(c)["test"] for c in cex]
+    if names and p.filter:
+        output.append(ctxt.mkDataItem(
+            "hdlsim.SimRunArgs",
+            plusargs=["SVUNIT_FILTER=" + ":".join(f"*.{n}" for n in names)]))
+    ctxt.info(f"replay: {len(names)} counterexample(s)"
+              + (f" ({', '.join(names)})" if names else ""))
+    return TaskDataResult(status=0, changed=True, output=output)
+
+
+async def FormalCodegenEquiv(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
+    """fw.hdl.formal.CodegenEquiv: each XLS-generated module against its optimized IR."""
+    from fw.hdl.formal import codegen_equiv as ce, prove
+    p = input.params
+    mods = {}
+    for fs in getattr(input, "inputs", []) or []:
+        ft = getattr(fs, "filetype", None)
+        if ft not in ("xlsOptIR", "xlsModuleSignature", "systemVerilogSource", "verilogSource"):
+            continue
+        attrs = dict(a.partition("=")[::2] for a in getattr(fs, "attributes", None) or [])
+        m = attrs.get("module") or (getattr(fs, "params", None) or {}).get("module")
+        if not m:
+            continue
+        mods.setdefault(m, {}).setdefault(ft, []).extend(
+            os.path.join(fs.basedir, f) for f in fs.files)
+    mods = {m: d for m, d in mods.items() if "xlsOptIR" in d}
+    if not mods:
+        return _api_error("fw.hdl.formal.CodegenEquiv: no module (the xlsOptIR, "
+                          "xlsModuleSignature and Verilog outputs of synth.xls.Codegen)")
+    try:
+        solver = prove.Solver.named(p.solver or "dv-solve", float(p.timeout))
+    except FileNotFoundError as e:
+        return _api_error(f"fw.hdl.formal.CodegenEquiv: {e}")
+    rundir = Path(input.rundir)
+    rundir.mkdir(parents=True, exist_ok=True)
+    entries, markers, fail = [], [], False
+    for m, d in sorted(mods.items()):
+        ir_, sig = d["xlsOptIR"][0], (d.get("xlsModuleSignature") or [None])[0]
+        verilog = d.get("systemVerilogSource", []) + d.get("verilogSource", [])
+        if sig is None or not verilog:
+            return _api_error(f"fw.hdl.formal.CodegenEquiv: module {m} has no "
+                              f"{'signature' if sig is None else 'Verilog'}")
+        r = ce.check(ir_, verilog, sig, solver, rundir)
+        lat = ce.parse_signature(Path(sig).read_text()).latency
+        entries.append(r.as_dict(ir_, verilog, lat))
+        what = f"{m}: XLS IR vs the generated Verilog ({lat} cycles)"
+        if r.verdict == ce.EQUIVALENT:
+            ctxt.info(f"equivalent: {what} ({r.seconds}s)")
+        elif r.verdict == ce.NOT_EQUIVALENT:
+            markers.append(TaskMarker(msg=f"NOT equivalent: {what}; {r.detail}",
+                                      severity=SeverityE.Error if p.gate else SeverityE.Warning))
+            fail |= bool(p.gate)
+        elif r.verdict == ce.ERROR:
+            markers.append(TaskMarker(msg=f"cannot compare {what}: {r.detail}",
+                                      severity=SeverityE.Error))
+            fail = True
+        else:
+            markers.append(TaskMarker(msg=f"inconclusive: {what}; {r.detail}",
+                                      severity=SeverityE.Error if p.require_proof
+                                      else SeverityE.Warning))
+            fail |= bool(p.require_proof)
+    worst = ce.write_report(entries, rundir / "equiv.json")
+    return TaskDataResult(status=1 if fail else 0, changed=True, markers=markers, output=[
+        FileSet(src=input.name, filetype="fwCodegenEquivReport", basedir=str(rundir),
+                files=["equiv.json"], attributes=[f"verdict={worst}"])])
+
+
+#: The links of the chain (formal-svunit.md §6), in order: report filetype -> what it checks.
+_CHAIN_LINKS = [
+    ("xlsEquivReport", "XLS IR", "the proven model's IR = the IR XLS optimized"),
+    ("fwCodegenEquivReport", "RTL", "the optimized IR = the Verilog XLS generated"),
+    ("yosysEquivReport", "netlist", "the RTL = the netlist"),
+]
+
+
+def _entries(report: dict, key: str) -> List[dict]:
+    return list(report.get(key) or [report])
+
+
+def _real(paths) -> set:
+    if isinstance(paths, str):
+        paths = [paths]
+    return {os.path.realpath(p) for p in paths or []}
+
+
+async def FormalChain(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
+    """fw.hdl.formal.Chain: proven at the model + equivalent at each step, as a TestResult."""
+    import json
+    from dv_flow.libhdlsim.sim_check import _case_name
+    p = input.params
+    ins = getattr(input, "inputs", []) or []
+    trs = [i for i in ins if getattr(i, "type", None) == "hdlsim.TestResult"]
+    if len(trs) != 1:
+        return _api_error(f"fw.hdl.formal.Chain: one hdlsim.TestResult (of "
+                          f"fw.hdl.formal.Prove) expected, got {len(trs)}")
+    proof = trs[0]
+    design = _real(f for fs in ins if getattr(fs, "filetype", None) == "xlsIR"
+                   and "fwFormalDesign" in (getattr(fs, "attributes", None) or [])
+                   for f in [os.path.join(fs.basedir, x) for x in fs.files])
+    reports = {}
+    for fs in ins:
+        ft = getattr(fs, "filetype", None)
+        if ft in dict((k, 0) for k, _, _ in _CHAIN_LINKS):
+            if ft in reports:
+                return _api_error(f"fw.hdl.formal.Chain: more than one {ft} input")
+            with open(os.path.join(fs.basedir, fs.files[0])) as f:
+                reports[ft] = (os.path.join(fs.basedir, fs.files[0]), json.load(f))
+
+    rows = []        # (step, verdict, what, detail)
+    pstat = getattr(proof, "status", "error")
+    st = getattr(proof, "stats", {}) or {}
+    rows.append(("model", "proven" if pstat == "pass" else pstat,
+                 f"{st.get('tests_passed', 0)} of {st.get('tests_run', 0)} tests proven "
+                 f"({getattr(proof, 'sim', 'formal')})", ""))
+    broken = []
+    # Each link must start where the one before it ended: the file sets connect.
+    cur, cur_what = design, "the proven model's IR (fw.hdl.formal.Prove)"
+    if not design:
+        broken.append("Prove gave no design IR (does the test call the design through the API?)")
+    for ft, step, what in _CHAIN_LINKS:
+        if ft not in reports:
+            continue
+        path, rep = reports[ft]
+        es = _entries(rep, "pairs" if ft == "xlsEquivReport" else "modules")
+        nxt = set()
+        for e in es:
+            lhs, rhs = _real(e.get("lhs")), _real(e.get("rhs"))
+            if ft == "xlsEquivReport":
+                # unordered: one side is where the chain is
+                if cur & lhs:
+                    nxt |= rhs
+                elif cur & rhs:
+                    nxt |= lhs
+                else:
+                    broken.append(f"{ft} ({path}) compares neither side with {cur_what}")
+                    nxt |= lhs | rhs        # go on from it: report one break once
+            else:
+                ok = cur & lhs if ft == "fwCodegenEquivReport" else \
+                    (cur and cur <= lhs)    # the netlist's gold holds every module reached
+                if not ok:
+                    broken.append(f"{ft} ({path}) does not start from {cur_what}")
+                nxt |= rhs
+        cur, cur_what = nxt, f"the files {ft} ends at"
+        v = rep.get("verdict", "error")
+        detail = rep.get("detail") or ""
+        if ft == "yosysEquivReport":
+            what = f"{what} ({rep.get('target', '?')})"
+        rows.append((step, v, what, detail))
+    links = rows[1:]
+    if not links:
+        broken.append("no equivalence report (synth.xls.Equiv, fw.hdl.formal.CodegenEquiv, "
+                      "synth.yosys.Equiv)")
+    verdicts = [v for _, v, _, _ in links]
+    if broken or pstat == "error" or any(v in ("error", "inconclusive") for v in verdicts):
+        status = "error"
+    elif pstat != "pass" or any(v != "equivalent" for v in verdicts):
+        status = "fail"
+    else:
+        status = "pass"
+    passed = status == "pass"
+
+    level = p.level or (links[-1][0] if links else "model")
+    if level.startswith("formal-"):         # the view's name: formal-<level>
+        level = level[len("formal-"):]
+    lines = [f"formal chain to level {level}: {status}", ""]
+    w = max(len(r[0]) for r in rows)
+    for i, (step, v, what, detail) in enumerate(rows):
+        lines.append(f"  {'  ' if i == 0 else '= '}{step:<{w}}  {v:<15} {what}"
+                     + (f"\n    {'':<{w}}  {'':<15} {detail}" if detail else ""))
+    for b in broken:
+        lines.append(f"  broken: {b}")
+    text = "\n".join(lines) + "\n"
+    rundir = input.rundir
+    os.makedirs(rundir, exist_ok=True)
+    with open(os.path.join(rundir, "chain.log"), "w") as f:
+        f.write(text)
+    for b in broken:
+        ctxt.add_marker(TaskMarker(severity=SeverityE.Error, msg=f"chain broken: {b}"))
+    for step, v, what, detail in links:
+        if v != "equivalent":
+            ctxt.add_marker(TaskMarker(
+                severity=SeverityE.Error if p.gate else SeverityE.Warning,
+                msg=f"chain link {step}: {v}: {what}" + (f"; {detail}" if detail else "")))
+    artifacts = [FileSet(src=input.name, filetype="simLog", basedir=rundir, files=["chain.log"])]
+    stats = {k: st.get(k, 0) for k in ("tests_run", "tests_passed", "tests_failed")}
+    stats.update({"links": len(links),
+                  "links_equivalent": sum(v == "equivalent" for v in verdicts)})
+    tr = ctxt.mkDataItem(
+        "hdlsim.TestResult", testname=p.testname or "svunit", sim="formal-chain",
+        status=status, passed=passed, run_status=0,
+        errors=len(broken) + sum(v != "equivalent" for v in verdicts)
+        + (0 if pstat == "pass" else 1), warnings=0, fatals=0, seed=0,
+        walltime_s=0.0, stats=stats,
+        runinfo={"level": level, "chain": [{"step": s, "verdict": v, "what": wh}
+                                           for s, v, wh, _ in rows]},
+        artifacts=artifacts)
+    name = _case_name(input)
+    tr.name = name
+    tr.src = name
+    ctxt.info(f"formal chain to {level}: {status} ("
+              + " = ".join(f"{s} {v}" for s, v, _, _ in rows) + ")")
+    return TaskDataResult(status=1 if (p.gate and not passed) else 0, changed=True,
+                          output=[tr])

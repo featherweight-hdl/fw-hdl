@@ -7,7 +7,8 @@
 // The tests with free inputs also run formally (formal-svunit.md): their
 // std::randomize / randomize() inputs become symbolic, the constraints
 // assumptions, and every FAIL_* a proof obligation, so a proof covers every
-// input the constraints allow. Dynamically each draws `FW_SAMPLES samples.
+// input the constraints allow. Dynamically each draws `FW_SAMPLES samples;
+// the flow sets the count per level (flow.yaml, samples-*).
 `include "svunit_defines.svh"
 
 `ifndef FW_SAMPLES

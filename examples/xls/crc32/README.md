@@ -55,10 +55,19 @@ The file has three more tests, with free inputs (`formal-svunit.md`):
 
 Each one runs in two ways, with no change to the file:
 
-- **Dynamically**, at every level above, on `` `FW_SAMPLES `` random samples
-  (64 by default). Verilator solves the constraints.
+- **Dynamically**, at every level above, on `` `FW_SAMPLES `` random samples.
+  The flow sets the count per level: 4096 on `model`, 512 on `rtl`, 128 on
+  `gates` and 32 on the vendor-cell netlists. Verilator solves the constraints.
 - **Formally**, for every input the constraints allow. This proves the test on
-  the SV model.
+  the SV model. In the flow this is one more view, `formal`, in the same
+  report as the levels (`fw.hdl.formal.Prove`):
+
+```
+dfm run tests --tests crc32                 # 12 of 12: the seven levels, formal and the chain
+dfm run tests --tests crc32 --views formal  # only the proof
+```
+
+Or from the command line:
 
 ```
 python -m fw.hdl.formal examples/xls/crc32/crc32_pkg.sv \
@@ -83,12 +92,45 @@ The command reads the test body with the same front end as the design:
 The solver is dv-solve; z3 and boolector give the same answers
 (`--solver z3`). A false check gives a counterexample, with its line and the
 value of every randomized input. The counterexample is also written as a replay
-file, `<test>.cex.json`.
+file, `<test>.cex.json`. `fw.hdl.formal.Replay` (or `--replay DIR`) turns it
+into a copy of the test file in which each `randomize()` returns the
+counterexample's values. Given to the `TestRunner` in place of the test file,
+it runs the failing test, directed, at any level. It fails at the same line.
 
 `tests/xls/test_formal_svunit.py` holds the tests of this command, including a
 mutant design. With a wrong polynomial, `crc32_one_char` fails, but
 `crc32_affine` still proves: a CRC is affine for any polynomial, so a property
 proves only what it says.
+
+### Proven at every level: the chain
+
+The proof is on the SV model. Every other level is covered by checking that
+each step down from the model preserves the function, for every input
+(`formal-svunit.md` §6, §11):
+
+| link | check | task | time |
+|---|---|---|---|
+| model → XLS IR | the IR the proofs encoded = the IR XLS optimized | `equiv-ir` (`synth.xls.Equiv`) | 0.03 s |
+| XLS IR → RTL | the optimized IR = the pipelined Verilog, over its 3 cycles | `equiv-codegen` (`fw.hdl.formal.CodegenEquiv`) | 0.03 s |
+| RTL → netlist | the RTL = the generic, iCE40 and ECP5 netlists | `equiv-netlist.*` (`synth.yosys.Equiv`) | 0.1 / 11.6 / 0.4 s |
+
+`fw.hdl.formal.Chain` puts the proof and the links up to each level into one
+result, views `formal-rtl`, `formal-gates`, `formal-gates-ice40` and
+`formal-gates-ecp5`. It also checks that each link starts where the previous
+one ended:
+
+```
+dfm run tests --tests crc32 --views formal-gates-ice40
+```
+
+```
+formal chain to level gates-ice40: pass
+
+    model    proven          4 of 4 tests proven (formal:dv-solve)
+  = XLS IR   equivalent      the proven model's IR = the IR XLS optimized
+  = RTL      equivalent      the optimized IR = the Verilog XLS generated
+  = netlist  equivalent      the RTL = the netlist (ice40)
+```
 
 ## The port
 
@@ -113,6 +155,8 @@ crc32_pkg.sv ─► fw.hdl.xls.IR ─► Codegen (2 stages, valid signals) ─�
 crc32_pkg.sv ─► fw.hdl.api.Functions ─► ModelBinding                 ─► level model
                                      └► XlsBinding (+ XLS signature) ─► levels rtl, gates*
 crc32_unit_test.sv ─► hdltest.svunit.TestRunner ─► hdlsim.vlt.SimImage/SimRun per level ─► Check
+crc32_unit_test.sv ─► fw.hdl.formal.Prove (+ Functions' API, the SV model) ─────────► view formal
+Prove's design IR = opt IR = RTL = netlists (Equiv, CodegenEquiv, yosys Equiv) ─► Chain ─► views formal-<level>
 ```
 
 Every task is spelled out in [`flow.yaml`](flow.yaml).

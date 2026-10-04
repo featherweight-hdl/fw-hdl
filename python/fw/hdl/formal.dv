@@ -1,0 +1,267 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+package:
+  name: fw.hdl.formal
+  desc: SVUnit tests proven for every input -- the `formal` view of a test matrix
+  doc: |
+    Registered by the fw-hdl Python package (entry point `dv_flow.mgr`).
+    See `formal-svunit.md`.
+
+    An SVUnit test whose inputs come from `std::randomize` or a class's
+    `randomize()` runs two ways, from one unedited file:
+
+    * dynamically, at every level, on `` `FW_SAMPLES `` random samples
+      (`hdltest.svunit.Check`);
+    * formally, for every input the constraints allow (`Prove`). The
+      randomized values are free, the constraints are assumptions and every
+      `FAIL_*` check is an obligation. The design is the SV model, called
+      through the API as the `model` level calls it.
+
+    `Prove` produces the same `hdlsim.TestResult` as `hdltest.svunit.Check`,
+    so the formal view is one more view in the matrix and rolls up in the
+    same report. A counterexample becomes a replay file (`fwFormalCex`);
+    `Replay` turns it into a directed run of the same test at any level.
+
+    ```
+    hdltest.svunit.Lib ─┐
+    design sources ─────┤
+    fw.hdl.api.Functions┼─► Prove ─► hdlsim.TestResult (view formal)
+    svunitTest files ───┘        ├─► fwFormalCex ─► Replay ─► svunitTest ─► TestRunner ─► every level
+                                 └─► xlsIR (the design as proven)
+    ```
+
+    **The other levels** are covered by an equivalence chain, not by
+    re-proving (formal-svunit.md §6). `Chain` reports it as one more
+    `hdlsim.TestResult` per level: proven at the model, and equal at each
+    step down to that level.
+
+    ```
+    Prove ── xlsIR ──┐
+    synth.xls.Codegen┴► synth.xls.Equiv ───────► xlsEquivReport        model IR = optimized IR
+    synth.xls.Codegen ► CodegenEquiv ──────────► fwCodegenEquivReport  optimized IR = RTL
+    RTL + synth.yosys.Synth ► synth.yosys.Equiv ► yosysEquivReport     RTL = netlist
+    Prove's TestResult + the reports ► Chain ──► hdlsim.TestResult (view formal-<level>)
+    ```
+
+    **File types** `fwCodegenEquivReport` -- `equiv.json`, `CodegenEquiv`'s
+    verdict per module, as `synth.xls.Equiv` writes its own. `fwFormalCex` -- `<test>.cex.json`: a counterexample, the
+    values each `randomize()` call of the test returns, in the order a run
+    reaches them. `fwFormalResults` -- `results.json`: every test's result.
+
+  imports:
+  - hdlsim
+
+  tasks:
+  - name: Prove
+    desc: Prove SVUnit tests for every input; the result as an hdlsim.TestResult
+    doc: |
+      Consumes:
+
+      * `systemVerilogSource` -- SVUnit (`hdltest.svunit.Lib`), the design
+        and the API package of `fw.hdl.api.Functions`, in compile order;
+      * `fwFnApi` -- the API, so that `api.f(...)` is the call of the SV
+        function `f`, as at the `model` level;
+      * `svunitTest` -- the test files.
+
+      The sources are read with `FW_FORMAL` defined. Each test's verdict:
+
+      | result | meaning | the view |
+      |---|---|---|
+      | `proven` | no input the constraints allow reaches a failure | passes |
+      | `counterexample` | an input reaches a failure; the check and the values are reported | fails |
+      | `vacuous` | the constraints allow no input | fails |
+      | `unknown` | the solver gave no answer (`timeout`), or one we cannot read | error |
+      | `not-formal` | the test is outside the liftable subset; the reason and position are reported | passes, with a warning; the test still runs dynamically |
+
+      Outputs: an `hdlsim.TestResult` (`sim` is `formal:<solver>`); its stats
+      count each result (`tests_proven`, `tests_counterexample`, ...), and
+      `tests_run`/`tests_passed` count the tests that were formal. Also, one
+      `fwFormalCex` fileset per counterexample and `fwFormalResults`, as
+      outputs and as artifacts of the TestResult; and `xlsIR` (attribute
+      `fwFormalDesign`), the design as the proofs encoded it -- for each API
+      function a test called, a package `<module>.formal.ir` whose top has
+      the name `synth.xls.Codegen` gives its module. `synth.xls.Equiv` of
+      it against Codegen's optimized IR is the chain's first link.
+
+      **solver**: `dv-solve` (`$DV_SOLVE_SMT2`, or `dv-solve-smt2` on PATH,
+      run with `--engine=bitblast`), `z3`, `boolector`, `bitwuzla`, or a
+      command line to which the query file is appended.
+
+      **gate**: as `hdltest.svunit.Check`. With `false` (the default) a
+      failure is data and the suite report is the gate; with `true` the
+      task fails.
+    consumes:
+    - filetype: systemVerilogSource
+    - filetype: verilogSource
+    - filetype: fwFnApi
+    - filetype: svunitTest
+    passthrough: none
+    produces:
+    - type: hdlsim.TestResult
+    uptodate: false
+    with:
+      name:
+        doc: Case name recorded in the TestResult. Default -- the run directory's name.
+        type: str
+        value: ""
+      testname:
+        doc: Test identity recorded in the TestResult
+        type: str
+        value: svunit
+      tests:
+        doc: Prove only these tests (by SVTEST name). Default -- every test.
+        type: list
+        value: []
+      solver:
+        doc: dv-solve, z3, boolector, bitwuzla, or a solver command line
+        type: str
+        value: dv-solve
+      timeout:
+        doc: Per solver query, in seconds
+        type: int
+        value: 300
+      defines:
+        doc: Extra preprocessor defines (NAME or NAME=VALUE); FW_FORMAL is always defined
+        type: list
+        value: []
+      gate:
+        doc: Fail the task (with error markers) when a test is not proven
+        type: bool
+        value: false
+    shell: pytask
+    run: fw.hdl.dfm_tasks.FormalProve
+
+  - name: Replay
+    desc: Counterexamples as a directed run -- the test files, with each counterexample's values
+    doc: |
+      Consumes `svunitTest` (the test files) and `fwFormalCex` (from
+      `Prove`). Outputs, in their place:
+
+      * `svunitTest` -- a copy of each test file, in which each
+        `randomize()` call of a test with a counterexample is replaced by a
+        call of a generated function that assigns the counterexample's
+        values and returns 1. The module, the tests and the line numbers are
+        those of the original (a `` `line `` directive names it), so a
+        failure is reported at the original line. Each replayed call
+        prints `INFO: ... [fw.formal]: replay <test> line <n>: <values>`.
+      * `hdlsim.SimRunArgs` -- with `filter` (the default), the plusarg
+        `SVUNIT_FILTER` selecting the tests with a counterexample, so the
+        run is the directed run of those tests only.
+
+      Give the output to `hdltest.svunit.TestRunner` in place of the test
+      files, and the counterexample runs at any level, with that level's
+      bench. With no counterexample the copies are the originals and no
+      filter is set.
+    consumes:
+    - filetype: svunitTest
+    - filetype: fwFormalCex
+    passthrough: none
+    with:
+      tests:
+        doc: Replay only the counterexamples of these tests. Default -- every one.
+        type: list
+        value: []
+      filter:
+        doc: Run only the tests with a counterexample (+SVUNIT_FILTER)
+        type: bool
+        value: true
+    shell: pytask
+    run: fw.hdl.dfm_tasks.FormalReplay
+
+  - name: CodegenEquiv
+    desc: XLS codegen checked -- each generated module against its optimized IR, for every input
+    doc: |
+      Needs `synth.xls.Codegen`: per module, its optimized IR
+      (`xlsOptIR`), its signature (`xlsModuleSignature`) and its Verilog.
+      The IR function is encoded as SMT from XLS's text; the module by
+      Yosys (`write_smt2`), unrolled over the pipeline's latency from the
+      signature. The state before the first cycle is free, reset is off, in
+      cycle 0 the input valid is set and the inputs hold the arguments,
+      later inputs are free; in cycle `latency` the output must be the
+      function's result and the output valid set. Functions only (no
+      procs), bits-typed arguments and result.
+
+      The verdict per module, and `equiv.json` (`fwCodegenEquivReport`), as
+      for `synth.xls.Equiv`: `equivalent`; `not-equivalent`, with the
+      inputs and both results (an error marker, and the task fails, unless
+      `gate` is false); `inconclusive`, the solver gave no answer or the IR
+      is outside the encoding (a warning, unless `require_proof`); `error`.
+
+      **solver**: as for `Prove`.
+    consumes:
+    - filetype: xlsOptIR
+    - filetype: xlsModuleSignature
+    - filetype: systemVerilogSource
+    - filetype: verilogSource
+    passthrough: none
+    with:
+      solver:
+        doc: dv-solve, z3, boolector, bitwuzla, or a solver command line
+        type: str
+        value: dv-solve
+      timeout:
+        doc: Per module, in seconds
+        type: int
+        value: 300
+      gate:
+        doc: Fail the task when a module is proven different from its IR
+        type: bool
+        value: true
+      require_proof:
+        doc: Fail the task when the check does not finish
+        type: bool
+        value: false
+    shell: pytask
+    run: fw.hdl.dfm_tasks.FormalCodegenEquiv
+
+  - name: Chain
+    desc: Proven at the model and equal at each step to a level -- the formal view of that level
+    doc: |
+      Consumes `Prove`'s `hdlsim.TestResult` and its `xlsIR`, and the
+      equivalence reports from the model down to one level, any of:
+
+      | step | report | from |
+      |---|---|---|
+      | XLS IR | `xlsEquivReport` | `synth.xls.Equiv` of Prove's `xlsIR` and Codegen's optimized IR |
+      | RTL | `fwCodegenEquivReport` | `CodegenEquiv` on Codegen |
+      | netlist | `yosysEquivReport` | `synth.yosys.Equiv` of the RTL and a `synth.yosys.Synth` netlist |
+
+      **The links must connect**: each starts from the files the one before
+      it ended at (the design IR Prove wrote, the optimized IR, the
+      generated Verilog). A chain that skips a step, or a report about
+      another design, is broken, and the result is `error`.
+
+      Outputs an `hdlsim.TestResult` (`sim` is `formal-chain`): `pass` when
+      the tests are proven and every link is `equivalent`; `fail` when a
+      test has a counterexample or a link is `not-equivalent`; `error`
+      when the chain is broken, a link is `inconclusive` or `error`, or the
+      proof is `error`. Its log (`chain.log`) lists the steps; its stats
+      carry the proof's test counts and `links`/`links_equivalent`.
+    consumes:
+    - type: hdlsim.TestResult
+    - filetype: xlsIR
+    - filetype: xlsEquivReport
+    - filetype: fwCodegenEquivReport
+    - filetype: yosysEquivReport
+    passthrough: none
+    produces:
+    - type: hdlsim.TestResult
+    uptodate: false
+    with:
+      name:
+        doc: Case name recorded in the TestResult. Default -- the run directory's name.
+        type: str
+        value: ""
+      testname:
+        doc: Test identity recorded in the TestResult
+        type: str
+        value: svunit
+      level:
+        doc: The level the chain reaches, for the log. Default -- its last step.
+        type: str
+        value: ""
+      gate:
+        doc: Fail the task (with error markers) when the chain does not pass
+        type: bool
+        value: false
+    shell: pytask
+    run: fw.hdl.dfm_tasks.FormalChain

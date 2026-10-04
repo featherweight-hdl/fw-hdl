@@ -139,25 +139,41 @@ fragment:
     with:
       harness: [crc32_pkg_api_harness]
 
+  # Random samples per randomized test (`FW_SAMPLES`, formal-svunit.md §8):
+  # many where a call is cheap, few where it is a gate-level simulation.
+  - name: samples-model
+    uses: hdlsim.SimCompileArgs
+    with: {defines: [FW_SAMPLES=4096]}
+  - name: samples-rtl
+    uses: hdlsim.SimCompileArgs
+    with: {defines: [FW_SAMPLES=512]}
+  - name: samples-gates
+    uses: hdlsim.SimCompileArgs
+    with: {defines: [FW_SAMPLES=128]}
+  - name: samples-cells
+    desc: The vendor-cell netlists (gates-ice40, gates-ecp5)
+    uses: hdlsim.SimCompileArgs
+    with: {defines: [FW_SAMPLES=32]}
+
   - name: bench-model
     passthrough: all
-    needs: [src, api, dut-model, runner]
+    needs: [src, api, dut-model, runner, samples-model]
 
   - name: bench-rtl
     passthrough: all
-    needs: [src, api, dut-rtl, runner]
+    needs: [src, api, dut-rtl, runner, samples-rtl]
 
   - name: bench-gates
     passthrough: all
-    needs: [src, api, dut-gates, runner]
+    needs: [src, api, dut-gates, runner, samples-gates]
 
   - name: bench-gates-ice40
     passthrough: all
-    needs: [src, api, dut-gates-ice40, runner]
+    needs: [src, api, dut-gates-ice40, runner, samples-cells]
 
   - name: bench-gates-ecp5
     passthrough: all
-    needs: [src, api, dut-gates-ecp5, runner]
+    needs: [src, api, dut-gates-ecp5, runner, samples-cells]
 
   - name: test
     strategy:
@@ -171,6 +187,77 @@ fragment:
         needs: ["xls_examples.run.crc32.${{ this.view }}"]
         with:
           name: "crc32-${{ this.view }}"
+        tags:
+        - std.Test: {case: "${{ this.case.name }}", view: "${{ this.view }}"}
+
+  # ---- The same tests, proven: view formal (formal-svunit.md) ----------
+  # Every input the constraints allow, on the SV model, through the API as
+  # the model level calls it. Same TestResult as Check; same report.
+  - name: formal
+    strategy:
+      matrix:
+        view: [formal]
+        case:
+        - {name: crc32}
+      body:
+      - name: "${{ this.view }}-${{ this.case.name }}"
+        uses: fw.hdl.formal.Prove
+        needs: [xls_examples.svunit, src, api, unit-tests]
+        with:
+          name: "crc32-${{ this.view }}"
+        tags:
+        - std.Test: {case: "${{ this.case.name }}", view: "${{ this.view }}"}
+
+  # ---- The other levels, formally: the equivalence chain ---------------
+  # Proven at the model, and equal at each step down to a level
+  # (formal-svunit.md section 6): views formal-rtl ... formal-gates-ecp5.
+  - name: equiv-ir
+    desc: The IR the proofs encoded = the IR XLS optimized
+    uses: synth.xls.Equiv
+    needs: [formal, rtl]
+
+  - name: equiv-codegen
+    desc: The optimized IR = the Verilog XLS generated, through the pipeline
+    uses: fw.hdl.formal.CodegenEquiv
+    needs: [rtl]
+
+  - name: equiv-netlist
+    desc: The RTL = each Yosys netlist (synth.yosys.Equiv)
+    strategy:
+      select:
+        axes:
+          target: [generic, ice40, ecp5]
+      body:
+      - uses: synth.yosys.Equiv
+        needs: [rtl, "synth.${{ this.target }}"]
+
+  # The links from the model to each level.
+  - name: formal-rtl-links
+    passthrough: all
+    needs: [equiv-ir, equiv-codegen]
+  - name: formal-gates-links
+    passthrough: all
+    needs: [formal-rtl-links, equiv-netlist.generic]
+  - name: formal-gates-ice40-links
+    passthrough: all
+    needs: [formal-rtl-links, equiv-netlist.ice40]
+  - name: formal-gates-ecp5-links
+    passthrough: all
+    needs: [formal-rtl-links, equiv-netlist.ecp5]
+
+  - name: formal-chain
+    strategy:
+      matrix:
+        view: [formal-rtl, formal-gates, formal-gates-ice40, formal-gates-ecp5]
+        case:
+        - {name: crc32}
+      body:
+      - name: "${{ this.view }}-${{ this.case.name }}"
+        uses: fw.hdl.formal.Chain
+        needs: [formal, "${{ this.view }}-links"]
+        with:
+          name: "crc32-${{ this.view }}"
+          level: "${{ this.view }}"
         tags:
         - std.Test: {case: "${{ this.case.name }}", view: "${{ this.view }}"}
 
@@ -188,12 +275,12 @@ fragment:
   - name: bench-dslx-rtl
     desc: Level dslx-rtl -- the DSLX path's module, through the hand-written glue
     passthrough: all
-    needs: [dslx-rtl, dslx-glue, runner]
+    needs: [dslx-rtl, dslx-glue, runner, samples-rtl]
 
   - name: bench-dslx-gates
     desc: Level dslx-gates -- its generic netlist, through the same glue
     passthrough: all
-    needs: [dslx-synth.generic, dslx-glue, runner]
+    needs: [dslx-synth.generic, dslx-glue, runner, samples-gates]
 
   - name: dslx-tests
     strategy:
@@ -223,4 +310,6 @@ fragment:
     - dslx-synth.ice40
     - dslx-synth.ecp5
     - test
+    - formal
+    - formal-chain
     - dslx-tests

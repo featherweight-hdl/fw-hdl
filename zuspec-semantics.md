@@ -391,6 +391,9 @@ changes behaviour on its own.
   not lift (`one-model-many-hosts.md` §4).
 - Catalog (to fill): CAG → SPL (activities to coroutines; policies to arbitration); SPL-hw
   → RTL (beats to FSM — `zuspec.synth.spl`); HLS → RTL (schedule and pipeline);
+  **proposed** (`refinement-views.md`): HLS → CAG (operations as actions with resource
+  claims) and HLS → SPL-hw (schedule into a stage-granular TLM), so that HLS → RTL
+  passes through checkable architecture views;
   software → C (be-sw, with a garbage-collected heap); observation lowering per layer.
 
 ---
