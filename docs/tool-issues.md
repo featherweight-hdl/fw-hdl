@@ -1,7 +1,10 @@
 # Issues found in the doc tools
 
 Found while standing up these docs (2026-10-04), against sphinx-systemverilog 0.6.1
-and sphinx-dv-flow 0.0.x (the copy in `packages/`). Not part of the published docs
+and sphinx-dv-flow 0.0.x (the copy in `packages/`). The sphinx-systemverilog items,
+with root causes and the SVUnit proposal, are filed as a request in that repo:
+`docs/design/svunit-and-fw-hdl-requests.md` (S-1 to S-7 are B-1, B-2, B-3, B-5, B-7,
+B-6 and B-4 there; S-8 is §2). Not part of the published docs
 (`conf.py` excludes this file). Each item says how these docs work around it today.
 
 ## sphinx-systemverilog
@@ -62,14 +65,14 @@ members are rendered from the elaborated model. The two disagree:
 doc comment or `:undoc-members:` is given. For an interface class the pure methods
 are the whole point. Workaround: `:undoc-members:` on those directives.
 
-### S-4 `auto` style takes an SV macro reference for reST
+### S-4 `auto` style takes SV token-pasting for a reST literal
 
-A comment that names a macro the SV way, `` `fw_root_begin ``, has a single backtick,
-which the `auto` classifier counts as reST interpreted text. The body then goes
-through as reST and fails (`Inline interpreted text ... without end-string`). SV
-comments use a leading backtick for macros all the time. Workaround:
-`:doc-style: naturaldocs` on the macro pages, which also reflows the macros'
-indented usage examples into prose (S-6).
+The ``` ``literal`` ``` signal crosses lines, so two SV token-paste operators in one
+comment (`` NAME``_write(...) and read(...) to NAME``_read ``) look like a reST
+literal. The comment then goes through as reST, and its leading macro reference
+(`` `FW_MEM_IMP(...) ``) fails with `Inline interpreted text ... without end-string`.
+Workaround: `:doc-style: naturaldocs` on the macro pages, which also reflows the
+macros' indented usage examples into prose (S-6).
 
 ### S-5 A banner comment becomes the next member's doc
 
@@ -81,7 +84,8 @@ renders as that member's description. A comment that is only a rule line, or a
 ### S-6 Plain prose loses indented examples
 
 Under the non-reST paths an indented block in a comment (a usage example, a plusarg
-table) is reflowed into the surrounding paragraph. Workaround in the source: end the
+table) is reflowed into the surrounding paragraph, and lines that start `+opt` or
+`-opt` are read by docutils as an option list, which warns. Workaround in the source: end the
 lead-in with `::` so the block is a literal block under reST (done for
 `fw_component_root::emit_bind_map` and `fw_dbg_console`).
 
