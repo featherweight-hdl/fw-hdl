@@ -822,3 +822,14 @@ synthesis.
   (EX-7). The fw.hdl tasks declare `scope: export` (`adler32.all`, `rle.all` rerun
   and pass). `docs/tool-issues.md` records 8 sphinx-systemverilog and 3 sphinx-dv-flow
   findings, including a confirmed bug (S-1, byte offsets as character offsets).
+- 2026-10-04: landed on `main`. fw-hdl and its six dependency repos are merged to
+  `main` on Forgejo (and mirrored to GitHub by the sync): dv-flow-libsynth,
+  dv-flow-libhdltest, dv-flow-libproject, zuspec-be-sv, zuspec-be-xls, and
+  zuspec-ir-core. Every merge but zuspec-ir-core's was a fast-forward;
+  zuspec-ir-core's took in one `main` commit (typed integer literals), and on it
+  ir-core (101), be-xls (61), fw-hdl `tests/xls` (83), `adler32.all` and
+  `rle_loop.test` pass. zuspec-be-xls and zuspec-ir-core gained the
+  `.forgejo/workflows/` counterpart they lacked (the Forgejo runner had been running
+  their GitHub workflow). The docs publish from fw-hdl `main` through the DVKit
+  pipeline (`.forgejo/workflows/docs.yml`) to `dvkit.org/featherweight-hdl/fw-hdl/`.
+  libsynth's uncommitted Yosys `Equiv` task (another session's) was left as it was.
