@@ -56,6 +56,8 @@ package:
       url: https://github.com/zuspec/zuspec-fe-sv.git
     - name: zuspec-be-xls
       url: https://github.com/zuspec/zuspec-be-xls.git
+    - name: zuspec-be-bc
+      url: https://github.com/zuspec/zuspec-be-bc.git
     - name: pyslang
       src: pypi
     - name: sphinx
@@ -71,3 +73,4 @@ package:
       src: pypi
     - name: sphinx-dv-flow
       url: https://github.com/dv-flow/sphinx-dv-flow.git
+      dep-set: use
