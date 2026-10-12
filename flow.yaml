@@ -31,6 +31,8 @@ package:
     - dbg_op.dbg-op
     - dbg_op.dbg-op-off
     - intf_pc.intf-pc
+    - socket.socket
+    - root_restart.root-restart
     - put_proto.put-proto
     - reg_bus.reg-bus
     - reg_core.reg-core
@@ -59,6 +61,8 @@ package:
   - tests/blinky/flow.yaml
   - tests/clock_domain/flow.yaml
   - tests/intf_pc/flow.yaml
+  - tests/socket/flow.yaml
+  - tests/root_restart/flow.yaml
   - tests/put_proto/flow.yaml
   - tests/root_param/flow.yaml
   - tests/rv_proto/flow.yaml

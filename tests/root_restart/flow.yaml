@@ -1,0 +1,25 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+fragment:
+  name: root_restart
+
+  tasks:
+  # fw_root restart: a reset mid-run kills the whole tree (every forked
+  # process) and reset release builds and elaborates a fresh one.
+  - name: root-restart-tb
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      include:
+      - root_restart_tb.sv
+      incdirs:
+      - .
+
+  - name: root-restart-img
+    uses: hdlsim.vlt.SimImage
+    needs: [hdl.sv-src, root-restart-tb]
+    with:
+      top: [root_restart_tb]
+
+  - name: root-restart
+    uses: hdlsim.vlt.SimRun
+    needs: [root-restart-img]

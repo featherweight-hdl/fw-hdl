@@ -19,16 +19,17 @@ module fw_root #(
     always @(posedge clock or posedge reset) begin
         if (reset) begin
             in_reset <= 1'b1;
+            // Reset tears the tree down: kill() ends the process that ran
+            // start(), and with it every process the run phase forked. The
+            // next reset release builds a fresh tree.
             if (root != null) begin
                 root.kill();
-                $display("TODO: kill root");
                 root = null;
             end
         end else begin
             if (in_reset) begin
                 automatic string path = $sformatf("%m");
                 automatic fw_clock_xtor_bridge clk_dom;
-                $display("TODO: Create root");
                 in_reset <= 1'b0;
                 root = new(path);
                 // Seat the root component's clock domain before start() so the
