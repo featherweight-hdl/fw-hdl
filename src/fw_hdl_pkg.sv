@@ -37,6 +37,10 @@ package fw_hdl_pkg;
     `include "fw_component_param.svh"
     `include "fw_component_root.svh"
     `include "fw_component_root_param.svh"
+    // Bidirectional link pair: an fw_port and an fw_export bound as one,
+    // typed by the API pair <I, E> (fw_socket calls I, provides E; fw_mirror
+    // the reverse).
+    `include "fw_socket.svh"
 
     // The debug tree: a domain is an fw_export carrying fw_dbg_listener_if, so
     // it lands here, after the deferred-binding wrappers and fw_component.

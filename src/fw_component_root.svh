@@ -6,6 +6,13 @@ typedef class fw_dbg_console;   // declared later in the package (needs the doma
 class fw_component_root #(type Tb=fw_component) extends Tb;
     std::process            m_proc;
 
+    // Set once build and connect are complete and the run phase is being
+    // launched: the point from which a testbench may use the tree's API
+    // handles (every `port.t` is resolved). Wait on it rather than on time.
+    bit                     elaborated;
+
+    local bit               m_kill_req;
+
     function new(string name);
         super.new(name, null);
     endfunction
@@ -47,9 +54,19 @@ class fw_component_root #(type Tb=fw_component) extends Tb;
         // export bound, every runnable registered -- and nothing has run yet.
         emit_bind_map();
 
+        elaborated = 1'b1;
+
         // Launch every runnable in the tree -- including the root's own run() if
         // the root component is itself a runnable (fork happens inside do_run).
         do_run();
+
+        // Every run() was forked from THIS process, so they and anything they
+        // fork in turn are its descendants. Stay here until kill() asks, then
+        // end them all with `disable fork`. (process::kill() on this process
+        // alone does not reliably take its descendants with it -- Verilator
+        // 5.052 leaves them running.)
+        wait (m_kill_req);
+        disable fork;
     endtask
 
     // Emit the static bind-map artifact (design §9).
@@ -103,8 +120,10 @@ class fw_component_root #(type Tb=fw_component) extends Tb;
         $display("%s", fw_dbg_track::report());
     endfunction
 
+    // Tear the tree's processes down (see start()). Returns once they are gone.
     virtual task kill();
-        m_proc.kill();
+        m_kill_req = 1'b1;
+        #0;
     endtask
 
 endclass

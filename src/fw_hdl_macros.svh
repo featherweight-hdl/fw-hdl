@@ -87,4 +87,67 @@
     `undef __fw_root_clock \
     `undef __fw_root_reset
 
+// ----------------------------------------------------------------------
+// Socket/mirror implementation templates (design §3.3) and root binds (§3.4).
+//
+// ~FW_SOCKET_IMP_BEGIN(I, E, IMP, NAME)~ ... ~FW_SOCKET_IMP_END(NAME)~
+//   Opens a nested class ~NAME_imp_t~ that extends ~fw_socket #(I, E)~ AND
+//   implements E, so one object is both the socket and its inbound imp. The
+//   protocol macro supplies the E methods between BEGIN and END, each
+//   redirecting to ~m_imp.NAME_<method>()~. END closes the class and declares
+//   the member NAME, so the protocol macro's call needs a trailing semicolon.
+//   Construct the member in build(): ~NAME = new(this);~
+//
+// ~FW_MIRROR_IMP_BEGIN(I, E, IMP, NAME)~ ... ~FW_MIRROR_IMP_END(NAME)~
+//   The same for a mirror: extends ~fw_mirror #(I, E)~, implements I.
+// ----------------------------------------------------------------------
+
+`define FW_SOCKET_IMP_BEGIN(I, E, IMP, NAME) \
+    class NAME``_imp_t extends fw_socket #(I, E) implements E; \
+        local IMP m_imp; \
+        function new(IMP imp); \
+            super.new(`"NAME`", imp, this); \
+            m_imp = imp; \
+        endfunction
+
+`define FW_SOCKET_IMP_END(NAME) \
+    endclass \
+    NAME``_imp_t NAME
+
+`define FW_MIRROR_IMP_BEGIN(I, E, IMP, NAME) \
+    class NAME``_imp_t extends fw_mirror #(I, E) implements I; \
+        local IMP m_imp; \
+        function new(IMP imp); \
+            super.new(`"NAME`", imp, this); \
+            m_imp = imp; \
+        endfunction
+
+`define FW_MIRROR_IMP_END(NAME) \
+    endclass \
+    NAME``_imp_t NAME
+
+// ----------------------------------------------------------------------
+// Root binds for a link endpoint (use inside `fw_root_begin/end).
+//
+//   `fw_root_bind_socket(socket_ep, if_path, bridge_t)
+//        endpoint is a SOCKET; bridge_t is the matching MIRROR over pins.
+//   `fw_root_bind_mirror(mirror_ep, if_path, bridge_t)
+//        endpoint is a MIRROR; bridge_t is the matching SOCKET over pins.
+//
+// As with the one-way binds, the suffix names the endpoint's kind, and the
+// bridge's constructor is new(name, parent, vif). One line binds both
+// directions of the link.
+// ----------------------------------------------------------------------
+`define fw_root_bind_socket(socket_ep, if_path, bridge_t) \
+    begin \
+        bridge_t __fw_bridge = new(`"socket_ep`", this, if_path); \
+        socket_ep.connect(__fw_bridge); \
+    end
+
+`define fw_root_bind_mirror(mirror_ep, if_path, bridge_t) \
+    begin \
+        bridge_t __fw_bridge = new(`"mirror_ep`", this, if_path); \
+        mirror_ep.connect(__fw_bridge); \
+    end
+
 `endif /* INCLUDED_FW_HDL_MACROS_SVH */

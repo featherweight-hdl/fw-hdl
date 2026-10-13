@@ -169,6 +169,18 @@ class fw_component implements fw_elaboratable;
         m_bind.push_back(b);
     endfunction
 
+    // Withdraw an endpoint from the bind map. A composite endpoint (an
+    // fw_socket / fw_mirror) registers ITSELF and withdraws the port and
+    // export it is made of, so the map shows one link rather than two edges.
+    function void remove_bindable(fw_dbg_bindable b);
+        foreach (m_bind[i]) begin
+            if (m_bind[i] == b) begin
+                m_bind.delete(i);
+                return;
+            end
+        end
+    endfunction
+
     // Register something that emits but is not a component, so do_build() can
     // hand it this component's resolved context.
     function void add_contextual(fw_dbg_contextual c);

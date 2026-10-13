@@ -1,0 +1,26 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+fragment:
+  name: socket
+
+  tasks:
+  # fw_socket / fw_mirror: peer bind from either side, hierarchical bind
+  # (connect_up), calls in both directions. Build with -DNEG_SOCK_SOCK or
+  # -DNEG_MISMATCH to see the mispaired binds rejected at compile time.
+  - name: socket-tb
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      include:
+      - socket_tb.sv
+      incdirs:
+      - .
+
+  - name: socket-img
+    uses: hdlsim.vlt.SimImage
+    needs: [hdl.sv-src, socket-tb]
+    with:
+      top: [socket_tb]
+
+  - name: socket
+    uses: hdlsim.vlt.SimRun
+    needs: [socket-img]
