@@ -106,6 +106,31 @@ module reg_hooks_tb;
             chk(w.wakes === 2,        "SET: same-value write does not wake (model gates on change)");
         end
 
+        // ===== pulse bits (singlepulse): seen by write observers only =========
+        begin
+            automatic fw_reg_block #(32)   blk = new("blk");
+            // bit 0 a pulse (IACK-like), bits 7:4 ordinary sw-written state
+            automatic fw_reg #(bit [31:0]) cr  = new("cr", blk, .sw_wmask(32'h0000_00f1),
+                                                     .pulse_mask(32'h0000_0001));
+            automatic rec_observer         o = new();
+            automatic fw_reg_set #(32)     s = new();
+            automatic watcher              w = new(s);
+            cr.add_wr(o);
+            s.add(cr);
+            fork w.run(); join_none
+            #1;                                         // let the engine reach its wait
+            blk.write_val(32'h0, 32'h0000_0031);
+            #1;
+            chk(o.count === 1 && o.last_val === 32'h31, "PULSE: observer sees the pulse bit");
+            chk(cr.read_val() === 32'h30,               "PULSE: pulse bit is not stored");
+            chk(w.wakes === 1,                          "PULSE: state change wakes the watcher");
+            blk.write_val(32'h0, 32'h0000_0031);        // same state + pulse again
+            #1;
+            chk(o.count === 2 && o.last_val === 32'h31, "PULSE: second pulse reaches observer");
+            chk(w.wakes === 1,                          "PULSE: pulse alone does not wake (no state change)");
+            chk(blk.read_val(32'h0) === 32'h30,         "PULSE: bus read never sees the pulse");
+        end
+
         if (errors == 0) $display("[reg_hooks] PASS");
         else             $display("[reg_hooks] FAIL (%0d errors)", errors);
         $finish;

@@ -7,6 +7,11 @@
 // sub-block (e.g. a per-channel register file) is how arrays of identical banks
 // are built. Decode is registers-first, then recurse into sub-blocks.
 //
+// Reads and writes decode separately: a read-only (FW_REG_RO) and a write-only
+// (FW_REG_WO) register may share an offset, and a read there reaches the one,
+// a write the other. Two registers that both decode the same direction at one
+// offset are an error in the map.
+//
 // This is the bus-facing face of a group: it implements fw_reg_block_if #(W), so
 // a bus adapter can provide it as an fw_export and bridge it to any bus protocol.
 class fw_reg_block #(int W = 32)
@@ -15,7 +20,8 @@ class fw_reg_block #(int W = 32)
     protected int unsigned       m_stride;   // uniform byte stride = W/8
     protected int unsigned       m_next;     // next auto-assigned offset
     protected int unsigned       m_size;     // running byte span
-    protected fw_reg_base  #(W)  m_regs  [int unsigned]; // owned regs, by offset
+    protected fw_reg_base  #(W)  m_rd_regs[int unsigned]; // regs sw reads, by offset
+    protected fw_reg_base  #(W)  m_wr_regs[int unsigned]; // regs sw writes, by offset
     protected fw_reg_block #(W)  m_blocks[int unsigned]; // nested sub-blocks, by base offset
     // ---- observability ---------------------------------------------------------
     protected fw_dbg_listener_if m_dbg;
@@ -78,7 +84,8 @@ class fw_reg_block #(int W = 32)
     // The containment path: unconditional, used by add_block() on the way down.
     protected function void apply_dbg_context(fw_dbg_listener_if l);
         m_dbg = l;
-        foreach (m_regs[o])   m_regs[o].set_dbg_context(l);
+        foreach (m_rd_regs[o]) m_rd_regs[o].set_dbg_context(l);
+        foreach (m_wr_regs[o]) m_wr_regs[o].set_dbg_context(l);
         foreach (m_blocks[o]) m_blocks[o].apply_dbg_context(l);
     endfunction
 
@@ -87,11 +94,24 @@ class fw_reg_block #(int W = 32)
 
     // Add a register. Offset auto-assigns to the running cursor (stride W/8)
     // unless given -- the user only specifies an offset for gaps / placement.
+    // The second register of a read-only/write-only pair names the shared
+    // offset explicitly.
     function void add(fw_reg_base #(W) r, int offset = -1);
         int unsigned off = (offset < 0) ? m_next : offset;
         r.set_offset(off);
         r.set_dbg_context(m_dbg);
-        m_regs[off] = r;
+        if (r.sw_readable()) begin
+            if (m_rd_regs.exists(off))
+                $fatal(1, "fw_reg_block %s: %s and %s are both read at offset 'h%0h",
+                       m_name, m_rd_regs[off].name(), r.name(), off);
+            m_rd_regs[off] = r;
+        end
+        if (r.sw_writable()) begin
+            if (m_wr_regs.exists(off))
+                $fatal(1, "fw_reg_block %s: %s and %s are both written at offset 'h%0h",
+                       m_name, m_wr_regs[off].name(), r.name(), off);
+            m_wr_regs[off] = r;
+        end
         bump(off + m_stride);
     endfunction
 
@@ -117,17 +137,35 @@ class fw_reg_block #(int W = 32)
     endfunction
 
     // --- offset decode: registers first, then recurse into sub-blocks ---------
-    function fw_reg_val_if #(W) lookup(input int unsigned a);
-        if (m_regs.exists(a)) return m_regs[a];
+    // lookup_rd()/lookup_wr() find the register a read/write at `a` reaches.
+    // lookup() is either -- the read side first -- for callers that only ask
+    // "is anything here".
+    function fw_reg_val_if #(W) lookup_rd(input int unsigned a);
+        if (m_rd_regs.exists(a)) return m_rd_regs[a];
         foreach (m_blocks[base]) begin
             if (a >= base && a < base + m_blocks[base].size())
-                return m_blocks[base].lookup(a - base);
+                return m_blocks[base].lookup_rd(a - base);
         end
         return null;
     endfunction
 
+    function fw_reg_val_if #(W) lookup_wr(input int unsigned a);
+        if (m_wr_regs.exists(a)) return m_wr_regs[a];
+        foreach (m_blocks[base]) begin
+            if (a >= base && a < base + m_blocks[base].size())
+                return m_blocks[base].lookup_wr(a - base);
+        end
+        return null;
+    endfunction
+
+    function fw_reg_val_if #(W) lookup(input int unsigned a);
+        fw_reg_val_if #(W) e = lookup_rd(a);
+        return (e != null) ? e : lookup_wr(a);
+    endfunction
+
     // software bus read: routes to the register's sw_read() so read-to-clear
-    // fires (a hardware peek would call read_val() instead). Unmapped -> 0.
+    // fires (a hardware peek would call read_val() instead). Unmapped -> 0, and
+    // so does an offset with only a write-only register (not a decode miss).
     // A bus access is the one thing the registers themselves cannot report: a
     // READ leaves no state change, and an access to an unmapped offset touches
     // no register at all. So the decode is where those two get recorded.
@@ -137,7 +175,16 @@ class fw_reg_block #(int W = 32)
     // walking every register per access would cost far more than the event is
     // worth.
     virtual function bit [W-1:0] read_val(input int unsigned a);
-        fw_reg_val_if #(W) e = lookup(a);
+        fw_reg_val_if #(W) e = lookup_rd(a);
+        if (e == null && lookup_wr(a) != null) begin
+            `fw_ev_decision_at(m_dbg, m_sid_decode)
+                `fw_dec_winner(a)
+                `fw_field_hex("addr", a)
+                `fw_field_hex("data", 0)
+                `fw_field_as("write", 0)
+            `fw_ev_end
+            return '0;
+        end
         if (e == null) begin
             `fw_ev_notice_at(m_dbg, FW_SEV_WARN, m_sid_miss)
                 `fw_field_hex("addr", a)
@@ -154,8 +201,19 @@ class fw_reg_block #(int W = 32)
         `fw_ev_end
     endfunction
 
+    // A write to an offset with only a read-only register is dropped (not a
+    // decode miss).
     virtual task write_val(input int unsigned a, input bit [W-1:0] v);
-        fw_reg_val_if #(W) e = lookup(a);
+        fw_reg_val_if #(W) e = lookup_wr(a);
+        if (e == null && lookup_rd(a) != null) begin
+            `fw_ev_decision_at(m_dbg, m_sid_decode)
+                `fw_dec_winner(a)
+                `fw_field_hex("addr", a)
+                `fw_field_hex("data", v)
+                `fw_field_as("write", 1)
+            `fw_ev_end
+            return;
+        end
         if (e == null) begin
             `fw_ev_notice_at(m_dbg, FW_SEV_WARN, m_sid_miss)
                 `fw_field_hex("addr", a)

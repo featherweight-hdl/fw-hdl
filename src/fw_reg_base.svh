@@ -19,6 +19,20 @@
 // fw_reg #(T) subclass; this base works purely in W-wide values so a group can
 // hold heterogeneous registers as fw_reg_val_if #(W).
 
+// Which bus directions decode to a register (SystemRDL: whether any field is
+// sw-readable / sw-writable). RW is the default and what every register was
+// before this existed. RO and WO let two registers share one offset -- one
+// read, one written -- as in a SystemRDL map with an sw=r and an sw=w
+// register at the same address (SystemRDL 10.1-h), e.g. a UART's RX/TX data
+// register or an I2C core's command/status pair. The access kind governs the
+// BLOCK's decode only; the register's own sw_read()/write_val() still work
+// and are still governed by its masks.
+typedef enum bit [1:0] {
+    FW_REG_RW = 2'b11,
+    FW_REG_RO = 2'b01,
+    FW_REG_WO = 2'b10
+} fw_reg_access_e;
+
 typedef class fw_reg_set;   // forward: register <-> watch-set are mutually referential
 typedef class fw_reg_block; // forward: a register self-adds to its parent group
 
@@ -32,6 +46,8 @@ virtual class fw_reg_base #(int W = 32)
     protected bit [W-1:0]    m_sw_wmask;   // bits SOFTWARE may write
     protected bit [W-1:0]    m_hw_wmask;   // bits HARDWARE may write
     protected bit [W-1:0]    m_rclr_mask;  // bits cleared as a side effect of a sw read
+    protected bit [W-1:0]    m_pulse_mask; // sw-written bits that never stay set (singlepulse)
+    protected fw_reg_access_e m_access;    // bus directions that decode here
     // ---- hardware hooks ------------------------------------------------------
     protected fw_reg_rd_if #(W) m_rd;      // read provider (optional, single)
     protected fw_reg_wr_if #(W) m_wr[$];   // write observers (zero or more)
@@ -61,7 +77,9 @@ virtual class fw_reg_base #(int W = 32)
                  bit [W-1:0] reset     = '0,
                  bit [W-1:0] sw_wmask  = '1,
                  bit [W-1:0] hw_wmask  = '0,
-                 bit [W-1:0] rclr_mask = '0);
+                 bit [W-1:0] rclr_mask = '0,
+                 fw_reg_access_e access = FW_REG_RW,
+                 bit [W-1:0] pulse_mask = '0);
         // The site is named `<block>.<reg>`, not `<reg>`. A bare name is unique
         // only in a design with one register block; the DMA has five (`rf` plus a
         // bank per channel) and every one of them has a `csr`, so an unqualified
@@ -73,6 +91,7 @@ virtual class fw_reg_base #(int W = 32)
 
         m_name = name;  m_reset = reset;  m_val = reset;
         m_sw_wmask = sw_wmask;  m_hw_wmask = hw_wmask;  m_rclr_mask = rclr_mask;
+        m_access = access;  m_pulse_mask = pulse_mask;
         `fw_dbg_site_inst(m_sid_change, qname,              FW_DBG_STATE,  FW_L_DETAIL)
         `fw_dbg_site_inst(m_sid_masked, {qname, ".masked"}, FW_DBG_NOTICE, FW_L_TXN)
         parent.add(this, offset);   // self-register (at the cursor, or `offset`)
@@ -91,6 +110,9 @@ virtual class fw_reg_base #(int W = 32)
     endfunction
     function void         set_offset(int unsigned o); m_offset = o;       endfunction
     function int unsigned offset();            return m_offset;           endfunction
+    function fw_reg_access_e access();         return m_access;           endfunction
+    function bit          sw_readable();       return m_access[0];        endfunction
+    function bit          sw_writable();       return m_access[1];        endfunction
     function void         set_rd(fw_reg_rd_if #(W) rd); m_rd = rd;        endfunction
     function void         add_wr(fw_reg_wr_if #(W) wr); m_wr.push_back(wr); endfunction
     function void         subscribe(fw_reg_set #(W) s); m_sets.push_back(s); endfunction
@@ -145,9 +167,16 @@ virtual class fw_reg_base #(int W = 32)
     endfunction
 
     // --- SOFTWARE write: masked by sw_wmask, then notify write observers.
+    //
+    // Pulse bits (pulse_mask; SystemRDL singlepulse, e.g. an interrupt
+    // acknowledge) are a command, not state: the write observers receive the
+    // written word with them set, but the stored value never holds them, so
+    // the change event, watch-sets and every later read see them at 0. React to
+    // a pulse in an fw_reg_wr_if observer, not by waiting on the register.
     virtual task write_val(input bit [W-1:0] v);
-        bit [W-1:0] prev = m_val;
-        m_val = (m_val & ~m_sw_wmask) | (v & m_sw_wmask);
+        bit [W-1:0] prev    = m_val;
+        bit [W-1:0] written = (m_val & ~m_sw_wmask) | (v & m_sw_wmask);
+        m_val = written & ~m_pulse_mask;
         if (m_val !== prev) signal(FW_ACTOR_SW, prev);
 
         // "I wrote it and it read back different" -- the single most common
@@ -181,7 +210,7 @@ virtual class fw_reg_base #(int W = 32)
             `fw_ev_end
         end
 
-        foreach (m_wr[i]) m_wr[i].on_write(m_val, prev);
+        foreach (m_wr[i]) m_wr[i].on_write(written, prev);
     endtask
 
     // --- HARDWARE update: masked by hw_wmask (intersected with the inline mask).

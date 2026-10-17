@@ -20,8 +20,11 @@ class fw_reg #(type T = bit, int W = $bits(T)) extends fw_reg_base #(W)
                  T reset     = '0,
                  T sw_wmask  = '1,
                  T hw_wmask  = '0,
-                 T rclr_mask = '0);
-        super.new(name, parent, offset, reset, sw_wmask, hw_wmask, rclr_mask);
+                 T rclr_mask = '0,
+                 fw_reg_access_e access = FW_REG_RW,
+                 T pulse_mask = '0);
+        super.new(name, parent, offset, reset, sw_wmask, hw_wmask, rclr_mask, access,
+                  pulse_mask);
     endfunction
 
     // native projection of the canonical value (single source of truth, no side

@@ -131,6 +131,47 @@ module reg_core_tb;
             chk(top.read_val(32'h00) === 32'h0,         "NEST: global g untouched");
         end
 
+        // ---- split registers: a read-only and a write-only register at one
+        //      offset (SystemRDL 10.1-h), as an I2C core's TXR/RXR and CR/SR.
+        begin
+            automatic fw_reg_block #(32) blk = new("blk");
+            automatic fw_reg #(bit [31:0]) txr = new("txr", blk, 32'h0c, '0, '1, '0, '0, FW_REG_WO);
+            automatic fw_reg #(bit [31:0]) rxr = new("rxr", blk, 32'h0c, '0, '0, '1, '0, FW_REG_RO);
+            automatic fw_reg #(bit [31:0]) cr  = new("cr",  blk, 32'h10, '0, '1, '0, '0, FW_REG_WO);
+            automatic fw_reg #(bit [31:0]) ctr = new("ctr", blk, 32'h14);
+            chk(txr.sw_writable() && !txr.sw_readable(), "SPLIT: txr is write-only");
+            chk(rxr.sw_readable() && !rxr.sw_writable(), "SPLIT: rxr is read-only");
+            chk(blk.size() === 32'h18, "SPLIT: size counts the shared offset once");
+            rxr.update(32'h0000_00a5);
+            blk.write_val(32'h0c, 32'h0000_005a);
+            chk(txr.read_val() === 32'h5a,          "SPLIT: write reaches txr");
+            chk(rxr.read_val() === 32'ha5,          "SPLIT: write leaves rxr alone");
+            chk(blk.read_val(32'h0c) === 32'ha5,    "SPLIT: read reaches rxr");
+            chk(blk.lookup_wr(32'h0c) == txr,       "SPLIT: lookup_wr -> txr");
+            chk(blk.lookup_rd(32'h0c) == rxr,       "SPLIT: lookup_rd -> rxr");
+            // A write-only register alone at an offset reads 0; a read-only
+            // one alone drops writes. Neither is a decode miss.
+            blk.write_val(32'h10, 32'h0000_0091);
+            chk(cr.read_val() === 32'h91,           "SPLIT: write reaches lone WO cr");
+            chk(blk.read_val(32'h10) === 32'h0,     "SPLIT: lone WO offset reads 0");
+            // RW (the default) is unchanged.
+            blk.write_val(32'h14, 32'h0000_0077);
+            chk(blk.read_val(32'h14) === 32'h77,    "SPLIT: default RW reg round-trips");
+        end
+
+        // ---- split registers in a nested sub-block ---------------------------
+        begin
+            automatic fw_reg_block #(32) top = new("top");
+            automatic fw_reg_block #(32) sub = new("sub");
+            automatic fw_reg #(bit [31:0]) w = new("w", sub, 32'h4, '0, '1, '0, '0, FW_REG_WO);
+            automatic fw_reg #(bit [31:0]) r = new("r", sub, 32'h4, '0, '0, '1, '0, FW_REG_RO);
+            top.add_block(sub, 32'h20);
+            r.update(32'h33);
+            top.write_val(32'h24, 32'h44);
+            chk(w.read_val() === 32'h44,         "SPLIT-NEST: write reaches w");
+            chk(top.read_val(32'h24) === 32'h33, "SPLIT-NEST: read reaches r");
+        end
+
         if (errors == 0) $display("[reg_core] PASS");
         else             $display("[reg_core] FAIL (%0d errors)", errors);
         $finish;
