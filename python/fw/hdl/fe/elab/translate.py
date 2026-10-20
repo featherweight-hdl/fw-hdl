@@ -765,7 +765,10 @@ class Translator:
             if self._found_initial:
                 raise TranslateError(f"{self._proc_name}: the blocking point was reached twice ({act.name})")
             self._found_initial = True
-        label = f"{act.name}@{s.sourceRange.start.offset}"
+        # <call path>@<source>: copies of one source wait share the part
+        # after '@' (zuspec.synth.proc.lower's factored encoding groups them)
+        st = s.sourceRange.start
+        label = f"{act.name}@{st.buffer.id}:{st.offset}"
         self.emit(P.Await(cond=cond, initial=initial, label=label))
 
     # ============================================================= calls

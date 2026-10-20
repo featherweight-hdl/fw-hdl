@@ -32,5 +32,11 @@ package:
         doc: State encoding (binary or onehot)
         type: str
         value: binary
+      options:
+        doc: |
+          Other lowering options, comma-separated key=value
+          (zuspec.synth.proc.lower.LowerOptions fields, e.g. share_joins=0)
+        type: str
+        value: ""
     shell: pytask
     run: fw.hdl.dfm_tasks.Lower

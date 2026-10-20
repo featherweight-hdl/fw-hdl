@@ -740,9 +740,18 @@ async def Lower(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
             defines[k] = v or "1"
     rundir = input.rundir
     os.makedirs(rundir, exist_ok=True)
+    from fw.hdl.fe.elab.flow import parse_options
+    opts = parse_options(getattr(p, "options", "") or "")
+    # the inputs, so a lowering can be re-run with other options
+    # (python -m fw.hdl.fe.elab.flow lower_inputs.json -o out.v -O k=v)
+    import json
+    with open(os.path.join(rundir, "lower_inputs.json"), "w") as f:
+        json.dump({"files": files, "incdirs": incdirs, "defines": defines, "top": p.top,
+                   "module": p.module or None, "encoding": p.encoding, "options": opts},
+                  f, indent=1)
     try:
         res = lower_design(files, p.top, incdirs=incdirs, defines=defines,
-                           module=(p.module or None), encoding=p.encoding)
+                           module=(p.module or None), encoding=p.encoding, options=opts)
     except (FwHdlError, ElabError, Exception) as e:   # report any lowering failure
         return TaskDataResult(status=1, changed=True, output=[],
                               markers=[TaskMarker(msg=f"{type(e).__name__}: {e}",

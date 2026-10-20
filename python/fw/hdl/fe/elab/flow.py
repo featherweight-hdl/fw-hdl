@@ -27,7 +27,9 @@ class LowerResult:
 
 def lower_design(files: List[str], top: str, *, incdirs: Optional[List[str]] = None,
                  defines: Optional[Dict[str, str]] = None, module: Optional[str] = None,
-                 encoding: str = "binary", optimize: bool = True) -> LowerResult:
+                 encoding: str = "binary", optimize: bool = True,
+                 options: Optional[Dict[str, object]] = None) -> LowerResult:
+    """``options``: extra :class:`zuspec.synth.proc.lower.LowerOptions` fields."""
     from zuspec.synth.proc.emit import emit_verilog
     from zuspec.synth.proc.lower import LowerOptions, lower
     from zuspec.synth.proc.lower import optimize as opt_pass
@@ -45,10 +47,51 @@ def lower_design(files: List[str], top: str, *, incdirs: Optional[List[str]] = N
     build_structure(elab, d)
     if module:
         d.name = module
-    nl = lower(d, LowerOptions(encoding=encoding))
+    nl = lower(d, LowerOptions(encoding=encoding, **(options or {})))
     if optimize:
         nl = opt_pass(nl)
     report = list(notes) + list(elab.interp.warnings) + list(nl.report)
     return LowerResult(verilog=emit_verilog(nl), module=d.name, report=report,
                        leaf_modules=sorted(d.leaf_defs))
 
+
+
+def parse_options(text: str) -> Dict[str, object]:
+    """'a=1,b=onehot' -> {'a': True, 'b': 'onehot'} (0/1 and true/false are bools)."""
+    out: Dict[str, object] = {}
+    for item in (text or "").replace(" ", "").split(","):
+        if not item:
+            continue
+        k, _, v = item.partition("=")
+        lv = v.lower()
+        out[k] = True if lv in ("1", "true", "") else False if lv in ("0", "false") else v
+    return out
+
+
+def main(argv=None) -> int:
+    """Re-run a lowering from the inputs a Lower task saved (lower_inputs.json),
+    with other options: python -m fw.hdl.fe.elab.flow <json> -o out.v [-O k=v,...]"""
+    import argparse
+    import json
+    ap = argparse.ArgumentParser()
+    ap.add_argument("inputs")
+    ap.add_argument("-o", "--output", required=True)
+    ap.add_argument("-O", "--options", default="")
+    ap.add_argument("--encoding", default=None)
+    a = ap.parse_args(argv)
+    j = json.load(open(a.inputs))
+    opts = dict(j.get("options", {}))
+    opts.update(parse_options(a.options))
+    enc = a.encoding or opts.pop("encoding", None) or j.get("encoding", "binary")
+    res = lower_design(j["files"], j["top"], incdirs=j["incdirs"], defines=j["defines"],
+                       module=j.get("module"), encoding=enc, options=opts)
+    with open(a.output, "w") as f:
+        f.write(res.verilog)
+    with open(a.output + ".report", "w") as f:
+        f.write("\n".join(res.report) + "\n")
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main())
