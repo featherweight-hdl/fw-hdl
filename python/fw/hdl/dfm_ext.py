@@ -7,4 +7,5 @@ def dvfm_packages():
     return {"fw.hdl.spl": os.path.join(d, "spl.dv"),
             "fw.hdl.xls": os.path.join(d, "xls.dv"),
             "fw.hdl.api": os.path.join(d, "api.dv"),
-            "fw.hdl.formal": os.path.join(d, "formal.dv")}
+            "fw.hdl.formal": os.path.join(d, "formal.dv"),
+            "fw.hdl.lower": os.path.join(d, "lower.dv")}
