@@ -26,6 +26,7 @@ process wrote a field that was taken as static, mark it and translate again.
 from __future__ import annotations
 
 import dataclasses as dc
+import os
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from pyslang import ast
@@ -88,6 +89,8 @@ class Translator:
             if kind == "init":
                 self.comb_vars.add((f.path, node.name))
         self._in_comb = False
+        self._loc = ""                                   # see pe_stmt
+        self._loc_cache: Dict[tuple, str] = {}
         # what RTL modules' clocked blocks and tasks write is state: known up
         # front (no rediscovery round per variable)
         for path in elab.rtl_modules:
@@ -258,6 +261,8 @@ class Translator:
             self._out = saved
 
     def emit(self, s: P.Stmt) -> None:
+        if isinstance(s, (P.Assign, P.If, P.Await)) and not s.loc:
+            s.loc = self._loc
         self._out.append(s)
         if isinstance(s, P.Assign) and s.var.origin in ("temporary",) or \
                 isinstance(s, P.Assign) and s.var.origin.startswith("local "):
@@ -298,6 +303,29 @@ class Translator:
         return v
 
     def pe_stmt(self, s, act: Act) -> None:
+        """Translate one statement; what it emits carries its source line."""
+        prev = self._loc
+        self._loc = self._src_loc(s) or prev
+        try:
+            self._pe_stmt(s, act)
+        finally:
+            self._loc = prev
+
+    def _src_loc(self, s) -> str:
+        """'file:line' of a statement."""
+        try:
+            loc = s.sourceRange.start
+        except AttributeError:
+            return ""
+        key = (loc.buffer.id, loc.offset)
+        r = self._loc_cache.get(key)
+        if r is None:
+            sm = self.it.comp.sourceManager
+            r = f"{os.path.basename(sm.getFileName(loc))}:{sm.getLineNumber(loc)}"
+            self._loc_cache[key] = r
+        return r
+
+    def _pe_stmt(self, s, act: Act) -> None:
         k = s.kind
         if k == SK.List:
             self.pe_list(list(s.list), act)

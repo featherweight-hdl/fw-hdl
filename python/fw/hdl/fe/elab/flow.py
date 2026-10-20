@@ -29,8 +29,12 @@ def lower_design(files: List[str], top: str, *, incdirs: Optional[List[str]] = N
                  defines: Optional[Dict[str, str]] = None, module: Optional[str] = None,
                  encoding: str = "binary", optimize: bool = True,
                  options: Optional[Dict[str, object]] = None) -> LowerResult:
-    """``options``: extra :class:`zuspec.synth.proc.lower.LowerOptions` fields."""
+    """``options``: extra :class:`zuspec.synth.proc.lower.LowerOptions` fields,
+    and ``emit``: ``flat`` (one next-state term per register) or
+    ``structured`` (each process as clocked blocks in its source's
+    structure; :mod:`zuspec.synth.proc.structured`)."""
     from zuspec.synth.proc.emit import emit_verilog
+    from zuspec.synth.proc.structured import emit_structured
     from zuspec.synth.proc.lower import LowerOptions, lower
     from zuspec.synth.proc.lower import optimize as opt_pass
 
@@ -47,11 +51,16 @@ def lower_design(files: List[str], top: str, *, incdirs: Optional[List[str]] = N
     build_structure(elab, d)
     if module:
         d.name = module
-    nl = lower(d, LowerOptions(encoding=encoding, **(options or {})))
+    options = dict(options or {})
+    style = options.pop("emit", "flat")
+    if style not in ("flat", "structured"):
+        raise ValueError(f"emit={style}: flat or structured")
+    nl = lower(d, LowerOptions(encoding=encoding, **options))
     if optimize:
         nl = opt_pass(nl)
     report = list(notes) + list(elab.interp.warnings) + list(nl.report)
-    return LowerResult(verilog=emit_verilog(nl), module=d.name, report=report,
+    text = emit_structured(nl) if style == "structured" else emit_verilog(nl)
+    return LowerResult(verilog=text, module=d.name, report=report,
                        leaf_modules=sorted(d.leaf_defs))
 
 
