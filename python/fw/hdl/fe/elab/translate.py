@@ -35,7 +35,8 @@ from zuspec.synth.proc import term as T
 
 from .entry import ElabResult
 from .interp import ElabError, Frame, Thread
-from .values import Event, Iface, Obj, Opaque, const_to_py, default_value, mask, width_of
+from .values import (Event, Iface, Obj, Opaque, const_to_py, default_value, mask, skey,
+                     width_of)
 
 SK = ast.StatementKind
 EK = ast.ExpressionKind
@@ -43,13 +44,6 @@ EK = ast.ExpressionKind
 
 class TranslateError(ElabError):
     pass
-
-
-def skey(node) -> tuple:
-    """A stable identity for an AST node (pyslang wrappers are not identical)."""
-    st = node.sourceRange.start
-    en = node.sourceRange.end
-    return (st.buffer.id, st.offset, en.offset, int(node.kind.value) if hasattr(node.kind, "value") else str(node.kind))
 
 
 @dc.dataclass(eq=False)
@@ -86,6 +80,32 @@ class Translator:
         self.warnings: List[str] = []
         self.awaited_events: Set[int] = set()
         self._obj_names = self._name_objects()
+        # variables of RTL modules that combinational code writes: nets
+        self.comb_vars: Set[Tuple[str, str]] = set()
+        for f, kind, node, _label in elab.comb:
+            for sym in _written_roots(node if kind != "init" else None, kind):
+                self.comb_vars.add((f.path, sym.name))
+            if kind == "init":
+                self.comb_vars.add((f.path, node.name))
+        self._in_comb = False
+        # what RTL modules' clocked blocks and tasks write is state: known up
+        # front (no rediscovery round per variable)
+        for path in elab.rtl_modules:
+            f = self.it.ifaces[path]
+            mvars = {m.name for m in f.inst.body if m.kind == ast.SymbolKind.Variable}
+            for m in f.inst.body:
+                body = None
+                if m.kind == ast.SymbolKind.ProceduralBlock and m.procedureKind in (
+                        ast.ProceduralBlockKind.Always, ast.ProceduralBlockKind.AlwaysFF):
+                    body = m.body
+                elif m.kind == ast.SymbolKind.Subroutine:
+                    body = m.body
+                if body is None:
+                    continue
+                for sym in _written_roots(body, "always"):
+                    key = (path, sym.name)
+                    if sym.name in mvars and key not in self.comb_vars:
+                        self.dyn_ifvars.add(key)
 
     # ================================================================ driver
     def translate(self) -> P.Design:
@@ -106,6 +126,8 @@ class Translator:
             p = self._thread(th)
             if p is not None:
                 procs.append(p)
+        for f, kind, node, label in self.elab.comb:
+            procs.append(self._comb(f, kind, node, label))
         clock = self._mk_var(("clock",), "clock", 1, kind="in", origin="clock")
         reset = self._mk_var(("reset",), "reset", 1, kind="in", origin="reset")
         return P.Design(name=self.elab.top.name, clock=clock, reset=reset,
@@ -155,6 +177,32 @@ class Translator:
                                  "while translating its loop")
         return P.Proc(name=self._proc_name, body=out, priority=self._priority(th, fr),
                       origin=th.root.label)
+
+    def _comb(self, f: Iface, kind: str, node, label: str) -> P.Proc:
+        """Combinational code of an RTL module -> a combinational process."""
+        self._proc_name = self._iface_rel(label).replace(".", "_")
+        self._target = ((), None)
+        self._found_initial = True
+        self._block_frames = []
+        act = Act(None, None, f, (), self._proc_name)
+        self._act_stack = [act]
+        self._loop_flags = []
+        self._defined = set()
+        out: List[P.Stmt] = []
+        self._out = out
+        self._in_comb = True
+        try:
+            if kind == "always":
+                self.pe_stmt(node, act)
+            elif kind == "assign":
+                self._assign_expr(node, act)
+            else:
+                v = self.ev(node.initializer, act)
+                self._write_ifvar(f, node.name, node.type,
+                                  self._conv_to(v, node.type, node.initializer), False)
+        finally:
+            self._in_comb = False
+        return P.Proc(name=self._proc_name, body=out, origin=label, comb=True)
 
     def _outer_loop(self, th: Thread):
         """(frame index, loop stmt) of the outermost infinite loop on the stack;
@@ -266,6 +314,11 @@ class Translator:
             self.set_local(act, sym, self._conv_to(v, sym.type, None))
         elif k == SK.ExpressionStatement:
             self.ev(s.expr, act)
+        elif k == SK.Conditional and skey(s) in self.elab.reset_ifs:
+            # an RTL register block's reset branch: its values are the
+            # registers' reset values (entry._rtl_block); the design reset
+            # applies them
+            self.pe_stmt(s.ifFalse, act)
         elif k == SK.Conditional:
             c = self._bool(self.ev(s.conditions[0].expr, act))
             if c.is_const:
@@ -1011,6 +1064,9 @@ class Translator:
     def _ifvar(self, f: Iface, name: str, t):
         key = (f.path, name)
         w = width_of(t)
+        if key in self.comb_vars:
+            v = self._net_var(f, name, w)
+            return T.var(v.name, v.w)
         if key in self.dyn_ifvars:
             v = self._state_var_if(f, name, t)
             return T.var(v.name, v.w)
@@ -1383,7 +1439,9 @@ class Translator:
                                  lhs.selector)
                 ew = width_of(lhs.type)
                 if not idx.is_const:
-                    raise TranslateError("run-time bit-select write")
+                    self.assign(lhs.value, act, self._dyn_insert(cur, t, idx, self._term(v, ew, None)),
+                                nb)
+                    return
                 lo = self.it._bit_offset(t, idx.val, ew)
                 self.assign(lhs.value, act, self._insert(cur, lo, self._term(v, ew, None)), nb)
                 return
@@ -1405,6 +1463,21 @@ class Translator:
                 pos += w
             return
         raise TranslateError(f"unsupported assignment target {k.name}")
+
+    @staticmethod
+    def _dyn_insert(cur: T.Term, t, idx: T.Term, val: T.Term) -> T.Term:
+        """*cur* with the element at run-time index *idx* replaced by *val*
+        (a write out of range changes nothing)."""
+        w, ew = cur.w, val.w
+        r = t.fixedRange
+        left, right = int(r.left), int(r.right)
+        iw = max(idx.w, (max(abs(left), abs(right)) * ew + w).bit_length() + 1)
+        ix = T.resize(idx, iw)
+        # element index -> element number from the least significant end
+        num = T.sub(ix, T.const(right, iw)) if left >= right else T.sub(T.const(right, iw), ix)
+        off = T.mul(num, T.const(ew, iw)) if ew > 1 else num
+        m = T.shl(T.resize(T.ones(ew), w), off)
+        return T.or_(T.and_(cur, T.not_(m)), T.and_(T.shl(T.resize(val, w), off), m))
 
     @staticmethod
     def _insert(cur: T.Term, lo: int, val: T.Term) -> T.Term:
@@ -1453,6 +1526,13 @@ class Translator:
 
     def _write_ifvar(self, f: Iface, name: str, t, v, nb: bool) -> None:
         key = (f.path, name)
+        if key in self.comb_vars:
+            if not self._in_comb:
+                raise TranslateError(f"{f.path}.{name}: written by both combinational and "
+                                     "clocked code")
+            var = self._net_var(f, name, width_of(t))
+            self.emit(P.Assign(var, self._term(v, var.w, None), nb=False))
+            return
         if key not in self.dyn_ifvars:
             self.dyn_ifvars.add(key)
             raise _Restart()
@@ -1663,7 +1743,9 @@ class Translator:
         return names
 
     def note(self, msg: str) -> None:
-        self.warnings.append(msg)
+        # translation restarts (state discovery) repeat the same notes
+        if msg not in self.warnings:
+            self.warnings.append(msg)
 
     # state for a translation pass
     _act_stack: List[Act] = []
@@ -1682,3 +1764,39 @@ def translate(elab: ElabResult) -> Tuple[P.Design, List[str]]:
     tr._loop_flags = []
     d = tr.translate()
     return d, tr.warnings
+
+
+def _written_roots(node, kind: str) -> List[Any]:
+    """The variables an always_comb body or a continuous assignment writes."""
+    out: List[Any] = []
+    if node is None:
+        return out
+
+    def root(e):
+        while True:
+            k = e.kind
+            if k in (EK.ElementSelect, EK.RangeSelect, EK.MemberAccess):
+                e = e.value
+            elif k == EK.Conversion:
+                e = e.operand
+            elif k == EK.Assignment:
+                e = e.left
+            elif k == EK.Concatenation:
+                for x in e.operands:
+                    root(x)
+                return
+            else:
+                break
+        if k in (EK.NamedValue, EK.HierarchicalValue):
+            out.append(e.symbol)
+
+    if kind == "assign":
+        root(node.left)
+        return out
+
+    def cb(n):
+        if isinstance(n, ast.Expression) and n.kind == EK.Assignment:
+            root(n.left)
+        return True
+    node.visit(cb)
+    return out

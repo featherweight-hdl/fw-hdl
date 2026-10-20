@@ -207,3 +207,10 @@ def _int_to_str(v: int) -> str:
         bs.append(chr(v & 0xFF))
         v >>= 8
     return "".join(reversed(bs))
+
+
+def skey(node) -> tuple:
+    """A stable identity for an AST node (pyslang wrappers are not identical)."""
+    st = node.sourceRange.start
+    en = node.sourceRange.end
+    return (st.buffer.id, st.offset, en.offset, int(node.kind.value) if hasattr(node.kind, "value") else str(node.kind))

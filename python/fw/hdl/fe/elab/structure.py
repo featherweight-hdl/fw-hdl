@@ -10,6 +10,8 @@ Rebuilds the top module's hierarchy around the translated processes:
     continuous assignments carry over. It must be structural: procedural code
     in it is an error, except ``fw_root``'s, whose elaboration the front end
     has already done;
+  - an RTL module (procedural code: a transactor core) is lowered with the
+    design (the translator made its processes); its ports become nets;
   - every other module instance is a leaf, kept as an instance with its
     parameter values.
 
@@ -46,6 +48,7 @@ class Structure:
         self.top = elab.top
         self.byname: Dict[str, P.Var] = {v.name: v for v in d.vars}
         self.leaf_defs: Dict[str, object] = {}
+        self.rtl: Set[str] = set(elab.rtl_modules)
         # interfaces the class side uses: those whose variables appear in the design
         self.bound: Set[str] = set()
         for path in elab.ifaces:
@@ -113,6 +116,7 @@ class Structure:
             d.vars.append(rv)
             d.assigns.append(P.Assign(rv, rst))
             d.reset = rv
+        self._check_rtl_ports()
         # the translator's placeholder clock/reset vars: alias them
         for old, new in ((old_clk, d.clock), (old_rst, d.reset)):
             if old is not None and new is not None and old is not new and old in d.vars:
@@ -121,6 +125,30 @@ class Structure:
         # nets nobody drives inside the generated module are an error later;
         # leaf outputs and assigns drive them
         return d
+
+    def _check_rtl_ports(self) -> None:
+        """The clock and reset ports RTL blocks are sensitive to must be the
+        design's clock and reset (through any chain of plain connections)."""
+        d = self.d
+        val = {a.var.name: a.value for a in d.assigns}
+
+        def resolve(t: T.Term) -> T.Term:
+            seen = set()
+            while t.op == "var" and t.name in val and t.name not in seen:
+                seen.add(t.name)
+                t = val[t.name]
+            return t
+        for path, port, role, high in self.elab.rtl_ports:
+            name = _safe(self._rel(f"{path}.{port}"))
+            want = d.clock if role == "clock" else d.reset
+            if want is None:
+                raise StructureError(f"{path}: has a reset ({port}) but the design has none")
+            got = resolve(T.var(name, 1)) if name in self.byname else None
+            ok = got is not None and (got is T.var(want.name, 1) if high else
+                                      got is T.not_(T.var(want.name, 1)))
+            if not ok:
+                raise StructureError(f"{path}.{port}: the {role} of an RTL block must be the "
+                                     f"design's {role} ({want.name}{'' if high else ', inverted'})")
 
     # ------------------------------------------------------------ hierarchy
     def _flatten(self, inst) -> None:
@@ -142,6 +170,10 @@ class Structure:
 
     def _instance(self, m) -> None:
         path = m.hierarchicalPath
+        if path in self.rtl:
+            # lowered with the design: the translator made its processes
+            self._connect_ports(m, absorb=True)
+            return
         if m.isInterface:
             if path not in self.bound:
                 raise StructureError(f"{path}: an interface the class side does not use")
