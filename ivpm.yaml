@@ -3,9 +3,21 @@ package:
   with:
     agents:
       claude: true
+  default-dep-set: default-dev
 
   dep-sets:
+  - name: use
+    deps: []
+  - name: default
+    uses: use
+
+    uses: dev
+
+  - name: dev
+    uses: use
+
   - name: default-dev
+    uses: dev
     deps: 
     - name: verilator
       url: https://github.com/edapack/verilator-bin
