@@ -31,9 +31,15 @@ class fw_fifo #(type T = bit [7:0], int DEPTH = 16);
     endfunction
 
     // ---- either side ----
+    // empty() and full() compare the pointers: through count() they would
+    // be a subtractor and a compare, a carry chain deeper than the XORs.
+    // empty() is an XOR reduction, not `wr_ptr == rd_ptr`: Yosys (alumacc)
+    // merges an equality with a subtraction of the same operands, so where
+    // count() is used too the compare would become the subtractor's zero
+    // test.
     function bit [AW:0] count(); return wr_ptr - rd_ptr; endfunction
-    function bit empty();        return wr_ptr == rd_ptr; endfunction
-    function bit full();         return count() == (AW+1)'(DEPTH); endfunction
+    function bit empty();        return ~|(wr_ptr ^ rd_ptr); endfunction
+    function bit full();         return wr_ptr == {~rd_ptr[AW], rd_ptr[AW-1:0]}; endfunction
 
     // ---- writer side ----
     function void push(T v);
