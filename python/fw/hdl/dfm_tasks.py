@@ -725,3 +725,44 @@ async def FormalChain(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult
               + " = ".join(f"{s} {v}" for s, v, _, _ in rows) + ")")
     return TaskDataResult(status=1 if (p.gate and not passed) else 0, changed=True,
                           output=[tr])
+
+
+async def Lower(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
+    """Elaborate-then-lower an fw_root design to a Verilog netlist (fe/elab)."""
+    from fw.hdl.fe.elab.flow import lower_design
+    from fw.hdl.fe.elab.interp import ElabError
+    p = input.params
+    files, incdirs = _sv_inputs(input)
+    defines = {}
+    for fs in getattr(input, "inputs", []) or []:
+        for dname in getattr(fs, "defines", []) or []:
+            k, _, v = str(dname).partition("=")
+            defines[k] = v or "1"
+    rundir = input.rundir
+    os.makedirs(rundir, exist_ok=True)
+    from fw.hdl.fe.elab.flow import parse_options
+    opts = parse_options(getattr(p, "options", "") or "")
+    # the inputs, so a lowering can be re-run with other options
+    # (python -m fw.hdl.fe.elab.flow lower_inputs.json -o out.v -O k=v)
+    import json
+    with open(os.path.join(rundir, "lower_inputs.json"), "w") as f:
+        json.dump({"files": files, "incdirs": incdirs, "defines": defines, "top": p.top,
+                   "module": p.module or None, "encoding": p.encoding, "options": opts},
+                  f, indent=1)
+    try:
+        res = lower_design(files, p.top, incdirs=incdirs, defines=defines,
+                           module=(p.module or None), encoding=p.encoding, options=opts)
+    except (FwHdlError, ElabError, Exception) as e:   # report any lowering failure
+        return TaskDataResult(status=1, changed=True, output=[],
+                              markers=[TaskMarker(msg=f"{type(e).__name__}: {e}",
+                                                  severity=SeverityE.Error)])
+    vfile = f"{res.module}.v"
+    with open(os.path.join(rundir, vfile), "w") as f:
+        f.write(res.verilog)
+    with open(os.path.join(rundir, "lower_report.txt"), "w") as f:
+        f.write("\n".join(res.report) + "\n")
+    markers = [TaskMarker(msg=r, severity=SeverityE.Warning)
+               for r in res.report if r.startswith("warning")]
+    return TaskDataResult(status=0, changed=True, markers=markers, output=[
+        FileSet(src=input.name, filetype="verilogSource", basedir=rundir, files=[vfile]),
+        FileSet(src=input.name, filetype="text", basedir=rundir, files=["lower_report.txt"])])

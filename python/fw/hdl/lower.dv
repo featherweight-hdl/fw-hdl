@@ -1,0 +1,42 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+package:
+  name: fw.hdl.lower
+  desc: Elaborate-then-lower an fw-hdl design (fw_root top) to a Verilog netlist
+  doc: |
+    The front end interprets the design's elaboration (``fw_root``'s
+    reset-release: build, connect, binds, thread starts), translates every
+    thread into a clocked process by partial evaluation over the elaborated
+    heap, rebuilds the module structure around it (transactor cores and other
+    modules with no class-bound interface stay as instances), and lowers the
+    processes to state machines with ``zuspec.synth.proc``.
+
+    The output netlist has the top's pins. Synthesize it together with the
+    source of every leaf module it instantiates (see the report).
+
+  tasks:
+  - name: Lower
+    scope: export
+    desc: Lower an fw_root design to a Verilog netlist
+    consumes:
+    - filetype: systemVerilogSource
+    - filetype: verilogSource
+    with:
+      top:
+        doc: The top module (it instantiates fw_root)
+        type: str
+      module:
+        doc: Name of the generated module (default the top's name)
+        type: str
+        value: ""
+      encoding:
+        doc: State encoding (binary or onehot)
+        type: str
+        value: binary
+      options:
+        doc: |
+          Other lowering options, comma-separated key=value
+          (zuspec.synth.proc.lower.LowerOptions fields, e.g. share_joins=0)
+        type: str
+        value: ""
+    shell: pytask
+    run: fw.hdl.dfm_tasks.Lower
