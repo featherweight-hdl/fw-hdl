@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import dataclasses as dc
 import os
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple
 
 from pyslang import ast
 
@@ -42,6 +42,14 @@ from .values import (Event, Iface, Obj, Opaque, const_to_py, default_value, mask
 SK = ast.StatementKind
 EK = ast.ExpressionKind
 
+
+
+class _NbaKey(NamedTuple):
+    """The key of a variable's pending nonblocking value in Act.locals (a
+    tuple, as the other synthetic keys; `name` names its temporary)."""
+    tag: str
+    name: str
+    sym: Any
 
 class TranslateError(ElabError):
     pass
@@ -167,6 +175,7 @@ class Translator:
         self._act_stack = [act]
         self._loop_flags = []
         self._defined = set()
+        self._nba_old: Dict[Any, T.Term] = {}
         out: List[P.Stmt] = []
         self._out = out
         if loop_stmt is None:              # an `always` root: forever over root.stmt
@@ -191,6 +200,7 @@ class Translator:
         self._act_stack = [act]
         self._loop_flags = []
         self._defined = set()
+        self._nba_old: Dict[Any, T.Term] = {}
         out: List[P.Stmt] = []
         self._out = out
         self._in_comb = True
@@ -440,6 +450,11 @@ class Translator:
             for key in set(lt) | set(le):
                 vt = lt.get(key, None)
                 ve = le.get(key, None)
+                if key in self._nba_old:
+                    # a pending nonblocking value: on the side with no write,
+                    # the variable still holds its old value
+                    vt = self._nba_old[key] if vt is None else vt
+                    ve = self._nba_old[key] if ve is None else ve
                 merged[key] = self._merge_val(a, key, c, vt, ve, t_out, e_out)
             a.locals = merged
             a.ret = self._merge_flag(a, ("$ret",), c, rt, re, t_out, e_out)
@@ -840,6 +855,9 @@ class Translator:
         raise TranslateError(f"unsupported timing control {tk.name}")
 
     def _await(self, cond: Optional[T.Term], s, act: Act) -> None:
+        for a in self._acts_live():
+            for k in [k for k in a.locals if k in self._nba_old]:
+                del a.locals[k]
         key = (act.path, skey(s))
         initial = key == self._target
         if initial:
@@ -1413,8 +1431,41 @@ class Translator:
         self.assign(e.left, act, v, nb=bool(e.isNonBlocking))
         return v
 
+    def _nba_key(self, e):
+        """The pending-value key of a nonblocking write target, for a named
+        variable (None otherwise)."""
+        if e.kind in (EK.NamedValue, EK.HierarchicalValue):
+            return _NbaKey("$nba", f"{e.symbol.name}_nba", e.symbol)
+        return None
+
+    def _partial_base(self, e, act: Act, w: int, nb: bool) -> T.Term:
+        """The value a write to part of `e` is merged into. For a blocking
+        write, the variable's value. For a nonblocking write, the value the
+        earlier nonblocking writes in this clock leave pending (right-hand
+        sides still read the old value), so several member or bit writes
+        to one variable in a block all take effect."""
+        if nb:
+            k = self._nba_key(e)
+            if k is not None and k in act.locals:
+                return act.locals[k]
+        return self._term(self.ev(e, act), w, e)
+
+    def _note_nba(self, e, act: Act, v) -> None:
+        k = self._nba_key(e)
+        if k is None:
+            return
+        w = width_of(e.type)
+        if k not in self._nba_old:
+            self._nba_old[k] = self._term(self.ev(e, act), w, e)
+        act.locals[k] = self._term(v, w, None)
+
     def assign(self, lhs, act: Act, v, nb: bool = False, src_type=None) -> None:
         k = lhs.kind
+        if nb and k in (EK.NamedValue, EK.HierarchicalValue) and lhs.type.canonicalType.isIntegral:
+            if src_type is not None:
+                v = self._conv_to(v, lhs.type, None, from_type=src_type)
+                src_type = None
+            self._note_nba(lhs, act, v)
         if k == EK.Assignment:
             return self.assign(lhs.left, act, v, nb, src_type)
         if k == EK.Conversion:
@@ -1455,14 +1506,14 @@ class Translator:
                 self._write_ifvar(f, m.name, m.type, v, nb)
                 return
             if base_t.isIntegral:
-                cur = self._term(self.ev(lhs.value, act), width_of(base_t), lhs.value)
+                cur = self._partial_base(lhs.value, act, width_of(base_t), nb)
                 new = self._insert(cur, int(m.bitOffset), self._term(v, width_of(m.type), None))
                 self.assign(lhs.value, act, new, nb)
                 return
         if k == EK.ElementSelect:
             t = lhs.value.type.canonicalType
             if t.isIntegral:
-                cur = self._term(self.ev(lhs.value, act), width_of(t), lhs.value)
+                cur = self._partial_base(lhs.value, act, width_of(t), nb)
                 idx = self._term(self.ev(lhs.selector, act), width_of(lhs.selector.type) or 32,
                                  lhs.selector)
                 ew = width_of(lhs.type)
@@ -1476,7 +1527,7 @@ class Translator:
             raise TranslateError("write to an array element inside a process")
         if k == EK.RangeSelect:
             t = lhs.value.type.canonicalType
-            cur = self._term(self.ev(lhs.value, act), width_of(t), lhs.value)
+            cur = self._partial_base(lhs.value, act, width_of(t), nb)
             a = self._term(self.ev(lhs.left, act), 32, lhs.left)
             b = self._term(self.ev(lhs.right, act), 32, lhs.right)
             lo = self._range_lo(lhs, t, a.val, b.val)

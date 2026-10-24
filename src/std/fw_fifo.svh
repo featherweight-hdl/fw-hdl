@@ -41,19 +41,31 @@ class fw_fifo #(type T = bit [7:0], int DEPTH = 16);
             $error("fw_fifo: push when full; the value is dropped");
             return;
         end
-        mem[wr_ptr[AW-1:0]] = $bits(T)'(v);
+        for (int i = 0; i < DEPTH; i++)
+            if (wr_ptr[AW-1:0] == AW'(i)) mem[i] = $bits(T)'(v);
         wr_ptr = wr_ptr + 1'b1;
     endfunction
 
     // ---- reader side ----
-    function T head(); return T'(mem[rd_ptr[AW-1:0]]); endfunction
+    function T head(); return T'(at(rd_ptr[AW-1:0])); endfunction
 
     function void pop();
         if (!empty()) rd_ptr = rd_ptr + 1'b1;
     endfunction
 
     // The entry `i` places behind the head (0 is the head).
-    function T peek(bit [AW-1:0] i); return T'(mem[rd_ptr[AW-1:0] + i]); endfunction
+    function T peek(bit [AW-1:0] i); return T'(at(rd_ptr[AW-1:0] + i)); endfunction
 
     function void flush(); rd_ptr = wr_ptr; endfunction
+
+    // Entry `idx`. Indexing the packed storage with a run-time index lowers
+    // to a shifter over all of it; an AND-OR over constant indices is a
+    // decoder and a read mux, as a memory's read port maps. push() writes
+    // with constant indices for the same reason.
+    protected function bit [$bits(T)-1:0] at(bit [AW-1:0] idx);
+        bit [$bits(T)-1:0] r = '0;
+        for (int i = 0; i < DEPTH; i++)
+            r = r | (mem[i] & ((idx == AW'(i)) ? '1 : '0));
+        return r;
+    endfunction
 endclass
