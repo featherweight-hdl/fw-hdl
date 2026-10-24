@@ -26,4 +26,8 @@ package fw_std_pkg;
     // (DEPTH == 0) between two components.
     `include "fw_channel.svh"
 
+    // A FIFO with packed storage and one writer per side, which lowers:
+    // count, peek and flush for designs (fw_channel does not lower).
+    `include "fw_fifo.svh"
+
 endpackage

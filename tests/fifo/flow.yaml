@@ -1,0 +1,25 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+fragment:
+  name: fifo
+
+  tasks:
+  # fw_fifo: push and pop in the same clock, full, peek, flush.
+  - name: fifo-tb
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      include:
+      - fifo_pkg.sv
+      - fifo_tb.sv
+      incdirs:
+      - .
+
+  - name: fifo-img
+    uses: hdlsim.vlt.SimImage
+    needs: [hdl.sv-src, fifo-tb]
+    with:
+      top: [fifo_tb]
+
+  - name: fifo
+    uses: hdlsim.vlt.SimRun
+    needs: [fifo-img]
