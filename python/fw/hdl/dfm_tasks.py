@@ -187,6 +187,39 @@ async def XlsIR(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
     return TaskDataResult(status=0, changed=True, output=out)
 
 
+async def XlsStageTLM(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
+    """fw.hdl.xls.StageTLM: stage-TLM classes timed by the XLS schedule."""
+    from fw.hdl import stage_tlm
+    p = input.params
+    api, err = _one_api(input)
+    if err is not None:
+        return err
+    scheds = {}
+    for f in _files(input, "xlsSchedule"):
+        with open(f) as fp:
+            scheds.update(stage_tlm.parse_schedules(fp.read()))
+    missing = [f.module for f in api.functions if f.module not in scheds]
+    if missing:
+        return _api_error(f"StageTLM: no xlsSchedule for module(s) {missing}; "
+                          f"run synth.xls.Codegen on them")
+    pkg = p.pkg_name or f"{api.name}_stage_tlm_pkg"
+    clk_if = p.clk_if or f"{pkg}_clk_if"
+    rundir = input.rundir
+    os.makedirs(rundir, exist_ok=True)
+    tables = []
+    for f in api.functions:
+        tables.append(f"{f.module}.stages.txt")
+        with open(os.path.join(rundir, tables[-1]), "w") as fp:
+            fp.write(stage_tlm.stage_table(scheds[f.module]))
+    with open(os.path.join(rundir, f"{pkg}.sv"), "w") as fp:
+        fp.write(stage_tlm.stage_tlm_sv(api, scheds, pkg, clk_if, list(p.imports or []),
+                                        bool(p.flop_inputs), bool(p.flop_outputs)))
+    return TaskDataResult(status=0, changed=True, output=[
+        FileSet(src=input.name, filetype="systemVerilogSource", basedir=rundir,
+                files=[f"{pkg}.sv"]),
+        FileSet(src=input.name, filetype="text", basedir=rundir, files=tables)])
+
+
 def _api_error(msg: str) -> TaskDataResult:
     return TaskDataResult(status=1, changed=False, output=[], markers=[TaskMarker(
         msg=msg, severity=SeverityE.Error)])
