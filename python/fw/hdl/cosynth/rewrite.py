@@ -26,8 +26,8 @@ ALL_X = ['X6', 'X2', 'X1', 'X3', 'X5']
 REASONS = {
     'X6': (['C3.mode_fixed', 'C3.key_stable_op'],
            'MODE is fixed after the first START (C3.mode_fixed) and the host programs AES-128 '
-           '(MODE=0, host assumption, not proved); with key_width=0 stage 0 does not depend on '
-           'key[255:128] (combinational lemma, cosynth equiv)'),
+           '(MODE=0, host assumption, not proved); with key_width=0 the result (stage1 o stage0) does not depend on '
+           'key[255:128] (X6 lemma in cosynth equiv; stage 0 alone does depend on it)'),
     'X2': (['C3.key_stable_op', 'C3.key_stable_busy', 'C3.mode_fixed'],
            'the key (and MODE) at the core equals the key at op start for the whole op, so '
            'the input flops hold a copy of a value that does not change while it is used'),
