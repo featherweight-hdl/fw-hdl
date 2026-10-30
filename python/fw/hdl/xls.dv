@@ -51,3 +51,48 @@ package:
         value: []
     shell: pytask
     run: fw.hdl.dfm_tasks.XlsIR
+
+  - name: StageTLM
+    scope: export
+    desc: Stage-TLM (V3) classes, one per API function, timed by the XLS schedule
+    doc: |
+      Takes a function API (`fwFnApi`, from `fw.hdl.api.Functions`) and the
+      `xlsSchedule` of `synth.xls.Codegen` on the same functions. For each
+      function `f` it emits a class `f_stage_tlm` in package `pkg_name`, with
+      `task op(<f's inputs>, output result)`: the result computed at zero
+      time by calling the SV function, then one `@(posedge vif.clk)` per
+      clock of the codegen pipeline (`IN_FLOP + STAGES + OUT_FLOP`, the
+      constants of the class; `clks_per_op` in `new` overrides it). The
+      generated file also declares interface `clk_if` (one `clk` port).
+
+      The node -> stage map is summarized in comments and written whole to
+      `<module>.stages.txt`.
+
+      Outputs: `systemVerilogSource` -- `<pkg_name>.sv`; `text` -- the
+      `.stages.txt` tables.
+    consumes:
+    - filetype: fwFnApi
+    - filetype: xlsSchedule
+    with:
+      pkg_name:
+        doc: Name of the generated package (default `<api>_stage_tlm_pkg`)
+        type: str
+        value: ""
+      clk_if:
+        doc: Name of the clock interface the file declares (default `<pkg_name>_clk_if`)
+        type: str
+        value: ""
+      imports:
+        doc: Packages the generated package imports (for the API's types)
+        type: list
+        value: []
+      flop_inputs:
+        doc: Codegen's `flop_inputs` (XLS default true)
+        type: bool
+        value: true
+      flop_outputs:
+        doc: Codegen's `flop_outputs` (XLS default true)
+        type: bool
+        value: true
+    shell: pytask
+    run: fw.hdl.dfm_tasks.XlsStageTLM
