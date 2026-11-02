@@ -133,13 +133,16 @@ async def Integrate(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
 async def XlsIR(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
     """fw.hdl.xls.IR: one XLS IR package per entry of `top` -- a function or a
     component class."""
+    from zuspec.be.xls import xir
+    from zuspec.be.xls.lower_fn import lower_functions
     from zuspec.be.xls.lower_proc import lower_component
     from zuspec.be.xls.printer import format_package
     from zuspec.be.xls.signature import CodegenOptions, predict_signature
+    from zuspec.ir.core.anchor import assign_anchors
 
     from fw.hdl.spl_flow import module_name
-    from fw.hdl.xls_flow import (_find_class, _find_functions, _parse, sv_function_package,
-                                 sv_to_component)
+    from fw.hdl.xls_flow import _find_class, _find_functions, _parse, sv_to_component, \
+        sv_to_functions
     p = input.params
     tops = list(p.top or [])
     if not tops:
@@ -149,7 +152,7 @@ async def XlsIR(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
     config = FlowConfig(incdirs=incdirs)
     rundir = input.rundir
     os.makedirs(rundir, exist_ok=True)
-    irs, preds, markers = [], [], []
+    irs, preds, anchor_files, markers = [], [], [], []
     for top in tops:
         reporter = ErrorReporter()
         try:
@@ -164,10 +167,17 @@ async def XlsIR(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
                 _find_class(parser, top)
                 is_fn = False
             module = module_name(top)
+            # Anchors are assigned before lowering, on the IR the front end
+            # produced (phase0-plan.md D5); zuspec.xls.Overlay reads them.
             if is_fn:
-                pkg = sv_function_package(files, top, module, config, reporter)
+                fns = sv_to_functions(files, [top], config, reporter, rename={top: module})
+                anchors = assign_anchors(fns)
+                pkg = xir.Package(name=module)
+                lower_functions(pkg, fns)
+                pkg.top = module
             else:
                 comp = sv_to_component(files, top, config, reporter)
+                anchors = assign_anchors([comp])
                 pkg = lower_component(comp)
                 ir.save_signature(predict_signature(comp, CodegenOptions(module_name=module)),
                                   os.path.join(rundir, f"{module}.pred.json"))
@@ -178,9 +188,13 @@ async def XlsIR(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
         with open(os.path.join(rundir, f"{module}.ir"), "w") as f:
             f.write(format_package(pkg))
         irs.append(f"{module}.ir")
+        anchors.save(os.path.join(rundir, f"{module}.anchors.json"))
+        anchor_files.append(f"{module}.anchors.json")
     if markers:
         return TaskDataResult(status=1, changed=True, output=[], markers=markers)
-    out = [FileSet(src=input.name, filetype="xlsIR", basedir=rundir, files=irs)]
+    out = [FileSet(src=input.name, filetype="xlsIR", basedir=rundir, files=irs),
+           FileSet(src=input.name, filetype="zuspecAnchorTable", basedir=rundir,
+                   files=anchor_files)]
     if preds:
         out.append(FileSet(src=input.name, filetype="blockSignaturePrediction",
                            basedir=rundir, files=preds))
@@ -198,10 +212,14 @@ async def XlsStageTLM(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult
     for f in _files(input, "xlsSchedule"):
         with open(f) as fp:
             scheds.update(stage_tlm.parse_schedules(fp.read()))
+    # An IR bundle's overlay, when there is one, is the schedule (D4).
+    for f in _files(input, "zuspecIRBundle"):
+        s = stage_tlm.schedule_from_bundle(os.path.dirname(f))
+        scheds[s.function] = s
     missing = [f.module for f in api.functions if f.module not in scheds]
     if missing:
-        return _api_error(f"StageTLM: no xlsSchedule for module(s) {missing}; "
-                          f"run synth.xls.Codegen on them")
+        return _api_error(f"StageTLM: no zuspecIRBundle or xlsSchedule for module(s) "
+                          f"{missing}; run zuspec.xls.Overlay (or synth.xls.Codegen) on them")
     pkg = p.pkg_name or f"{api.name}_stage_tlm_pkg"
     clk_if = p.clk_if or f"{pkg}_clk_if"
     rundir = input.rundir

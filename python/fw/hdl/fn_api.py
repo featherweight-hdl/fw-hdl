@@ -265,19 +265,25 @@ def _loops(a: ApiArg, body: str) -> List[str]:
 def _pack(a: ApiArg, port: str) -> List[str]:
     """Statements that put argument *a* on its port's queue."""
     if not a.dims:
-        return [f"        q_{port}.push_back({a.name});"]
+        return [f"        st.q_{port}.push_back({a.name});"]
     return _loops(a, f"p_{port}[{{off}} +: {a.bits}] = {a.name}{{idx}};") + \
-        [f"        q_{port}.push_back(p_{port});"]
+        [f"        st.q_{port}.push_back(p_{port});"]
 
 
 def xls_binding_sv(api: FnApi, mods: Dict[str, FnModule], period: int = 10,
                    reset_cycles: int = 4, timeout_cycles: int = 100000) -> str:
     n = api.name
-    o = [_HEADER.format(task="fw.hdl.api.XlsBinding", src=f"{n} and the XLS signatures"),
-         "// Level `rtl` (and `gates`): the API is answered by the XLS modules, through",
-         "// a transactor on each module's pins. Latency and port names come from",
-         "// the XLS signatures, so a change of pipeline depth changes nothing here",
-         "// by hand.", ""]
+    o_hdr = [_HEADER.format(task="fw.hdl.api.XlsBinding", src=f"{n} and the XLS signatures"),
+             "// Level `rtl` (and `gates`): the API is answered by the XLS modules, through",
+             "// a transactor on each module's pins. Latency and port names come from",
+             "// the XLS signatures, so a change of pipeline depth changes nothing here",
+             "// by hand.", ""]
+    # Queues and result maps live in a class object, not in the interface: a task
+    # called through a virtual interface that writes a queue or associative-array
+    # member of the interface needs a "virtual interface trigger" on that member,
+    # which Verilator does not support for those types.
+    st = [f"package {n}_xtor_state_pkg;"]
+    o = o_if = []   # the interfaces; emitted after the state package
     for f in api.functions:
         m = mods[f.module]
         if m.input_valid is None or m.output_valid is None:
@@ -287,15 +293,18 @@ def xls_binding_sv(api: FnApi, mods: Dict[str, FnModule], period: int = 10,
             raise ValueError(f"{m.module}: {len(m.inputs)} input ports for {len(f.args)} "
                              f"arguments of {f.path}")
         rw = m.output[1]
+        st += [f"    class {m.module}_state;"]
+        st += [f"        bit [{w - 1}:0] q_{port}[$];   // calls not yet presented"
+               for port, w in m.inputs]
+        st += [f"        bit [{rw - 1}:0] results[int unsigned];   // by call number",
+               "    endclass"]
         o += [f"// {f.path} -> module {m.module}, latency {m.latency}",
               f"interface {m.module}_xtor_if (input bit clk, input bit rst);"]
         o += [f"    bit [{w - 1}:0] {port};" for port, w in m.inputs]
         o += [f"    bit {m.input_valid};",
               f"    bit [{rw - 1}:0] {m.output[0]};",
               f"    bit {m.output_valid};", ""]
-        o += [f"    bit [{w - 1}:0] q_{port}[$];   // calls not yet presented"
-              for port, w in m.inputs]
-        o += [f"    bit [{rw - 1}:0] results[int unsigned];   // by call number",
+        o += [f"    {n}_xtor_state_pkg::{m.module}_state st = new();",
               "    int unsigned issued, collected;", "",
               "    // Present one queued call per cycle; collect results in order.",
               "    always @(posedge clk) begin",
@@ -304,14 +313,14 @@ def xls_binding_sv(api: FnApi, mods: Dict[str, FnModule], period: int = 10,
               "        end else begin"]
         first = m.inputs[0][0] if m.inputs else None
         if first:
-            o += [f"            if (q_{first}.size() != 0) begin",
+            o += [f"            if (st.q_{first}.size() != 0) begin",
                   f"                {m.input_valid} <= 1'b1;"]
-            o += [f"                {port} <= q_{port}.pop_front();" for port, _ in m.inputs]
+            o += [f"                {port} <= st.q_{port}.pop_front();" for port, _ in m.inputs]
             o += ["            end else begin",
                   f"                {m.input_valid} <= 1'b0;",
                   "            end"]
         o += [f"            if ({m.output_valid}) begin",
-              f"                results[collected] = {m.output[0]};",
+              f"                st.results[collected] = {m.output[0]};",
               "                collected++;",
               "            end",
               "        end",
@@ -325,15 +334,17 @@ def xls_binding_sv(api: FnApi, mods: Dict[str, FnModule], period: int = 10,
             o.append(f"        bit [{rw - 1}:0] r;")
         for a, (port, _) in zip(f.args, m.inputs):
             o += _pack(a, port)
-        o.append("        while (!results.exists(t)) @(posedge clk);")
+        o.append("        while (!st.results.exists(t)) @(posedge clk);")
         if f.ret.dims:
-            o.append("        r = results[t];")
+            o.append("        r = st.results[t];")
             o += _loops(f.ret, f"result{{idx}} = r[{{off}} +: {f.ret.bits}];")
         else:
-            o.append("        result = results[t];")
-        o += ["        results.delete(t);",
+            o.append("        result = st.results[t];")
+        o += ["        st.results.delete(t);",
               "    endtask",
               "endinterface", ""]
+
+    o = o_hdr + st + ["endpackage", ""] + o_if
 
     o += [f"package {n}_xls_pkg;",
           f"    // The bridge: the API, answered by the transactor interfaces.",

@@ -53,6 +53,11 @@ fragment:
 
   # Like for like with the DSLX path (upstream's two codegen
   # specializations), for the QoR table; `rtl` also has the tests' two.
+
+  - name: zir
+    desc: XLS's schedule, timing and interface as a Zuspec overlay on the SV anchors (<module>.zir/)
+    uses: zuspec.xls.Overlay
+    needs: [ir, rtl]
   - name: ir-qor
     uses: fw.hdl.xls.IR
     needs: [src]

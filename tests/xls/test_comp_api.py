@@ -37,8 +37,8 @@ def test_xls_binding_drives_and_collects_channels():
                          ports={"data": "output_s", "valid": "output_s_vld",
                                 "ready": "output_s_rdy"})])
     sv = comp_api.xls_binding_sv(_api(), {"Enc32": sig})
-    assert "if (input_r_vld && input_r_rdy) void'(q_input_r.pop_front());" in sv
-    assert "if (output_s_vld && output_s_rdy) q_output_s.push_back(output_s);" in sv
+    assert "if (input_r_vld && input_r_rdy) void'(st.q_input_r.pop_front());" in sv
+    assert "if (output_s_vld && output_s_rdy) st.q_output_s.push_back(output_s);" in sv
     assert ".input_r_vld(Enc32_if.input_r_vld)" in sv
     # declarations before statements in the binding's initial block
     init = sv[sv.index("    initial begin\n        automatic"):]

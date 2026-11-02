@@ -29,6 +29,7 @@ from typing import Dict, List, Optional, Tuple
 
 import pyslang
 import zuspec.ir.core as ir
+from zuspec.ir.core.anchor import mark_synthesized as _synth
 from pyslang import ast
 
 from ..config import FlowConfig
@@ -188,7 +189,8 @@ class StaticMapper:
         if cv.hasUnknown():
             raise self.fail("constant has x/z bits; the static subset is 2-state", node)
         v = self.svint(cv.value, dt.bits, node)
-        return ir.ExprCast(target_type=dt, value=ir.ExprConstant(value=v), loc=self.loc(node))
+        return _synth(ir.ExprCast(target_type=dt, value=ir.ExprConstant(value=v),
+                                  loc=self.loc(node)), "literal-type")
 
     def const_int(self, e) -> Optional[int]:
         """The value of an elaboration-time constant expression, or None."""
@@ -210,8 +212,11 @@ class StaticMapper:
             out.loc = self.loc(e)
         return out
 
-    def cast(self, e, width: int, signed: bool) -> ir.Expr:
-        return ir.ExprCast(target_type=_int_dt(width, signed), value=e, loc=e.loc)
+    def cast(self, e, width: int, signed: bool, user: bool = False) -> ir.Expr:
+        """A width/sign conversion. Unless the user wrote it (`T'(x)`,
+        `$signed`), it is synthesized and takes no anchor ordinal."""
+        c = ir.ExprCast(target_type=_int_dt(width, signed), value=e, loc=e.loc)
+        return c if user else _synth(c, "cast")
 
     def _expr(self, e) -> ir.Expr:
         k = e.kind
@@ -223,14 +228,14 @@ class StaticMapper:
         if k == EK.IntegerLiteral:
             # Not every literal carries e.constant (case items, for one).
             dt = self.dtype(t, e)
-            return ir.ExprCast(target_type=dt, value=ir.ExprConstant(
-                value=self.svint(e.value, dt.bits, e)))
+            return _synth(ir.ExprCast(target_type=dt, value=ir.ExprConstant(
+                value=self.svint(e.value, dt.bits, e))), "literal-type")
         if k == EK.UnbasedUnsizedIntegerLiteral:
             # '0 / '1: pyslang gives the value already filled to the context
             # width, as an SVInt.
             dt = self.dtype(t, e)
-            return ir.ExprCast(target_type=dt, value=ir.ExprConstant(
-                value=self.svint(e.value, dt.bits, e)))
+            return _synth(ir.ExprCast(target_type=dt, value=ir.ExprConstant(
+                value=self.svint(e.value, dt.bits, e))), "literal-type")
         if k == EK.NamedValue:
             return self.named(e)
         if k == EK.LValueReference:
@@ -254,7 +259,8 @@ class StaticMapper:
                 # source (ExprCast extends by its operand's signedness).
                 # E.g. signed a * unsigned b: a is zero-extended.
                 inner = self.cast(inner, int(ot.bitWidth), bool(t.isSigned))
-            return self.cast(inner, int(t.bitWidth), bool(t.isSigned))
+            return self.cast(inner, int(t.bitWidth), bool(t.isSigned),
+                             user=e.conversionKind == ast.ConversionKind.Explicit)
         if k == EK.UnaryOp:
             return self.unary(e)
         if k == EK.BinaryOp:
@@ -353,21 +359,23 @@ class StaticMapper:
         if c is not None:
             off = ((c - lo_bound) if descending else (lo_bound - c)) * scale
             w = max(32, off.bit_length() + 2)
-            return ir.ExprCast(target_type=_int_dt(w, True),
-                               value=ir.ExprConstant(value=off & ((1 << w) - 1)))
+            return _synth(ir.ExprCast(target_type=_int_dt(w, True), value=_synth(
+                ir.ExprConstant(value=off & ((1 << w) - 1)), "index")), "index")
         it = idx_e.type
         w = max(int(it.bitWidth), abs(lo_bound).bit_length(), 1) + scale.bit_length() + 2
         # ExprCast extends by the source's signedness, so an unsigned index is
         # zero-extended and a signed one sign-extended before the arithmetic.
         i = self.cast(self.expr(idx_e), w, True)
-        lo = ir.ExprCast(target_type=_int_dt(w, True), value=ir.ExprConstant(
-            value=lo_bound & ((1 << w) - 1)))
-        diff = ir.ExprBin(lhs=i, op=ir.BinOp.Sub, rhs=lo) if descending else \
-            ir.ExprBin(lhs=lo, op=ir.BinOp.Sub, rhs=i)
+        # The offset arithmetic is the front end's, not the user's.
+        lo = _synth(ir.ExprCast(target_type=_int_dt(w, True), value=_synth(ir.ExprConstant(
+            value=lo_bound & ((1 << w) - 1)), "index")), "index")
+        diff = _synth(ir.ExprBin(lhs=i, op=ir.BinOp.Sub, rhs=lo) if descending else
+                      ir.ExprBin(lhs=lo, op=ir.BinOp.Sub, rhs=i), "index")
         if scale == 1:
             return diff
-        return ir.ExprBin(lhs=diff, op=ir.BinOp.Mult, rhs=ir.ExprCast(
-            target_type=_int_dt(w, True), value=ir.ExprConstant(value=scale)))
+        return _synth(ir.ExprBin(lhs=diff, op=ir.BinOp.Mult, rhs=_synth(ir.ExprCast(
+            target_type=_int_dt(w, True), value=_synth(ir.ExprConstant(value=scale), "index")),
+            "index")), "index")
 
     def element_select(self, e) -> ir.Expr:
         vt = e.value.type
@@ -449,7 +457,8 @@ class StaticMapper:
             name = e.subroutineName
             if name in ("$signed", "$unsigned") and len(e.arguments) == 1:
                 a = e.arguments[0]
-                return self.cast(self.expr(a), int(a.type.bitWidth), name == "$signed")
+                return self.cast(self.expr(a), int(a.type.bitWidth), name == "$signed",
+                                 user=True)
             if name == "$clog2" and len(e.arguments) == 1:
                 # Of an elaboration-time constant only (a loop bound, say):
                 # the value is a constant of the call's type.
@@ -458,8 +467,8 @@ class StaticMapper:
                     raise self.fail("$clog2 of a value that is not an elaboration-time "
                                     "constant is not in the static subset", e)
                 dt = self.dtype(e.type, e)
-                return ir.ExprCast(target_type=dt, value=ir.ExprConstant(
-                    value=(max(v, 1) - 1).bit_length()))
+                return _synth(ir.ExprCast(target_type=dt, value=ir.ExprConstant(
+                    value=(max(v, 1) - 1).bit_length())), "literal-type")
             raise self.fail(f"system call {name} is not in the static subset", e)
         if e.subroutineKind == ast.SubroutineKind.Task:
             raise self.fail(f"task {e.subroutineName!r} called in an expression", e)
@@ -564,7 +573,8 @@ class StaticMapper:
                 raise self.fail("repeat count must be a constant", s)
             return [ir.StmtRepeat(count=ir.ExprConstant(value=n), body=self.body(s.body))]
         if k == SK.ForeverLoop:
-            return [ir.StmtWhile(test=ir.ExprConstant(value=True), body=self.body(s.body))]
+            return [ir.StmtWhile(test=_synth(ir.ExprConstant(value=True), "forever"),
+                                 body=self.body(s.body))]
         if k == SK.Return:
             if s.expr is None:
                 raise self.fail("`return` without a value", s)
@@ -599,8 +609,8 @@ class StaticMapper:
                                         UO.Postdecrement, UO.Predecrement):
             target = self.lvalue_expr(e.operand)
             t = e.operand.type
-            one = ir.ExprCast(target_type=_int_dt(int(t.bitWidth), bool(t.isSigned)),
-                              value=ir.ExprConstant(value=1))
+            one = _synth(ir.ExprCast(target_type=_int_dt(int(t.bitWidth), bool(t.isSigned)),
+                                     value=_synth(ir.ExprConstant(value=1), "incr")), "incr")
             op = ir.BinOp.Add if e.op in (UO.Postincrement, UO.Preincrement) else ir.BinOp.Sub
             return [ir.StmtAssign(targets=[target],
                                   value=ir.ExprBin(lhs=self.expr(e.operand), op=op, rhs=one))]
@@ -764,13 +774,15 @@ class StaticMapper:
             if rv is not None:
                 self.ret_var = self.key(rv)
                 rname = self.new_local(rv)
-                body.append(ir.StmtAnnAssign(target=ir.ExprRefLocal(name=rname),
-                                             annotation=ir.ExprConstant(value=None),
-                                             ir_type=ret_t, value=None, loc=self.loc(sub)))
+                body.append(_synth(ir.StmtAnnAssign(target=ir.ExprRefLocal(name=rname),
+                                                    annotation=ir.ExprConstant(value=None),
+                                                    ir_type=ret_t, value=None,
+                                                    loc=self.loc(sub)), "retvar"))
             body.extend(self.body(sub.body))
             if rv is not None:
                 # Falling off the end returns the function-name variable.
-                body.append(ir.StmtReturn(value=ir.ExprRefLocal(name=self.locals[self.ret_var])))
+                body.append(_synth(ir.StmtReturn(
+                    value=ir.ExprRefLocal(name=self.locals[self.ret_var])), "return"))
             return ir.Function(name=name, args=ir.Arguments(args=args), returns=ret_t,
                                body=body, loc=self.loc(sub))
         finally:

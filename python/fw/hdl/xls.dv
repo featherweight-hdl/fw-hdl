@@ -40,6 +40,9 @@ package:
       Outputs:
 
       * `xlsIR` -- `<module>.ir` for each entry;
+      * `zuspecAnchorTable` -- `<module>.anchors.json` for each entry: the
+        anchors of the IR that was lowered, for `zuspec.xls.Overlay` to put
+        XLS's results on (zuspec-ir-core docs/anchors.md);
       * `blockSignaturePrediction` -- `<module>.pred.json` for each class.
     consumes:
     - filetype: systemVerilogSource
@@ -56,8 +59,10 @@ package:
     scope: export
     desc: Stage-TLM (V3) classes, one per API function, timed by the XLS schedule
     doc: |
-      Takes a function API (`fwFnApi`, from `fw.hdl.api.Functions`) and the
-      `xlsSchedule` of `synth.xls.Codegen` on the same functions. For each
+      Takes a function API (`fwFnApi`, from `fw.hdl.api.Functions`) and, per
+      function, its Zuspec IR bundle (`zuspecIRBundle`, from
+      `zuspec.xls.Overlay`: the schedule as facts on the source's anchors) or
+      the `xlsSchedule` of `synth.xls.Codegen`. A bundle wins when both are given. For each
       function `f` it emits a class `f_stage_tlm` in package `pkg_name`, with
       `task op(<f's inputs>, output result)`: the result computed at zero
       time by calling the SV function, then one `@(posedge vif.clk)` per
@@ -72,6 +77,7 @@ package:
       `.stages.txt` tables.
     consumes:
     - filetype: fwFnApi
+    - filetype: zuspecIRBundle
     - filetype: xlsSchedule
     with:
       pkg_name:

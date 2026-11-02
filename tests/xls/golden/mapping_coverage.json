@@ -1,0 +1,10 @@
+{
+ "gcd_binary8": {
+  "pct_crit_delay_attributed": 100.0,
+  "pct_ops_attributed": 100.0
+ },
+ "rle_enc8": {
+  "pct_crit_delay_attributed": 44.4,
+  "pct_ops_attributed": 62.5
+ }
+}

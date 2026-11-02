@@ -1,7 +1,9 @@
 """Stage-TLM ("V3") classes from an XLS pipeline schedule.
 
-`fw.hdl.xls.StageTLM` reads the `<module>.schedule.textproto` that
-`synth.xls.Codegen` writes (a PackageScheduleProto) and, for each function of
+`fw.hdl.xls.StageTLM` reads each block's schedule from its Zuspec IR bundle
+(`<module>.zir/`, written by `zuspec.xls.Overlay`: the `sched.*` and `timing.*`
+facts on the source's anchors) or, without one, from the
+`<module>.schedule.textproto` that `synth.xls.Codegen` writes. For each function of
 a function API (`fw.hdl.api.Functions`), emits a class whose `op` task
 computes the result at zero time, by calling the SV function itself, and
 then waits one `@(posedge clk)` per pipeline register: the input flop, one
@@ -10,7 +12,7 @@ per stage boundary and the output flop, as codegen builds the module.
 from __future__ import annotations
 
 import dataclasses as dc
-import re
+import os
 from typing import Dict, List
 
 from fw.hdl.fn_api import ApiFn, FnApi
@@ -31,26 +33,42 @@ class Schedule:
         return self.length + int(flop_inputs) + int(flop_outputs)
 
 
-_SCHED = re.compile(r'schedules\s*\{\s*key:\s*"([^"]+)"')
-
-
 def parse_schedules(text: str) -> Dict[str, Schedule]:
-    """The schedules of a PackageScheduleProto text file, by function name."""
-    out = {}
-    starts = [m for m in _SCHED.finditer(text)]
-    for i, m in enumerate(starts):
-        body = text[m.end():starts[i + 1].start() if i + 1 < len(starts) else len(text)]
-        stages: Dict[int, List[str]] = {}
-        for sm in re.finditer(r'stages\s*\{\s*stage:\s*(\d+)(.*?)(?=stages\s*\{|\Z)', body, re.S):
-            stages[int(sm.group(1))] = re.findall(r'node:\s*"([^"]+)"', sm.group(2))
-        length = re.search(r'\blength:\s*(\d+)', body)
-        period = re.search(r'\bmin_clock_period_ps:\s*(\d+)', body)
-        out[m.group(1)] = Schedule(
-            function=m.group(1),
-            length=int(length.group(1)) if length else len(stages),
-            min_clock_period_ps=int(period.group(1)) if period else 0,
-            stages=stages)
-    return out
+    """The schedules of a PackageScheduleProto text file, by function name.
+    (A thin wrapper over zuspec-be-xls's reader, which the overlay uses too.)"""
+    from zuspec.be.xls.read_schedule import parse_schedules as read
+    return {name: Schedule(function=s.function, length=s.length or len(s.stages),
+                           min_clock_period_ps=s.min_clock_period_ps or 0, stages=s.stages)
+            for name, s in read(text).items()}
+
+
+def schedule_from_bundle(path: str) -> Schedule:
+    """The schedule of the block in IR bundle *path* (`<module>.zir/`), read
+    through a ResultStore from the newest overlay that schedules it
+    (phase0-plan.md D4). Nodes per stage are the XLS nodes the overlay put on
+    anchors (parameters on the block's), in the schedule's order: the same
+    Schedule as `parse_schedules` gives, so the same SV (exit criterion 5)."""
+    from zuspec.ir.core.results import load_store
+    store = load_store(path)
+    module = os.path.basename(os.path.normpath(path))
+    if module.endswith(".zir"):
+        module = module[:-4]
+    o = next((o for o in reversed(store.overlays()) if "sched.stage_count" in o.kinds()),
+             None)
+    if o is None:
+        raise ValueError(f"{path}: no overlay with a schedule (sched.stage_count)")
+    length = o.column("sched.stage_count")["value"][0]
+    period = o.column("timing.clock_period_ps")["value"][0] \
+        if "timing.clock_period_ps" in o.kinds() else 0
+    stages: Dict[int, List[str]] = {k: [] for k in range(length)}
+    if "xls.node_stage" in o.kinds():
+        # One entry per node (a merged node sits on several anchors), in the
+        # schedule's own order.
+        nodes = {v["node"]: v for v in o.column("xls.node_stage")["value"]}
+        for v in sorted(nodes.values(), key=lambda v: v.get("order", 0)):
+            stages.setdefault(v["stage"], []).append(v["node"])
+    return Schedule(function=module, length=length, min_clock_period_ps=period or 0,
+                    stages=stages)
 
 
 def stage_table(s: Schedule) -> str:

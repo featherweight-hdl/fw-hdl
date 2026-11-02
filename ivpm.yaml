@@ -32,6 +32,12 @@ package:
       url: https://github.com/edapack/nextpnr-bin
       src: gh-rls
       cache: true
+    # Google XLS (xlsynth) tools: opt_main, codegen_main, block_to_verilog_main, ...
+    # Found by dv-flow-libsynth and zuspec-be-xls on PATH (phase0-plan.md E1).
+    - name: xlsynth
+      url: https://github.com/edapack/xlsynth-bin
+      src: gh-rls
+      cache: true
     - name: dv-flow-mgr
       url: https://github.com/dv-flow/dv-flow-mgr.git
     - name: dv-flow-libhdlsim

@@ -238,15 +238,22 @@ def xls_binding_sv(api: CompApiSet, sigs: Dict[str, object], period: int = 10,
                    reset_cycles: int = 4, timeout_cycles: int = 100000) -> str:
     """*sigs*: module name -> zuspec BlockSignature (from the XLS signature)."""
     n = api.name
-    o = [_HEADER.format(task="fw.hdl.api.XlsBinding"),
-         "// Level `rtl` (and `gates`): the XLS modules answer. Each input channel",
-         "// presents queued values with its valid; each output channel is always",
-         "// ready and queues what it receives. Port names come from the signatures.",
-         ""]
+    o_hdr = [_HEADER.format(task="fw.hdl.api.XlsBinding"),
+             "// Level `rtl` (and `gates`): the XLS modules answer. Each input channel",
+             "// presents queued values with its valid; each output channel is always",
+             "// ready and queues what it receives. Port names come from the signatures.",
+             ""]
+    # The queues live in a class object, not in the interface: a task called
+    # through a virtual interface that writes a queue member of the interface
+    # needs a "virtual interface trigger" on it, which Verilator does not support
+    # for queues.
+    st = [f"package {n}_xtor_state_pkg;"]
+    o = o_if = []   # the interfaces; emitted after the state package
     for c in api.components:
         sig = sigs[c.module]
         o.append(f"interface {c.module}_xtor_if (input bit clk, input bit rst);")
         chans = {ch.name: ch for ch in sig.channels}
+        st.append(f"    class {c.module}_state;")
         for p in c.ports:
             ch = chans.get(p.name)
             if ch is None:
@@ -257,8 +264,10 @@ def xls_binding_sv(api: CompApiSet, sigs: Dict[str, object], period: int = 10,
                 raise ValueError(f"{c.module}.{p.name}: {w} bits in XLS, {p.bits} in SV")
             o += [f"    bit [{w - 1}:0] {ch.ports['data']};",
                   f"    bit {ch.ports['valid']};",
-                  f"    bit {ch.ports['ready']};",
-                  f"    bit [{w - 1}:0] q_{p.name}[$];"]
+                  f"    bit {ch.ports['ready']};"]
+            st.append(f"        bit [{w - 1}:0] q_{p.name}[$];")
+        st.append("    endclass")
+        o.append(f"    {n}_xtor_state_pkg::{c.module}_state st = new();")
         o += ["", "    always @(posedge clk) begin", "        if (rst) begin"]
         for p in c.ports:
             ch = chans[p.name]
@@ -272,27 +281,29 @@ def xls_binding_sv(api: CompApiSet, sigs: Dict[str, object], period: int = 10,
             d, v, r = ch.ports["data"], ch.ports["valid"], ch.ports["ready"]
             if p.role == "put":
                 o += [f"            // {p.name}: drop the value just taken; present the next.",
-                      f"            if ({v} && {r}) void'(q_{p.name}.pop_front());",
-                      f"            if (q_{p.name}.size() != 0) begin",
+                      f"            if ({v} && {r}) void'(st.q_{p.name}.pop_front());",
+                      f"            if (st.q_{p.name}.size() != 0) begin",
                       f"                {v} <= 1'b1;",
-                      f"                {d} <= q_{p.name}[0];",
+                      f"                {d} <= st.q_{p.name}[0];",
                       "            end else begin",
                       f"                {v} <= 1'b0;",
                       "            end"]
             else:
                 o += [f"            // {p.name}: always ready; keep what arrives.",
                       f"            {r} <= 1'b1;",
-                      f"            if ({v} && {r}) q_{p.name}.push_back({d});"]
+                      f"            if ({v} && {r}) st.q_{p.name}.push_back({d});"]
         o += ["        end", "    end", ""]
         for p in c.ports:
             if p.role == "put":
                 o += [f"    task automatic {p.name}_put(input bit [{p.bits - 1}:0] v);",
-                      f"        q_{p.name}.push_back(v);", "    endtask"]
+                      f"        st.q_{p.name}.push_back(v);", "    endtask"]
             else:
                 o += [f"    task automatic {p.name}_get(output bit [{p.bits - 1}:0] v);",
-                      f"        while (q_{p.name}.size() == 0) @(posedge clk);",
-                      f"        v = q_{p.name}.pop_front();", "    endtask"]
+                      f"        while (st.q_{p.name}.size() == 0) @(posedge clk);",
+                      f"        v = st.q_{p.name}.pop_front();", "    endtask"]
         o += ["endinterface", ""]
+
+    o = o_hdr + st + ["endpackage", ""] + o_if
 
     o += [f"package {n}_xls_pkg;"]
     o += [f"    import {p}::*;" for p in api.imports()]

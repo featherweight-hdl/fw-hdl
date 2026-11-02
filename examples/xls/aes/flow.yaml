@@ -44,6 +44,11 @@ fragment:
       input_valid_signal: input_valid
       output_valid_signal: output_valid
 
+  - name: zir
+    desc: XLS's schedule, timing and interface as a Zuspec overlay on the SV anchors (<module>.zir/)
+    uses: zuspec.xls.Overlay
+    needs: [ir, rtl]
+
   # ---- The DSLX path --------------------------------------------------
   - name: dslx-test
     uses: synth.xls.DslxTest
