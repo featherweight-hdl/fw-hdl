@@ -23,6 +23,7 @@ package fw_hdl_pkg;
 
     `include "fw_elaboratable.svh"
     `include "fw_runnable.svh"
+    `include "fw_steppable.svh"
     // Deferred-binding wrappers and the clock-domain API must precede
     // fw_component, which now holds an fw_port #(fw_clock_domain_if) `clock`.
     `include "fw_if_base.svh"

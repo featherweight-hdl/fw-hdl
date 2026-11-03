@@ -1,5 +1,5 @@
-"""RQ-F3: channel kinds. Each kind round-trips class model -> RTL with the same
-stream (the RQ-V4 comparator); a valid-only top output has no ready pin; a
+"""Channel kinds. Each kind round-trips class model -> RTL with the same
+stream (fw.hdl.verif.canon); a valid-only top output has no ready pin; a
 port bound to an end of another kind is rejected at integration.
 """
 import json

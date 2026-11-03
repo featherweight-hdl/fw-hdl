@@ -1,4 +1,4 @@
-// The W2 exit design (see the plan):
+// A composition test design:
 //
 //   exit_top #(NVC): in -> lk[0] -> c[0] -> ... -> lk[NVC-1] -> c[NVC-1] -> e -> x
 //                       -> ka -> out;  cfg -> rc =k,p=> ka
@@ -7,7 +7,7 @@
 //                       -> out;  rx -> cr (fw_channel, 2) -> tx
 //
 // v holds credits + 1 values. In XLS RTL a stage's sends complete one by one
-// and its receive completes last (docs/research/xls-facts.md), so while rx's
+// and its receive completes last (tests/xls/test_xls_facts.py), so while rx's
 // out is backpressured its credit can leave one value before that value
 // leaves v. A receiver whose output never backpressures needs only credits.
 //

@@ -1,4 +1,4 @@
-"""RQ-R2: xls_ppa.csv names the source line that dominates the critical path.
+"""xls_ppa.csv names the source line that dominates the critical path.
 
 asap7, not unit: under the unit model every node costs 1 ps, so a receive and
 its tuple_index bookkeeping can outweigh real logic."""

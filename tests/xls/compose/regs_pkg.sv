@@ -1,4 +1,4 @@
-// A register-block child (RQ-F2 native, Q7 (a)):
+// A register-block child (native):
 //
 //   rtop: cfg -> rc (rk_rc: a register block, writes in) =k,p=> ka -> out
 //                                 in -> ka (kadd: out = (in + k) ^ p.lo) -> out

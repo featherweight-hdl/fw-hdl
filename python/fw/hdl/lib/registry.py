@@ -1,4 +1,4 @@
-"""fw-hdl's recognized classes (RQ-F4), as name-keyed entries in the zuspec
+"""fw-hdl's recognized classes, as name-keyed entries in the zuspec
 lowering registry (``zuspec.ir.core.LoweringRegistry.register_external``).
 
 A leaf child whose generic class has an entry is not mapped from its body:

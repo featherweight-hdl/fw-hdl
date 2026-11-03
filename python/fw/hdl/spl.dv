@@ -84,7 +84,7 @@ package:
         each block's module, then the top (fileset param `top`);
       * `blockSignature` -- the top's own signature, so this top can be a
         block of a larger design.
-      **Boundary checks** (RQ-B3), on each block's Verilog (found through
+      **Boundary checks**, on each block's Verilog (found through
       its signature's `sources`):
 
       * no combinational loop through depth-0 channels;

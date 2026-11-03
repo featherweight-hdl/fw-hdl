@@ -163,7 +163,7 @@ STRUCT_CASES = [
     ("wrong_instance_name", "", '            ch = new("fifo", this);  // HERE', GOOD_CONNECT,
      r"must be constructed as new\(\"ch\", this\)"),
     ("not_constructed", "", "", GOOD_CONNECT, r"does not construct \['ch'\]"),
-    # RQ-F1: build() is elaborated, so a loop is fine; building one field twice is not.
+    # build() is elaborated, so a loop is fine; building one field twice is not.
     ("loop_in_build", "", '            for (int i = 0; i < 1; i++) ch = new("ch", this);',
      GOOD_CONNECT, None),
     ("constructed_twice", "", GOOD_BUILD + '\n            a = new("a", this);  // HERE',

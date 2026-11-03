@@ -1,4 +1,4 @@
-"""RQ-T0: the hand-written XLS IR templates (tests/xls/templates/) parse, generate
+"""The hand-written XLS IR templates (tests/xls/templates/) parse, generate
 RTL, and keep their contracts on Verilator.
 
   credit_tx   every value arrives, in order; the receiver never holds more

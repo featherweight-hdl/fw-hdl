@@ -1,4 +1,4 @@
-"""RQ-V4: canonical comparison of two views under a contract."""
+"""Canonical comparison of two views under a contract."""
 import json
 
 import pytest

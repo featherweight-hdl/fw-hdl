@@ -92,7 +92,7 @@ def _yosys():
 @pytest.mark.parametrize("depth", [0, 1, 2, 3, 16])
 def test_fw_rv_fifo_yosys_elaborates(workdir, depth):
     """Yosys's own SV reader takes every DEPTH, including the DEPTH=0 wire
-    (no parameter-width casts, RQ-B4a)."""
+    (no parameter-width casts)."""
     import subprocess
     yosys = _yosys()
     if yosys is None:

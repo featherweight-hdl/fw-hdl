@@ -1,4 +1,4 @@
-"""RQ-F8: latency contracts in the knob file.
+"""Latency contracts in the knob file.
 
 nb_top: in -> a(nb_inc) -> ch(1) -> p(nb_poll) -> ch2(2) -> b(nb_inc) -> out.
 The channels alone cost 2 cycles; each block costs its registers plus

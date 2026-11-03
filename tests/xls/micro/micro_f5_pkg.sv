@@ -1,4 +1,4 @@
-// RQ-F5 proc micro-tests: several operations on one channel per activation,
+// Proc micro-tests: several operations on one channel per activation,
 // channel operations in constant-bound loops, state arrays written several
 // times per activation, and state used only under a guard.
 `include "fw_std_macros.svh"

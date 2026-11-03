@@ -1,12 +1,15 @@
 """The response-tracker reference design (examples/resp_tracker), stage 1.
 
-One source, many schedules (W1 exit, RQ-S2/S3):
+One source, many schedules:
 * each knob set k0-k2 builds with fw-hdl tasks only, the boundary checks at
   error severity;
 * the RTL of every knob set and the class model give the same stream, as the
-  in-order contract compares them (RQ-V2, RQ-V4), and match the reference;
+  in-order contract compares them, and match the reference;
 * the generated latency table equals the latency measured on the RTL;
 * k3's contract is rejected before codegen.
+
+Both forms of the source give these results: rt_pkg.sv (run() processes) and
+rt_step_pkg.sv (cycle steps).
 """
 import json
 import os
@@ -31,8 +34,14 @@ DFM = REPO / "packages" / "python" / "bin" / "dfm"
 needs = pytest.mark.skipif(not DFM.exists() or codegen_main() is None or opt_main() is None,
                            reason="needs dfm, opt_main and codegen_main")
 
-#: First-value latency per knob set (examples/resp_tracker/knobs).
-EXPECTED_LATENCY = {"k0": 1, "k1": 3, "k2": 2}
+#: First-value latency per source form and knob set (examples/resp_tracker/knobs).
+#: The step form runs k1 and k2's schedules with a two-deep queue (k1s, k2s):
+#: a step never waits, so its queue must hold what it sends every cycle.
+EXPECTED_LATENCY = {
+    "rt_pkg": {"k0": 1, "k1": 3, "k2": 2},
+    "rt_step_pkg": {"k0": 1, "k1s": 3, "k2s": 3},
+}
+CASES = [(f, k) for f, ks in EXPECTED_LATENCY.items() for k in ks]
 N = 200
 
 
@@ -57,16 +66,21 @@ def trace(addrs, outs):
 
 @pytest.fixture(scope="module")
 def built(tmp_path_factory):
-    """Every knob set built once, from a copy of the example."""
+    """``built(form, kset)``: that knob set built once, from a copy of the
+    example: (directory, return code, log)."""
     root = tmp_path_factory.mktemp("rt")
-    out = {}
-    for kset in ("k0", "k1", "k2", "k3"):
-        d = root / kset
-        shutil.copytree(EXAMPLE, d, ignore=shutil.ignore_patterns("rundir"))
-        r = subprocess.run([str(DFM), "run", "all", "-D", f"kset={kset}"], cwd=d,
-                           capture_output=True, text=True, env=dict(os.environ))
-        out[kset] = (d, r.returncode, " ".join((r.stdout + r.stderr).split()))
-    return out
+    done = {}
+
+    def get(form, kset):
+        if (form, kset) not in done:
+            d = root / form / kset
+            shutil.copytree(EXAMPLE, d, ignore=shutil.ignore_patterns("rundir"))
+            r = subprocess.run([str(DFM), "run", "all", "-D", f"kset={kset}",
+                                "-D", f"form={form}"],
+                               cwd=d, capture_output=True, text=True, env=dict(os.environ))
+            done[form, kset] = (d, r.returncode, " ".join((r.stdout + r.stderr).split()))
+        return done[form, kset]
+    return get
 
 
 def _outputs(rd: Path, task: str):
@@ -106,9 +120,9 @@ endmodule
 
 @needs
 @pytest.mark.verilator
-@pytest.mark.parametrize("kset", ["k0", "k1", "k2"])
-def test_knob_set_builds_and_matches(built, tmp_path, kset):
-    d, rc, log = built[kset]
+@pytest.mark.parametrize("form,kset", CASES, ids=[f"{f}-{k}" for f, k in CASES])
+def test_knob_set_builds_and_matches(built, tmp_path, form, kset):
+    d, rc, log = built(form, kset)
     assert rc == 0, log[-3000:]
     rd = d / "rundir"
     rtl = _files(rd, "resp_tracker.top", "systemVerilogSource")
@@ -116,7 +130,7 @@ def test_knob_set_builds_and_matches(built, tmp_path, kset):
     sig = ir.load_signature(str(sig_path))
 
     # RTL view, randomly throttled
-    addrs = stimulus(seed=int(kset[1:]) + 1)
+    addrs = stimulus(seed=int(kset[1]) + 1)
     tb = tmp_path / "xh_rtl_tb.sv"
     tb.write_text(rtl_testbench(sig, {"req": addrs}, seed=3))
     out = run_verilator(rtl + [tb], "xh_rtl_tb", tmp_path / "rtl", with_lib=False,
@@ -125,10 +139,11 @@ def test_knob_set_builds_and_matches(built, tmp_path, kset):
 
     # class-model view, same stimulus
     pkg = _files(rd, "resp_tracker.knobs", "systemVerilogSource")
-    files = [str(p) for p in pkg] + [str(d / "src" / "rt_pkg.sv")]
+    files = [str(p) for p in pkg] + [str(d / "src" / f"{form}.sv")]
     comp = sv_to_structure(files, "rt_top").component
     mtb = tmp_path / "xh_proc_tb.sv"
-    mtb.write_text(proc_testbench(["rt_pkg"], "rt_top", comp, {"req": addrs}))
+    mtb.write_text(proc_testbench([form], "rt_top", comp, {"req": addrs},
+                                  clocked=form == "rt_step_pkg"))
     mout = run_verilator(files + [mtb], "xh_proc_tb", tmp_path / "model")
     model_outs = [int(l.split()[3], 16) for l in mout if l.startswith("O rsp ")]
 
@@ -144,11 +159,39 @@ def test_knob_set_builds_and_matches(built, tmp_path, kset):
     ltb.write_text(LAT_TB)
     lout = run_verilator(rtl + [ltb], "xh_lat_tb", tmp_path / "lat", with_lib=False)
     (measured,) = [int(l.split()[1]) for l in lout if l.startswith("L ")]
-    assert path["cycles"] == measured == EXPECTED_LATENCY[kset]
+    assert path["cycles"] == measured == EXPECTED_LATENCY[form][kset]
 
 
 @needs
-def test_unmeetable_contract_is_rejected_before_codegen(built):
-    d, rc, log = built["k3"]
+@pytest.mark.verilator
+def test_step_form_needs_a_deep_enough_queue(built, tmp_path):
+    """k1's one-deep queue under the step form: a value is sent every cycle
+    and none can wait, so both views report the same credit violation."""
+    d, rc, log = built("rt_step_pkg", "k1")
+    assert rc == 0, log[-3000:]
+    rd = d / "rundir"
+    rtl = _files(rd, "resp_tracker.top", "systemVerilogSource")
+    (sig_path,) = _files(rd, "resp_tracker.top", "blockSignature")
+    addrs = stimulus(seed=5)
+    tb = tmp_path / "xh_rtl_tb.sv"
+    tb.write_text(rtl_testbench(ir.load_signature(str(sig_path)), {"req": addrs}, seed=3,
+                                throttle=1000))
+    out = run_verilator(rtl + [tb], "xh_rtl_tb", tmp_path / "rtl", with_lib=False,
+                        allow_stop=True, extra=["--assert", "+define+ASSERT_ON"])
+    assert any("offered while full" in l for l in out), "\n".join(out[-10:])
+    pkg = _files(rd, "resp_tracker.knobs", "systemVerilogSource")
+    files = [str(p) for p in pkg] + [str(d / "src" / "rt_step_pkg.sv")]
+    comp = sv_to_structure(files, "rt_top").component
+    mtb = tmp_path / "xh_proc_tb.sv"
+    mtb.write_text(proc_testbench(["rt_step_pkg"], "rt_top", comp, {"req": addrs},
+                                  clocked=True))
+    mout = run_verilator(files + [mtb], "xh_proc_tb", tmp_path / "model", allow_stop=True)
+    assert any("credit violation" in l for l in mout), "\n".join(mout[-10:])
+
+
+@needs
+@pytest.mark.parametrize("form", list(EXPECTED_LATENCY))
+def test_unmeetable_contract_is_rejected_before_codegen(built, form):
+    d, rc, log = built(form, "k3")
     assert rc != 0 and "cannot be met" in log, log[-3000:]
     assert not list((d / "rundir").glob("resp_tracker.rtl/*.sv"))

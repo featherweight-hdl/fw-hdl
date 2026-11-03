@@ -1,4 +1,4 @@
-// fw_order_pkg: requirement contracts as executable checkers (RQ-V1).
+// fw_order_pkg: requirement contracts as executable checkers.
 //
 // Function is defined by contracts at observable points, not by cycle
 // behaviour: two runs are the same function when their streams are equal up to

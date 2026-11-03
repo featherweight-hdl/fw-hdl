@@ -61,13 +61,13 @@ class Partition:
     #: class spelling -> its static-subset IR, one per class (not per instance)
     blocks: Dict[str, ir.DataTypeComponent]
     shell: Shell
-    #: group name -> its shell entry's ``group`` (RQ-F7: one multi-proc block)
+    #: group name -> its shell entry's ``group`` (one multi-proc block)
     groups: Dict[str, dict] = dc.field(default_factory=dict)
     #: block spelling -> what a knob file may call it (see :func:`_names`)
     names: Dict[str, List[str]] = dc.field(default_factory=dict)
     #: class spelling -> a native child (``native.RegChild``), one per class
     natives: Dict[str, object] = dc.field(default_factory=dict)
-    #: class spelling -> XLS IR text, for a class the registry lowers (RQ-F4);
+    #: class spelling -> XLS IR text, for a class the registry lowers;
     #: its ``blocks`` entry then holds only its ports
     texts: Dict[str, str] = dc.field(default_factory=dict)
 
@@ -241,7 +241,7 @@ def partition(files: Sequence[str], top: str, xls: Sequence[str],
     texts: Dict[str, str] = {}
     for c in leaves:
         # An extern assignment wins (RTL supplied for a library class, say);
-        # then the registry (RQ-F4); then the static subset.
+        # then the registry; then the static subset.
         ext = next((extern[n] for n in _names(c) if n in extern), None)
         if ext is not None:
             engines[c.spelling] = {"engine": "extern", "extern": dict(ext)}
@@ -293,7 +293,7 @@ def partition(files: Sequence[str], top: str, xls: Sequence[str],
 
 def _apply_groups(sh: Shell, groups: Dict[str, List[str]], names: Dict[str, List[str]],
                   done: Dict[str, dict]) -> Dict[str, dict]:
-    """Rewrite *sh* so each group's members are one child (RQ-F7). A channel
+    """Rewrite *sh* so each group's members are one child. A channel
     with both ends on members goes inside; every other member port becomes a
     port of the group named ``<instance>_<port>``."""
     out: Dict[str, dict] = {}
@@ -365,7 +365,7 @@ class Block:
 
 
 def xls_group_block(part: Partition, name: str, stages: int = 1) -> Block:
-    """A group's multi-proc package -> one module (RQ-F7)."""
+    """A group's multi-proc package -> one module."""
     from zuspec.be.xls.multi_proc import MULTI_PROC_FLAGS
     from zuspec.be.xls.signature import CodegenOptions, actual_signature, predict_signature
     from zuspec.be.xls.testing.xlstools import run_codegen

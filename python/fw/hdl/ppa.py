@@ -1,4 +1,4 @@
-"""RQ-R2: critical-path attribution per block (``xls_ppa.csv``).
+"""Critical-path attribution per block (``xls_ppa.csv``).
 
 For each block: its stage count, initiation interval, the critical path's
 delay, and the *dominant source line* -- the line whose nodes contribute the

@@ -1,4 +1,4 @@
-// RQ-V1 / RQ-V6: fw_order_pkg on clean streams, and each violation kind
+// fw_order_pkg on clean streams, and each violation kind
 // injected once and caught exactly once.
 `include "svunit_defines.svh"
 

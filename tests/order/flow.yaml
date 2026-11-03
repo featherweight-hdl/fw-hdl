@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
-# RQ-V1 / RQ-V6: the contract library (src/std/order/fw_order_pkg.sv) on SVUnit.
+# The contract library (src/std/order/fw_order_pkg.sv) on SVUnit.
 fragment:
   name: order
 

@@ -1,4 +1,4 @@
-"""RQ-B2: per-block codegen from a knob file, through dv-flow only.
+"""Per-block codegen from a knob file, through dv-flow only.
 
 fw.hdl.spl.Partition -> xlsIR per block; fw.hdl.knobs.Resolve -> the
 per-module codegen options; one synth.xls.Codegen task builds both blocks,
@@ -90,7 +90,7 @@ package:
 
 @needs
 def test_delay_scale_reschedules(tmp_path):
-    """RQ-Dcal: delay.scale multiplies the period handed to the scheduler, so
+    """delay.scale multiplies the period handed to the scheduler, so
     a pessimistic delay model (scale > 1) takes fewer stages at one target."""
     stages = {}
     for scale in (1.0, 3.0):

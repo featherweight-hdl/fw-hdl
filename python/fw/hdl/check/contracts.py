@@ -1,4 +1,4 @@
-"""RQ-F8: latency contracts, checked before and after codegen.
+"""Latency contracts, checked before and after codegen.
 
 A contract sits in the knob file::
 

@@ -1,4 +1,4 @@
-"""RQ-F1: structural components are elaborated (fe/elab/hier.py), so build()
+"""Structural components are elaborated (fe/elab/hier.py), so build()
 and connect() may loop, branch on parameters, use arrays and configure children
 with parameter objects. Each case is checked as structure, then as RTL (one
 XLS block per distinct child, integrated) against a reference.

@@ -1,4 +1,4 @@
-"""RQ-F2 native: a register block as a child (Q7 (a), ``fw_reg_component``).
+"""A register block as a child (``fw_reg_component``).
 
 The child takes software writes on a stream and drives level channels from
 its registers; in RTL it is the generated regblock core under a wrapper. The

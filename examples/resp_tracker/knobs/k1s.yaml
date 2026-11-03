@@ -1,0 +1,5 @@
+# k1 for the cycle-step source (rt_step_pkg.sv): the same schedule with a
+# two-deep queue. A step never waits, so a queue it fills every cycle needs
+# two entries; k1's one-deep queue is a credit violation in both views.
+base: k1.yaml
+rtl: {RT_Q_DEPTH: 2}

@@ -60,6 +60,41 @@ _CMP = {
 }
 
 
+def _implements(cls, name: str) -> bool:
+    """Does *cls*, or a class it derives from, implement interface class *name*?"""
+    ct = cls
+    while ct is not None and getattr(ct, "kind", None) == ast.SymbolKind.ClassType:
+        for i in getattr(ct, "implementedInterfaces", None) or []:
+            i = getattr(i, "canonicalType", i)
+            g = getattr(i, "genericClass", None)
+            if (g.name if g is not None else getattr(i, "name", None)) == name:
+                return True
+        b = ct.baseClass
+        ct = b.canonicalType if b is not None else None
+    return False
+
+
+def find_behavior(cls) -> Tuple[Optional[str], Optional[object]]:
+    """The behavior *cls* declares itself: ``("run", task)``, ``("step",
+    function)`` for an ``fw_steppable``, or ``(None, None)`` for a structural
+    class. Raises ValueError (with the second subroutine) when it has both."""
+    run = step = None
+    for m in cls:
+        if m.kind != ast.SymbolKind.Subroutine or m.body is None:
+            continue
+        if m.name == "run":
+            run = m
+        elif m.name == "step" and _implements(cls, "fw_steppable"):
+            step = m
+    if run is not None and step is not None:
+        raise ValueError(step)
+    if run is not None:
+        return "run", run
+    if step is not None:
+        return "step", step
+    return None, None
+
+
 class StaticMapper:
     """Maps one runnable component class (and the functions it calls)."""
 
@@ -605,6 +640,9 @@ class StaticMapper:
         if k == SK.Conditional:
             if len(s.conditions) != 1 or getattr(s.conditions[0], "pattern", None) is not None:
                 raise self.fail("`if` with a pattern or `&&&` is not supported", s)
+            polled = self.polled_if(s)
+            if polled is not None:
+                return polled
             return [ir.StmtIf(test=self.expr(s.conditions[0].expr), body=self.body(s.ifTrue),
                               orelse=self.body(s.ifFalse) if s.ifFalse is not None else [])]
         if k == SK.Case:
@@ -710,6 +748,39 @@ class StaticMapper:
         ref = ir.ExprRefField(base=ir.TypeExprRefSelf(), index=idx)
         return ir.ExprAwait(value=ir.ExprCall(func=ir.ExprAttribute(value=ref, attr="try_get"),
                                               args=[x]))
+
+    def polled_if(self, s) -> Optional[List[ir.Stmt]]:
+        """``if (p.t.try_get(x)) ...`` and, without an else, ``if (a &&
+        p.t.try_get(x)) ...``: the poll goes into a temporary first, and in
+        the second form only when ``a`` holds (SV's short-circuit order).
+        None for any other condition."""
+        c = s.conditions[0].expr
+        guard = None
+        nb = self.try_get(c)
+        if nb is None and c.kind == EK.BinaryOp and c.op == BO.LogicalAnd:
+            nb = self.try_get(c.right)
+            if nb is not None:
+                if s.ifFalse is not None:
+                    raise self.fail("`if (a && p.t.try_get(x)) ... else`: write the poll in "
+                                    "its own `if` inside `if (a)`", s)
+                guard = self.expr(c.left)
+        if nb is None:
+            return None
+        n, i = "ok", 0
+        while n in self.local_names:
+            i += 1
+            n = f"ok__{i}"
+        self.local_names.add(n)
+        poll = [_synth(ir.StmtAnnAssign(target=ir.ExprRefLocal(name=n),
+                                        annotation=ir.ExprConstant(value="bit"),
+                                        ir_type=_int_dt(1, False), value=None,
+                                        loc=self.loc(c)), "poll"),
+                ir.StmtAssign(targets=[ir.ExprRefLocal(name=n)], value=nb, loc=self.loc(c)),
+                ir.StmtIf(test=ir.ExprRefLocal(name=n), body=self.body(s.ifTrue),
+                          orelse=self.body(s.ifFalse) if s.ifFalse is not None else [])]
+        if guard is None:
+            return poll
+        return [ir.StmtIf(test=guard, body=poll, orelse=[])]
 
     def call_stmt(self, e) -> List[ir.Stmt]:
         if e.isSystemCall:
@@ -903,7 +974,6 @@ class StaticMapper:
         self.param_values = dict(param_values or {})
         self.cls_name, self.cls_spelling = cls.name, spelling or cls.name
         fields: List[ir.Field] = []
-        run = None
         for m in cls:
             if m.kind == ast.SymbolKind.ClassProperty:
                 f = self.port_field(m)
@@ -915,14 +985,24 @@ class StaticMapper:
                         f.initial_value = self.expr(init)
                 self.fields[m.name] = len(fields)
                 fields.append(f)
-            elif m.kind == ast.SymbolKind.Subroutine and m.name == "run" and m.body is not None:
-                run = m
+        try:
+            kind, run = find_behavior(cls)
+        except ValueError as e:
+            raise self.fail(f"class {cls.name!r} has both run() and step(); a component is a "
+                            f"process (run) or a cycle step (step), not both", e.args[0]) from None
         if run is None:
-            raise self.fail(f"class {cls.name!r} has no run() task", cls)
+            raise self.fail(f"class {cls.name!r} has no run() task or step() function", cls)
         self.locals, self.local_names, self.params = {}, set(), {}
         self.ret_var, self.in_function = None, None
-        run_body = self.body(run.body)
-        run_fn = ir.Function(name="run", body=run_body, is_async=True, loc=self.loc(run))
+        if kind == "step":
+            # One step() is one activation: the body of an implicit forever.
+            # Its locals are declared inside it, so they are temporaries.
+            run_body = [ir.StmtWhile(test=_synth(ir.ExprConstant(value=True), "step"),
+                                     body=self.body(run.body))]
+        else:
+            run_body = self.body(run.body)
+        run_fn = ir.Function(name="run", body=run_body, is_async=True, loc=self.loc(run),
+                             metadata={"fw_step": True} if kind == "step" else {})
         while self._fn_queue:
             sub = self._fn_queue.pop(0)
             fn = self.map_function(sub)

@@ -1,0 +1,5 @@
+# k2 for the cycle-step source (rt_step_pkg.sv): the same skid registers with
+# a two-deep queue in place of k2's wire, which cannot join two steps (a
+# step's put is seen from the next edge). The queue adds one cycle.
+base: k2.yaml
+rtl: {RT_Q_DEPTH: 2}

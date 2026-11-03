@@ -1,4 +1,4 @@
-"""RQ-R1: the per-path latency table, from schedules and knobs.
+"""The per-path latency table, from schedules and knobs.
 
 The latency of a path, top input to top output, is the sum of its hops:
 
@@ -10,7 +10,7 @@ The latency of a path, top input to top output, is the sum of its hops:
   records the ``chan_interface`` flop kind the knobs set.
 * through a channel between blocks: 1 for a FIFO (``fw_rv_fifo``, depth >= 1:
   no bypass), 0 for depth 0 (a wire).
-* through a multi-proc block (RQ-F7): its members' hops and its in-package
+* through a multi-proc block: its members' hops and its in-package
   FIFOs, the same way (:class:`GroupTiming`).
 
 This is the first-value latency with every input valid and every output ready;
@@ -80,7 +80,7 @@ def block_timing(module: str, opt_ir: str, schedule: str, signature=None) -> Blo
 
 
 class GroupTiming:
-    """A multi-proc block (RQ-F7) seen from outside: the latency from one
+    """A multi-proc block seen from outside: the latency from one
     external port to another, through its members (each a :class:`BlockTiming`
     from its own proc's schedule) and the in-package FIFOs between them (1 for
     depth >= 1, 0 for a bypass wire). *entry* is the partition's ``group``

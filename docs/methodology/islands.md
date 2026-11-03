@@ -125,7 +125,7 @@ at a time, and its receive completes last. So if the receiver returns the credit
 the same activation as a send that can be backpressured, the credit can go out before
 the value has left the channel. That channel must hold **credits + 1** values. A
 receiver whose outputs never backpressure needs only the credits.
-(`docs/research/xls-facts.md`; `tests/xls/compose/exit_pkg.sv`.)
+(`tests/xls/test_xls_facts.py`; `tests/xls/compose/exit_pkg.sv`.)
 
 ## What counts as registered
 

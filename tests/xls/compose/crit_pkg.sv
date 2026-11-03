@@ -1,4 +1,4 @@
-// R2: a block whose critical path is the multiply chain on the CRIT line.
+// A block whose critical path is the multiply chain on the CRIT line.
 package crit_pkg;
     import fw_hdl_pkg::*;
     import fw_std_pkg::*;

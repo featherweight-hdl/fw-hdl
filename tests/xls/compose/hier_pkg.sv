@@ -1,4 +1,4 @@
-// RQ-F1: structural components whose build()/connect() are elaborated, not
+// Structural components whose build()/connect() are elaborated, not
 // read: a loop of children and channels, a child under an `if` on a class
 // parameter, and children configured by a parameter object.
 package hier_pkg;

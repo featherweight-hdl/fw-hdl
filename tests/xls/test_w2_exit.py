@@ -1,4 +1,4 @@
-"""W2 exit (schedulable-library-plan.md): a parameterized structural top with
+"""A composition test: a parameterized structural top with
 a loop of NVC credited links (credit sender -> valid-only channel -> receiver
 returning credits, each link a nested structural component), an extern child
 and a register-block child whose registers reach an XLS child as levels. It

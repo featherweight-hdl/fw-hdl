@@ -1,4 +1,4 @@
-"""RQ-R1: the generated latency table equals simulation, per knob set.
+"""The generated latency table equals simulation, per knob set.
 
 nb_top (tests/xls/compose/nb_pkg.sv): in -> a -> ch(1) -> p -> ch2(2) -> b -> out.
 Each knob set changes stages and channel registers; the table's in -> out
@@ -58,7 +58,7 @@ KNOB_SETS = {
 }
 
 # The knob sets really move the latency (and the register counts are as
-# docs/research/xls-facts.md says: flop/skid +1, zerolatency 0).
+# tests/xls/test_xls_facts.py says: flop/skid +1, zerolatency 0).
 EXPECTED = {"k0": 2, "k1": 4, "k2": 8, "k3": 4, "k4": 6}
 
 TB = """\

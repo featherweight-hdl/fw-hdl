@@ -1,4 +1,4 @@
-"""Knob files (RQ-B1): one source, many schedules.
+"""Knob files: one source, many schedules.
 
 A knob file decides what the source does not: where registers go, how deep
 buffers are, each block's schedule, and how storage is bound. It is YAML,
@@ -230,7 +230,7 @@ class Knobs:
 
     def scheduler_period_ps(self, block: str) -> Optional[int]:
         """The clock period handed to the scheduler: clock_period_ps times the
-        delay-model scale (RQ-Dcal)."""
+        delay-model scale."""
         p = self.block_options(block).get("clock_period_ps")
         if p is None:
             return None
@@ -302,7 +302,7 @@ class Knobs:
 
         For procs this is the only switch that works: codegen's
         ``--flop_inputs``/``--flop_outputs`` do not register a proc's channels
-        (docs/research/xls-facts.md); the kind goes on the IR's
+        (tests/xls/test_xls_facts.py); the kind goes on the IR's
         ``chan_interface``."""
         per = (self.get("xls", "chan_flop", default={}) or {})
         if f"{block}.{channel}" in per:
@@ -355,7 +355,7 @@ class Knobs:
                 if known and b not in known:
                     msgs.append(f"{self.where('island', 'groups', g)}: island.groups.{g}: "
                                 f"{b} is not in design.xls")
-            # One stages/II setting per multi-proc package (docs/research/xls-facts.md).
+            # One stages/II setting per multi-proc package (tests/xls/test_xls_facts.py).
             sched = {b: tuple(self.block_options(b).get(k) for k in
                               ("pipeline_stages", "clock_period_ps", "worst_case_throughput"))
                      for b in bs}

@@ -1,4 +1,4 @@
-// Recognized library classes (RQ-F4) as children:
+// Recognized library classes as children:
 //
 //   ctop: in -> tx (fw_credit_tx #(bit [7:0], 2), valid-only out) -> v
 //            (fw_valid_channel, 3) -> rx (crx: ^ 8'h3c, returns a credit) -> out;

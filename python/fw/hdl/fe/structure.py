@@ -27,7 +27,7 @@ and whose ``bind_map`` holds one ``Bind(lhs=<child port>, rhs=<provider>)`` per
 ``get_ex`` / ``get_nb_ex`` (the last for a polling ``fw_get_nb_if`` port; a
 channel has exactly one consumer end).
 
-``build()`` and ``connect()`` are elaborated, not read (RQ-F1): they run in
+``build()`` and ``connect()`` are elaborated, not read: they run in
 the path-D interpreter (:mod:`.elab.hier`), so loops, ``if`` on parameters,
 arrays of children, ports and channels (``x[i]``, RTL name ``x_i``) and
 ``fw_component_param`` objects all work. What is checked is meaning, at the SV
@@ -109,11 +109,16 @@ class StructureMapper(StaticMapper):
         from .elab.interp import ElabError
         self.fields, self.port_dirs = {}, {}
         self.cls_name, self.cls_spelling = cls.name, spelling or cls.name
-        run = next((m for m in cls if m.kind == ast.SymbolKind.Subroutine
-                    and m.name == "run" and m.body is not None), None)
+        from .static_mapper import find_behavior
+        try:
+            kind, run = find_behavior(cls)
+        except ValueError as e:
+            kind, run = "step", e.args[0]
         if run is not None:
-            raise self.fail(f"class {cls.name!r} has children and a run() task; a component is "
-                            f"either structural (build/connect) or a process (run), not both", run)
+            what = "a run() task" if kind == "run" else "a step()"
+            raise self.fail(f"class {cls.name!r} has children and {what}; a component is "
+                            f"either structural (build/connect) or a process (run, step), "
+                            f"not both", run)
         try:
             node = elaborate_tree(cls.compilation, cls, self.cls_spelling)
         except HierError as e:

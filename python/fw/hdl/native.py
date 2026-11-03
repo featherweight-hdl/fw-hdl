@@ -1,4 +1,4 @@
-"""Native children: blocks fw-hdl emits itself, without XLS (RQ-F2 ``native``).
+"""Native children: blocks fw-hdl emits itself, without XLS (``native``).
 
 The one native kind so far is a register block as a child, an
 ``fw_reg_component #(BLK, W, AW)`` (``src/std/fw_reg_component.svh``):

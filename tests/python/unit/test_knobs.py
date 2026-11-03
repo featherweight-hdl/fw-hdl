@@ -1,4 +1,4 @@
-"""RQ-B1: knob files -- merge, origins, schema, codegen flags, SV package."""
+"""Knob files -- merge, origins, schema, codegen flags, SV package."""
 import json
 import subprocess
 import sys

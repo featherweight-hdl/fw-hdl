@@ -1,4 +1,4 @@
-"""RQ-B3: boundary checks -- one negative per rule, plus the passing forms."""
+"""Boundary checks -- one negative per rule, plus the passing forms."""
 import types
 from pathlib import Path
 

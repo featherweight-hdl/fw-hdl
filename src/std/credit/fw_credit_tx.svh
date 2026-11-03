@@ -1,5 +1,5 @@
 
-// fw_credit_tx -- a credit-gated sender (first cut of RQ-L2: one VC, no pool).
+// fw_credit_tx -- a credit-gated sender (one VC, no pool).
 //
 //   in   values to send (a stream);
 //   cr   credit returns, one bit per credit (a stream);

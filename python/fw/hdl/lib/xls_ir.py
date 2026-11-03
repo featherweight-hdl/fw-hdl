@@ -1,7 +1,7 @@
-"""The XLS IR shapes the library classes lower to, written by hand (RQ-T0).
+"""The XLS IR shapes the library classes lower to, written by hand.
 
 Each function returns IR text for xlsynth (proc-scoped channels). They are the
-lowerings of the recognized library classes (RQ-F4, :mod:`.registry`), and
+lowerings of the recognized library classes (:mod:`.registry`), and
 their facts are checked by tests/xls/test_ir_templates.py.
 
   credit_tx   credit-gated sender: a non-blocking receive whose predicate is

@@ -1,4 +1,4 @@
-// RQ-F3: the three channel kinds.
+// The three channel kinds.
 //
 //   vtop: in -> a (vinc: out = in + 1, valid-only out) -> v (fw_valid_channel, 2)
 //            -> b (vmix: out = in ^ 8'h5a, valid-only out) -> out (valid-only)

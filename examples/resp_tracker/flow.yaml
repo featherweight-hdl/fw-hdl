@@ -2,6 +2,7 @@
 # The response-tracker reference design: one source, many schedules.
 #
 #   dfm run all -D kset=k1
+#   dfm run all -D kset=k1 -D form=rt_step_pkg     (the cycle-step form)
 #
 # builds knob set knobs/<kset>.yaml with fw-hdl tasks only: resolve the knobs,
 # partition, check the latency contracts (before any XLS tool runs), generate
@@ -14,6 +15,10 @@ package:
     kset:
       type: str
       value: k0
+    form:
+      type: str
+      value: rt_pkg
+      doc: The source -- rt_pkg (run() processes) or rt_step_pkg (cycle steps).
 
   tasks:
   - name: knob-file
@@ -25,7 +30,7 @@ package:
   - name: src
     uses: std.FileSet
     needs: [knobs]
-    with: {type: systemVerilogSource, base: src, include: [rt_pkg.sv]}
+    with: {type: systemVerilogSource, base: src, include: ["${{ form }}.sv"]}
   - name: part
     uses: fw.hdl.spl.Partition
     needs: [src, knobs]

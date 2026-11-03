@@ -1,4 +1,4 @@
-"""RQ-F7: multi-proc islands. Children named in ``island.groups`` become one
+"""Multi-proc islands. Children named in ``island.groups`` become one
 XLS package (a proc per class, in-package channels between them) and one
 module; integration sees it as one block. Grouped and per-block builds of the
 same design give the same streams.

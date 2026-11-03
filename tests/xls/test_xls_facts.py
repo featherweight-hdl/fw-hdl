@@ -1,6 +1,6 @@
-"""RQ-T0: the XLS facts the library and flow rely on, checked on the packet's
+"""The XLS facts the library and flow rely on, checked on the packet's
 xlsynth. Each test asserts what this version does and records it in
-build/xls-facts.json (summarized by hand in docs/research/xls-facts.md).
+build/xls-facts.json.
 
 A failing test here means the toolchain changed under a design decision:
 update the decision, not the assertion.
@@ -79,7 +79,7 @@ def _err(s: str) -> str:
     return m.group(1)[:200] if m else s[-200:]
 
 
-# --- F5: several predicated ops on one channel, by strictness ----------------
+# --- several predicated ops on one channel, by strictness ----------------
 TWO_SENDS = ("  s: bits[1] = state_read(state_element=s, id=1)\n"
              "  ns: bits[1] = not(s, id=6)\n"
              "  s1: token = send(rt, d, predicate=s, channel=o, id=7)\n"
@@ -98,7 +98,7 @@ def test_two_predicated_sends_merge(tmp_path, strictness, merges):
     assert (ok_opt and ok_cg) == merges, msg
 
 
-# --- F5: state_read predicate -------------------------------------------------
+# --- state_read predicate -------------------------------------------------
 @needs_xls
 def test_state_read_predicate(tmp_path):
     body = ("  b: bits[1] = bit_slice(d, start=0, width=1, id=6)\n"
@@ -111,7 +111,7 @@ def test_state_read_predicate(tmp_path):
     assert ok_opt and ok_cg, msg
 
 
-# --- F5: what the lowering's token and strictness choices rest on -----------
+# --- what the lowering's token and strictness choices rest on -----------
 def _two_sends(p2: str, chained: bool) -> str:
     return ("  p1: bits[1] = bit_slice(d, start=0, width=1, id=6)\n"
             f"  p2: bits[1] = {p2}\n"
@@ -171,7 +171,33 @@ def test_next_value_while_read_disabled_asserts(tmp_path):
     assert asserts
 
 
-# --- F8: min_delay pins stages -----------------------------------------------
+# --- why a cycle step leaves effects on different channels unordered ---
+def _send_then_receive(ordered: bool, blocking: bool) -> str:
+    rcv = ("(token, bits[8], bits[1])", ", blocking=false") if not blocking else \
+        ("(token, bits[8])", "")
+    return ("package p\n\ntop proc p<b: bits[8] in, o: bits[8] out>(s: bits[8], init={0}) {\n"
+            f"{_ci('b', 'receive')}\n{_ci('o', 'send')}\n"
+            "  s: bits[8] = state_read(state_element=s, id=1)\n"
+            "  t: token = after_all(id=2)\n"
+            "  s1: token = send(t, s, channel=o, id=4)\n"
+            f"  r: {rcv[0]} = receive({'s1' if ordered else 't'}{rcv[1]}, channel=b, id=3)\n"
+            "  d: bits[8] = tuple_index(r, index=1, id=5)\n"
+            "  nv: () = next_value(state_element=s, value=d, id=9)\n}\n")
+
+
+@needs_xls
+@pytest.mark.parametrize("blocking", [False, True])
+def test_receive_ordered_after_send_is_not_ii1(tmp_path, blocking):
+    """A receive whose token follows a send, with the received value feeding
+    state, cannot be scheduled at II=1 in one stage; unordered, it can."""
+    _, ok_ord, msg, _ = opt_and_codegen(tmp_path / "o", _send_then_receive(True, blocking))
+    _, ok_un, msg2, _ = opt_and_codegen(tmp_path / "u", _send_then_receive(False, blocking))
+    record(f"send_then_receive.blocking_{blocking}.ordered_ii1", ok_ord, msg)
+    assert ok_un, msg2
+    assert not ok_ord and "full throughput" in msg, msg
+
+
+# --- min_delay pins stages -----------------------------------------------
 MIN_DELAY = ("  md: token = min_delay(rt, delay=2, id=6)\n"
              "  s1: token = send(md, d, channel=o, id=7)\n" + _UNIT_STATE)
 
@@ -184,7 +210,7 @@ def test_min_delay_is_honoured(tmp_path, stages, ok):
     assert ok_cg == ok, msg
 
 
-# --- F3: flow control on a top proc's interface ------------------------------
+# --- flow control on a top proc's interface ------------------------------
 PASS = "  s1: token = send(rt, d, channel=o, id=7)\n" + _UNIT_STATE
 
 
@@ -194,7 +220,7 @@ def test_flow_control_none_still_has_ready(tmp_path):
     assert ok_opt and ok_cg, msg
     has_rdy = re.search(r"input wire o_rdy", sv) is not None
     record("flow_control_none.emits_rdy", has_rdy,
-           "valid-only ports need Integrate to tie rdy (RQ-F3)")
+           "valid-only ports need Integrate to tie rdy")
     assert has_rdy
 
 
@@ -205,7 +231,7 @@ def test_flow_control_valid_is_not_a_value(tmp_path):
     assert not ok_opt and "flow control" in msg
 
 
-# --- F3: single_value channels (levels) --------------------------------------
+# --- single_value channels (levels) --------------------------------------
 _SV_IR = """package p
 
 top proc p<a: bits[8] in, l: bits[8] in, o: bits[8] out, q: bits[8] out>(s: (), init={()}) {
@@ -236,7 +262,7 @@ def test_single_value_channels_are_data_only_and_registered(tmp_path):
     data_only = re.search(r"input wire \[7:0\] l,", sv) is not None and "l_vld" not in sv \
         and "l_rdy" not in sv and "q_vld" not in sv and "q_rdy" not in sv
     registered = "__l_reg <= l;" in sv and "assign q = __q_reg;" in sv
-    record("single_value.data_only", data_only, "a level is a data pin (RQ-F3)")
+    record("single_value.data_only", data_only, "a level is a data pin")
     record("single_value.registered_both_sides", registered,
            "flop_kind=none still registers a single_value input and output: +1 cycle each")
     assert data_only and registered
@@ -250,7 +276,7 @@ def test_single_value_rejects_a_strictness(tmp_path):
     assert not ok_opt and "not streaming but has" in msg
 
 
-# --- W2 exit: two sends in one stage complete separately ---------------------
+# --- two sends in one stage complete separately ------------------------------
 _TWO_SENDS = """package p
 
 top proc p<a: bits[8] in, c: bits[1] out, o: bits[8] out>(s: (), init={()}) {
@@ -317,7 +343,7 @@ def test_send_completes_before_the_stages_receive(tmp_path):
     assert early and a_done == 3, (c_done, a_done)
 
 
-# --- F8 / per-arc throughput: next_value label= ------------------------------
+# --- per-arc throughput: next_value label= ------------------------------
 @needs_xls
 def test_next_value_label_parses(tmp_path):
     body = ("  s: bits[8] = state_read(state_element=s, id=1)\n"
@@ -329,7 +355,7 @@ def test_next_value_label_parses(tmp_path):
     assert ok_opt and ok_cg, msg
 
 
-# --- F7 / B4e: multi-proc codegen --------------------------------------------
+# --- multi-proc codegen --------------------------------------------
 LEAF_DSLX = """\
 proc leaf {
   i: chan<u8> in;
@@ -417,7 +443,7 @@ def test_proc_initiation_interval_attribute_is_ignored(tmp_path):
     assert ok1 and ok2, m1 + m2
     same = sv1 == sv2
     record("proc_initiation_interval_attr.ignored_by_multi_proc", same,
-           "RQ-F7: one stage/II setting per multi-proc package")
+           "one stage/II setting per multi-proc package")
     assert same
 
 
@@ -428,17 +454,17 @@ def test_depth0_bypass_self_loop_is_accepted(tmp_path):
     ok_opt, ok_cg, msg, _ = opt_and_codegen(tmp_path / "l", ir_text, "--multi_proc",
                                             "--materialize_internal_fifos")
     record("depth0_bypass_loopback.accepted", ok_opt and ok_cg,
-           "RQ-B3 must reject it; XLS does not")
+           "the boundary check must reject it; XLS does not")
     assert ok_opt and ok_cg, msg
 
 
-# --- credit sender shape (RQ-L2) ----------------------------------------------
+# --- credit sender shape ----------------------------------------------
 @needs_xls
 def test_nonblocking_receive_ready_waits_on_send(tmp_path):
     """In the credit_tx template the credit-return receive's ready is the
     activation's outputs-ready: a return waits while data is backpressured.
     So the credit sender's data output must never backpressure (valid-only),
-    or credit return needs its own proc (RQ-L2)."""
+    or credit return needs its own proc."""
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parent / "templates"))
     import xls_templates as T
@@ -451,7 +477,7 @@ def test_nonblocking_receive_ready_waits_on_send(tmp_path):
     assert waits
 
 
-# --- proc channel registers (RQ-B1 chan_flop, RQ-R1) ---------------------------
+# --- proc channel registers (chan_flop) ---------------------------
 @needs_xls
 def test_codegen_flop_flags_do_not_register_proc_channels(tmp_path):
     text = _proc(PASS)

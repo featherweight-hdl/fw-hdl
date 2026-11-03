@@ -1,4 +1,4 @@
-// The response-tracker reference design, stage 1 (schedulable-library-plan.md §6.8).
+// The response-tracker reference design, stage 1.
 //
 //   req ──► rt_tag ──q (RT_Q_DEPTH)──► rt_resp ──► rsp
 //

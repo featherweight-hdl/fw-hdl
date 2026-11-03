@@ -39,4 +39,4 @@ FIFO, a supplied wrapper, or a memory macro behind a wrapper) must keep them:
 | Reset | synchronous, active high | — |
 
 `DEPTH == 0` is safe to chain only because a block's valid never depends on its ready.
-The boundary check (`RQ-B3` in the plan) enforces that.
+The boundary check (`fw.hdl.spl.Integrate`) enforces that.

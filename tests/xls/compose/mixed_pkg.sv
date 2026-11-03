@@ -1,4 +1,4 @@
-// RQ-F2: a top whose children are of different kinds, nested two deep.
+// A top whose children are of different kinds, nested two deep.
 //
 //   deep_top:  in -> m (mixed_top) -> out
 //   mixed_top: in -> inner (inner_top, structural) -> c0 -> e (ext_neg, extern RTL)

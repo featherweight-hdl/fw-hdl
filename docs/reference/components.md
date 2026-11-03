@@ -14,6 +14,10 @@ fit together.
    :members:
    :undoc-members:
 
+.. autosvclass:: fw_hdl_pkg::fw_steppable
+   :members:
+   :undoc-members:
+
 .. autosvclass:: fw_hdl_pkg::fw_elaboratable
    :members:
    :undoc-members:

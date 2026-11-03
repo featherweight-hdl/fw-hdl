@@ -76,6 +76,9 @@ class fw_channel #(type T = int, int DEPTH = 1) extends fw_component;
     fw_channel_get_nb_ex #(T, DEPTH) get_nb_ex;
 
     local T            m_q[$];
+    // When each waiting value was put: a step does not see a value put
+    // during its own edge (fw_steppable).
+    local realtime     m_t[$];
     // Completed puts and gets, so a rendezvous put can wait for its own value
     // to be taken.
     local longint      m_n_put;
@@ -94,6 +97,7 @@ class fw_channel #(type T = int, int DEPTH = 1) extends fw_component;
         // take; the put then waits for that get.
         wait (m_q.size() < ((DEPTH == 0) ? 1 : DEPTH));
         m_q.push_back(t);
+        m_t.push_back($realtime);
         seq = ++m_n_put;
         if (DEPTH == 0)
             wait (m_n_get >= seq);
@@ -102,13 +106,15 @@ class fw_channel #(type T = int, int DEPTH = 1) extends fw_component;
     task ch_get(output T t);
         wait (m_q.size() > 0);
         t = m_q.pop_front();
+        void'(m_t.pop_front());
         m_n_get++;
     endtask
 
     function bit ch_try_get(inout T t);
-        if (m_q.size() == 0)
+        if (m_q.size() == 0 || fw_step_ctx::hidden(m_t[0]))
             return 1'b0;
         t = m_q.pop_front();
+        void'(m_t.pop_front());
         m_n_get++;
         return 1'b1;
     endfunction

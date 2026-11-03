@@ -16,12 +16,13 @@ Three methods carry the elaboration and run phases:
 |---|---|---|
 | build | `build()` | create child components, ports, exports and channels |
 | connect | `connect()` | connect ports to exports (`port.connect(export)`) |
-| run | `run()` | the component's behaviour; only for a runnable |
+| run | `run()` or `step()` | the component's behaviour; only for a runnable or a steppable |
 
 The root walks the tree: every component is built, then everything is connected,
 then every registered runnable's `run()` is forked. A component opts in to a
-`run()` process with `add_runnable(this)` in its constructor. A structural component
-(one that only builds and connects) does not.
+`run()` process with `add_runnable(this)` in its constructor, or to a per-cycle
+`step()` with `add_steppable(this)` (see [Cycle-step components](#cycle-step-components)).
+A structural component (one that only builds and connects) does neither.
 
 ## Ports and exports
 
@@ -83,6 +84,55 @@ A component that must poll declares its port as
 `try_get(t)` returns at once, 1 if it took a value. The opt-in is deliberate:
 a polling component's outputs can depend on timing. The
 {doc}`../examples/xls/lfsr` example shows what that means for its test.
+
+## Cycle-step components
+
+Some components are defined by what they do in one clock cycle, not by the stream
+they produce: an arbiter, a merge, a credit counter. Such a component implements
+{sv:class}`fw_hdl_pkg::fw_steppable` and registers with `add_steppable(this)`. Its
+`step()` is called once per rising edge of the component's clock domain:
+
+```{literalinclude} ../../tests/xls/micro/micro_f6_pkg.sv
+:language: systemverilog
+:start-at: class f6_count
+:end-at: endclass
+```
+
+`step()` is a function, so it cannot wait, and the language limits it to what never
+waits:
+
+| In a step | Call |
+|---|---|
+| take a value if one is there | `try_get(x)` on an `fw_get_nb_if` port, usually as `if (p.t.try_get(x))` |
+| read a level | `get()` on an `fw_level_if` port |
+| send a value | `put(x)` on an `fw_valid_put_if` port |
+| set a level | `set(x)` on an `fw_level_set_if` port |
+
+A blocking `get()` or `put()` is a task and does not compile in `step()`. So a step's
+outputs have no back-pressure. When it must know whether the receiver has room,
+that knowledge comes in as an input, such as credits or a level.
+
+**What a cycle sees.** Fields have ordinary sequential semantics inside `step()`;
+they belong to the component, so nothing else sees them mid-cycle. Between
+components, a value one step puts or sets is seen by other steps from the *next*
+edge. Values that `run()` processes or a testbench put before the edge are seen at
+that edge. Space works the same way: a step's put into an
+{sv:class}`fw_std_pkg::fw_valid_channel` counts the values waiting at the start of
+its edge. So the order in which steps run at an edge never changes the result, and
+the class model agrees with the RTL cycle for cycle.
+
+Two consequences follow:
+* a queue that a step fills every cycle needs `DEPTH >= 2`: one entry for the value
+  the consumer takes this cycle, one for the value arriving;
+* a wire (`DEPTH == 0`) cannot join two steps, because the consumer sees the value
+  one edge later.
+
+In XLS a step is one proc activation at II=1. Every receive is non-blocking, and
+effects on different channels are not ordered, because the cycle is atomic.
+{doc}`synthesis` lists the rules. A component has a `run()` or a `step()`, never
+both. `tests/xls/test_step.py` checks a step counter and a round-robin arbiter
+against XLS's RTL cycle for cycle. `examples/resp_tracker` builds its two blocks in
+either form (`-D form=rt_step_pkg`).
 
 ## Structural components
 

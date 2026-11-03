@@ -1,4 +1,4 @@
-"""RQ-B3: island-boundary checks on an integrated design.
+"""Island-boundary checks on an integrated design.
 
 The design is a set of islands joined by channels. Integrate enforces:
 
@@ -9,7 +9,7 @@ The design is a set of islands joined by channels. Integrate enforces:
 2. **no combinational cycle** through depth-0 channels and unregistered block
    ports.
 3. **no depth-0 loopback**: a depth-0 channel from a block back to itself
-   (XLS accepts this silently; docs/research/xls-facts.md).
+   (XLS accepts this silently; tests/xls/test_xls_facts.py).
 4. **valid does not depend on ready** at any block output.
 
 Rules 2-4 read each block's real combinational dependencies, output port ->

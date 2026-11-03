@@ -1,4 +1,4 @@
-"""RQ-V4: compare two views' streams up to the reorderings a contract allows.
+"""Compare two views' streams up to the reorderings a contract allows.
 
 A trace is a list of events, one JSON object per line as ``fw_trace``
 (src/std/order/fw_order_pkg.sv) writes them::

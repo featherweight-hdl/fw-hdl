@@ -1,4 +1,4 @@
-"""Hierarchy-preserving elaboration of a structural component (RQ-F1).
+"""Hierarchy-preserving elaboration of a structural component.
 
 Runs the top class's real ``build()`` and ``connect()`` through the path-D
 interpreter (:mod:`.interp`), so loops, conditions on parameters, arrays of
@@ -71,6 +71,12 @@ def _sub(ct, name: str):
         b = ct.baseClass
         ct = b.canonicalType if b is not None else None
     return None
+
+
+def _own_step(ct):
+    """The user class's own step(), when it is an fw_steppable."""
+    from ..static_mapper import _implements
+    return _own_sub(ct, "step") if _implements(ct, "fw_steppable") else None
 
 
 def _own_sub(ct, name: str):
@@ -322,7 +328,7 @@ class _Reader:
             if isinstance(po, Obj):
                 n.param_obj = {m.name: v for m, v in po.fields.items()
                                if isinstance(v, (int, str, bool))}
-        n.has_run = _own_sub(cls, "run") is not None
+        n.has_run = _own_sub(cls, "run") is not None or _own_step(cls) is not None
         holders = self._holders(o)
         elab = self._field(o, "m_elab") or []
         for e in elab:
@@ -362,9 +368,10 @@ class _Reader:
         if n.children:
             self._check_props(n)
             if n.has_run:
-                raise HierError(f"class {cls.name!r} has children and a run() task; a component "
-                                f"is either structural (build/connect) or a process (run), "
-                                f"not both", _own_sub(cls, "run"))
+                raise HierError(f"class {cls.name!r} has children and a run() task or step(); "
+                                f"a component is either structural (build/connect) or a "
+                                f"process (run, step), not both",
+                                _own_sub(cls, "run") or _own_step(cls))
             self._binds(n)
         return n
 

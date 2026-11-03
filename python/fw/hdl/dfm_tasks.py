@@ -105,7 +105,7 @@ _IR_FLOP_KIND = {"none": "none", "flop": "flop", "skid": "skid", "zerolatency": 
 
 
 def apply_chan_flops(pkg, block: str, knobs) -> None:
-    """Set each proc channel's register from the knobs (RQ-B1 ``chan_flop``)."""
+    """Set each proc channel's register from the knobs (``chan_flop``)."""
     for proc in pkg.procs:
         for ch in proc.channels:
             ch.flop_kind = _IR_FLOP_KIND[knobs.chan_flop(block, ch.name, ch.direction)]
@@ -253,7 +253,7 @@ async def Partition(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
         key = part.knob_key(spelling, known)
         try:
             if spelling in part.texts:
-                # The registry's lowering (RQ-F4): its channels keep their own flops.
+                # The registry's lowering: its channels keep their own flops.
                 text = part.texts[spelling]
             else:
                 pkg = lower_component(comp)
@@ -309,7 +309,7 @@ _SEV = {"error": SeverityE.Error, "warn": SeverityE.Warning}
 
 
 def _boundary_markers(input: TaskDataInput, shell, sigs) -> List[TaskMarker]:
-    """RQ-B3 on the blocks' Verilog. ``boundary`` sets the severity of the
+    """Boundary checks on the blocks' Verilog. ``boundary`` sets the severity of the
     loop, loopback and valid-on-ready rules; ``registered_boundaries`` that of
     the registered-both-ways rule. Knob exceptions (``island.exceptions``)
     waive the latter per channel."""
@@ -641,11 +641,14 @@ async def ApiComponents(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResu
         parser = _parse(files, config, reporter)
         for n in names:
             cls = _find_class(parser, n)
-            # A component with a run() task is a block; one without is
-            # structural (it builds and connects children), whose own ports
-            # the structure mapper reads.
-            has_run = any(getattr(m, "name", None) == "run"
-                          and m.kind == ast.SymbolKind.Subroutine for m in cls)
+            # A component with a run() task or a step() is a block; one
+            # without is structural (it builds and connects children), whose
+            # own ports the structure mapper reads.
+            from fw.hdl.fe.static_mapper import find_behavior
+            try:
+                has_run = find_behavior(cls)[0] is not None
+            except ValueError:
+                has_run = True          # map_component reports it
             if has_run:
                 comp = StaticMapper(config, reporter, parser.source_manager).map_component(
                     cls, spelling=n)

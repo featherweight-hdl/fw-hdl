@@ -73,7 +73,18 @@ State written several times in one activation (an unrolled search that sets
 `vld[k]`, then a release that clears one entry) is exact: each write applies in
 program order and the last one wins, as in the class model.
 
+A cycle-step component ({doc}`components`, an `fw_steppable`) becomes a proc in the
+same way, with its `step()` body as the activation:
+
+| SV | Proc |
+|---|---|
+| one call of `step()` | one activation, at II=1 |
+| `if (in.t.try_get(x)) ...`, or `if (a && in.t.try_get(x)) ...` with no `else` | a non-blocking receive into a temporary, predicated on `a` in the second form |
+| `out.t.put(v)` on an `fw_valid_put_if` port | a send that the design never back-pressures (Integrate ties its ready and asserts it is not needed) |
+| statement order | none across channels: the cycle is atomic, and a receive token-ordered after a send cannot be scheduled at II=1. Operations on one channel keep the rules above |
+
 The flow rejects, with a located diagnostic, what it cannot lower. That includes:
+- a component with both `run()` and `step()`;
 - two operations on one port where one is unguarded;
 - two whose guards can both hold, with another effect between them;
 - two operations on a level;

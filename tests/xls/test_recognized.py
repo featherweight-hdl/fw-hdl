@@ -1,8 +1,8 @@
-"""RQ-F4: recognized classes. A child whose class has a registry entry is
+"""Recognized classes. A child whose class has a registry entry is
 lowered by the entry (fw.hdl.lib), not mapped from its body:
 
 * fw_credit_tx and fw_arbiter #(.., FW_ARB_RR) lower to the XLS IR templates
-  (fw.hdl.lib.xls_ir, RQ-T0);
+  (fw.hdl.lib.xls_ir);
 * the class model and the RTL agree under each class's contract: in order for
   the credited link, in order per input for the arbiter;
 * a parameter value the entry does not take is rejected at the child's line;

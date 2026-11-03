@@ -71,7 +71,7 @@ def test_x1_5_source_positions_reach_the_verilog():
     assert {"x == 0) begin", "sum + x;", "out.t.put(s);"} <= lines
 
 
-# --- RQ-F5: several ops on one channel, loops, multi-write state, guarded state
+# --- several ops on one channel, loops, multi-write state, guarded state
 F5 = str(HERE / "micro" / "micro_f5_pkg.sv")
 
 

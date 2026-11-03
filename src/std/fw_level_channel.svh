@@ -10,7 +10,7 @@ class fw_level_channel_set_ex #(type T = int) extends fw_export #(fw_level_set_i
     endfunction
 
     virtual function void set(input T t);
-        m_ch.value = t;
+        m_ch.ch_set(t);
     endfunction
 endclass
 
@@ -24,7 +24,7 @@ class fw_level_channel_get_ex #(type T = int) extends fw_export #(fw_level_if #(
     endfunction
 
     virtual function T get();
-        return m_ch.value;
+        return m_ch.ch_get();
     endfunction
 endclass
 
@@ -42,10 +42,25 @@ class fw_level_channel #(type T = int) extends fw_component;
     fw_level_channel_set_ex #(T) put_ex;
     fw_level_channel_get_ex #(T) get_ex;
     T value;
+    // The value before the latest set, and when that set happened: a step
+    // reads the value from before its own edge (fw_steppable).
+    local T        m_prev;
+    local realtime m_t = -1;
 
     function new(string name, fw_component parent);
         super.new(name, parent);
         put_ex = new("put_ex", this);
         get_ex = new("get_ex", this);
+    endfunction
+
+    function void ch_set(input T t);
+        if (m_t != $realtime)
+            m_prev = value;
+        value = t;
+        m_t = $realtime;
+    endfunction
+
+    function T ch_get();
+        return fw_step_ctx::hidden(m_t) ? m_prev : value;
     endfunction
 endclass

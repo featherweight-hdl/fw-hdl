@@ -1,4 +1,4 @@
-"""RQ-V1 / RQ-V6: run the fw_order_pkg SVUnit self-test (tests/order/flow.yaml)
+"""Run the fw_order_pkg SVUnit self-test (tests/order/flow.yaml)
 through dfm. The fragment is wrapped in a throwaway package so the run does not
 depend on loading the whole root flow."""
 import os

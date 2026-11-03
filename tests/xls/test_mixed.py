@@ -1,4 +1,4 @@
-"""RQ-F2: mixed and nested children. A structural child integrates to a module
+"""Mixed and nested children. A structural child integrates to a module
 of its own; an extern child is RTL supplied with the design (a hand-written
 module plus its block signature); XLS implements the rest. The integrated top
 must lint, simulate and match the reference, two levels deep.

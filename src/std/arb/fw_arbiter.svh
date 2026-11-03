@@ -1,5 +1,5 @@
 
-// fw_arbiter -- an N-input arbiter (first cut of RQ-L4: accept then arbitrate).
+// fw_arbiter -- an N-input arbiter (accept then arbitrate).
 //
 //   in[N]  the inputs (streams);
 //   out    {index, value}: which input won, and its value.

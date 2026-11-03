@@ -10,6 +10,9 @@ class fw_component implements fw_elaboratable;
     // register via add_runnable() (typically from its own constructor). Most
     // ports/exports never do this, so they spawn no process.
     protected fw_runnable       m_run[$];
+    // Things to step -- each gets one process in do_run() that calls step()
+    // on every rising edge of this component's clock domain.
+    protected fw_steppable      m_step[$];
     // Parallel to m_run: the catalog site naming each forked process, pushed onto
     // the live op stack by the forked thread so fw_dbg_dump() can say which
     // component's run() a blocked thread is in.
@@ -206,6 +209,13 @@ class fw_component implements fw_elaboratable;
         m_sid_run.push_back(sid);
     endfunction
 
+    // Register a steppable so its step() is called once per clock edge during
+    // do_run(). The opt-in for cycle-step behavior, as add_runnable() is for
+    // a run() process.
+    function void add_steppable(fw_steppable s);
+        m_step.push_back(s);
+    endfunction
+
     virtual function void build();
     endfunction
 
@@ -328,6 +338,20 @@ class fw_component implements fw_elaboratable;
                     `fw_track_enter(sid)
                     r.run();
                     `fw_track_exit
+                end
+            join_none
+        end
+        foreach (m_step[i]) begin
+            automatic fw_steppable s = m_step[i];
+            `fw_ev_op(dbg_if(), FW_L_VITAL, "fw_component.step_fork", FW_OP_BEGUN)
+                `fw_field_as("index", i)
+            `fw_ev_end
+            fork
+                forever begin
+                    clock.t.tick(1);
+                    fw_step_ctx::active = 1'b1;
+                    s.step();
+                    fw_step_ctx::active = 1'b0;
                 end
             join_none
         end
