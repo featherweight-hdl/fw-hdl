@@ -15,6 +15,7 @@ downloads/
 eggs/
 .eggs/
 lib/
+!python/fw/hdl/lib/
 lib64/
 parts/
 sdist/
