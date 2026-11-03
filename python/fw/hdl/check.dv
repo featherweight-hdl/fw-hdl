@@ -1,0 +1,25 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+package:
+  name: fw.hdl.check
+  desc: Design checks that run before any tool
+
+  tasks:
+  - name: Contracts
+    scope: export
+    desc: Reject a knob set that cannot meet its latency contracts, before codegen
+    doc: |
+      Reads the partition (`splPartition`) and the resolved knobs (`fwKnobs`).
+      For every `contracts.latency` entry, bounds the path from the knobs
+      alone -- each block at least its channel registers and at most those
+      plus `pipeline_stages - 1`, each channel exact -- and fails, naming the
+      contract and the path, when no allowed schedule can meet it.
+
+      Put it before `synth.xls.Codegen` (Codegen `needs` it) so a bad knob set
+      stops the flow before XLS runs. `fw.hdl.report.Latency` checks the same
+      contracts exactly after codegen.
+    consumes:
+    - filetype: splPartition
+    - filetype: fwKnobs
+    passthrough: none
+    shell: pytask
+    run: fw.hdl.dfm_tasks.CheckContracts

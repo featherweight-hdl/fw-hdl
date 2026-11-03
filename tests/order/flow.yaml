@@ -1,0 +1,34 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+# RQ-V1 / RQ-V6: the contract library (src/std/order/fw_order_pkg.sv) on SVUnit.
+fragment:
+  name: order
+
+  tasks:
+  - name: svunit
+    uses: hdltest.svunit.Lib
+  - name: src
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      base: ../../src/std/order
+      include: [fw_order_pkg.sv]
+  - name: unit-tests
+    uses: std.FileSet
+    with:
+      type: svunitTest
+      include: [fw_order_unit_test.sv]
+  - name: runner
+    uses: hdltest.svunit.TestRunner
+    needs: [unit-tests]
+  - name: img
+    uses: hdlsim.vlt.SimImage
+    needs: [svunit, src, runner]
+    with: {top: [testrunner]}
+  - name: run
+    uses: hdlsim.vlt.SimRun
+    needs: [img]
+    with: {mode: test}
+  - name: selftest
+    uses: hdltest.svunit.Check
+    needs: [run]
+    with: {name: fw-order, gate: true}

@@ -49,12 +49,15 @@ fw-hdl = "fw.hdl.cli:main"
 [project.entry-points."dv_flow.mgr"]
 fw-hdl = "fw.hdl.dfm_ext"
 
+[project.entry-points."zuspec.lowering"]
+fw-hdl = "fw.hdl.lib.registry:register"
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["fw*"]
 
 [tool.setuptools.package-data]
-"fw.hdl" = ["*.dv"]
+"fw.hdl" = ["*.dv", "schema/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["../tests/python"]

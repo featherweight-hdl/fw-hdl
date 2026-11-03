@@ -39,7 +39,10 @@ proc:
 | `out.t.put(v)` | a blocking send |
 | a `get`/`put` under `if` | a predicated receive or send |
 | `in.t.try_get(x)` on an `fw_get_nb_if` port | a non-blocking receive |
-| statement order | the token chain: effects happen in program order |
+| statement order | the token chain: effects happen in program order, except that effects on exclusive paths are not ordered against each other |
+| several `get`s or `put`s on one port, under guards | one operation per activation; see below |
+| a `get`/`put` in a constant-bound `for` or `repeat` | unrolled |
+| state used (read and written) only under a guard | a predicated `state_read` and `next_value` |
 
 The run-length encoder of the {doc}`../examples/xls/rle` example, in full:
 
@@ -49,9 +52,32 @@ The run-length encoder of the {doc}`../examples/xls/rle` example, in full:
 :end-before: // rle_dec.x
 ```
 
-The flow rejects, with a located diagnostic, what it cannot lower. That includes a
-`get` or `put` inside a loop, two operations on the same channel in one activation,
-`#delay`, `@` and calls to other tasks.
+A port carries at most one item per activation, so several operations on one port
+need guards:
+
+| Guards | Lowered as |
+|---|---|
+| exclusive: the arms of an `if`/`else` or `case`, or `v == j` and `v == k` for different constants (as an unrolled loop over `k` gives) | `proven_mutually_exclusive`: XLS merges them into one operation, and rejects the design if it cannot prove the guards exclusive |
+| can both hold, with no other effect ordered between the operations | `runtime_mutually_exclusive`: XLS merges them and the RTL asserts in simulation that at most one fires. The class model would do both, so an assertion here is a design error |
+
+```systemverilog
+for (int k = 0; k < 4; k++)
+    if (v == k) begin                 // exclusive for different k
+        in.t.get(x);
+        sum[k] = sum[k] + x;
+        out.t.put({k[1:0], sum[k]});
+    end
+```
+
+State written several times in one activation (an unrolled search that sets
+`vld[k]`, then a release that clears one entry) is exact: each write applies in
+program order and the last one wins, as in the class model.
+
+The flow rejects, with a located diagnostic, what it cannot lower. That includes:
+- two operations on one port where one is unguarded;
+- two whose guards can both hold, with another effect between them;
+- two operations on a level;
+- `#delay`, `@` and calls to other tasks.
 
 ## Composition
 
@@ -68,6 +94,31 @@ block can come from somewhere else as long as it has the same signature.
 :start-at: class rle_loopback
 :end-before: endpackage
 ```
+
+## Recognized classes
+
+Some library classes are not mapped from their bodies. Their body is the model, and
+a registry entry gives the hardware. A child of such a class needs no knob, and
+Partition takes the entry's lowering:
+
+| Class | Lowering | Parameters it takes |
+|---|---|---|
+| `fw_credit_tx #(T, CREDITS)` | XLS: credit-gated sender (`fw.hdl.lib.xls_ir.credit_tx`) | any |
+| `fw_arbiter #(T, N, POLICY)` | XLS: round-robin arbiter with one hold per input (`rr_arb`) | `POLICY = FW_ARB_RR`; `N` 2–64 |
+| `fw_reg_component #(BLK, W, AW)` | native: the regblock core ({doc}`islands`, Register blocks as children) | `W` 8/16/32/64 |
+
+A child is recognized by its own class or by the nearest base with an entry. The
+following are errors at the child's SV line, not a fallback to mapping the body:
+- a parameter value the entry does not take, such as `fw_arbiter` with
+  `FW_ARB_PRIO`;
+- a subclass that defines `run()`.
+
+An extern assignment in the knob file wins over an entry, so RTL supplied for a
+library class is used as is. A recognized class cannot join a multi-proc group yet.
+
+The registry is the zuspec lowering registry, keyed by SV class name. The channel
+classes and port APIs that the front end matches are entries too.
+{doc}`../reference/registry` says how to add one.
 
 ## Types and operators
 

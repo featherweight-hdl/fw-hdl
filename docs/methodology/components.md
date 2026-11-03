@@ -84,6 +84,50 @@ A component that must poll declares its port as
 a polling component's outputs can depend on timing. The
 {doc}`../examples/xls/lfsr` example shows what that means for its test.
 
+## Structural components
+
+A component with children and no `run()` is **structural**: it only builds and
+connects. Partition reads its `build()` and `connect()` by running them, so they are
+ordinary code. They may contain:
+- loops and arrays of children, ports and channels;
+- an `if` on a class parameter;
+- children configured by a parameter object (`fw_component_param`).
+
+```systemverilog
+add_k #(1)                 stage[N];
+fw_channel #(bit [7:0], 1) ch[N-1];
+function void build();
+    in = new("in", this);  out = new("out", this);
+    foreach (stage[i]) stage[i] = new($sformatf("stage[%0d]", i), this);
+    for (int i = 0; i < N - 1; i++) ch[i] = new($sformatf("ch[%0d]", i), this);
+endfunction
+function void connect();
+    stage[0].in.connect(in);
+    for (int i = 0; i < N - 1; i++) begin
+        stage[i].out.connect(ch[i].put_ex);
+        stage[i + 1].in.connect(ch[i].get_ex);
+    end
+    stage[N - 1].out.connect(out);
+endfunction
+```
+
+The rules are about meaning, and each is reported at the SV line that breaks it:
+- An instance's name is the name of the field that holds it: `x = new("x", this)`, or
+  `x[i] = new("x[i]", this)` for an array. In RTL, `x[2]` becomes `x_2`.
+- A child's port connects to a channel end or to one of this component's own ports.
+  Two children are joined only through a channel.
+- Every port and every channel end is connected exactly once, and a channel has one
+  consumer end.
+- A field that `build()` leaves null is fine, as with a child under an `if`, unless
+  `connect()` reaches through it.
+- A component has children or a `run()`, not both.
+
+Each distinct child becomes one generated block. "Distinct" means its class
+specialization plus the values of its parameter object. A plain class or a typedef
+keeps its own name. Anything else is named `<class>__<hash8>`, and `partition.json`
+keeps the SV class beside it as `alias`. A block body reads `m_params.<field>` as a
+constant.
+
 ## The root and the edge of the tree
 
 The tree's root is wrapped by {sv:mod}`fw_root`, which holds it in reset and starts it.

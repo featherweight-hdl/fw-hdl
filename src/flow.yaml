@@ -43,3 +43,37 @@ fragment:
     needs: [std]
     with:
       type: systemVerilogSource
+
+  # The ready/valid protocol kit (src/std/rv): fw_rv_pkg (APIs, bridges, the
+  # put/get adapters) and the transactor interfaces and modules, payload `type T`.
+  # The cores alone are synthesizable; `rv-cores` lists them for formal and
+  # synthesis flows, which must not see the queue-based interfaces.
+  - export: rv-src
+    uses: std.FileSet
+    needs: [std]
+    with:
+      type: systemVerilogSource
+      base: std/rv
+      include:
+      - fw_rv_pkg.sv
+      - fw_rv_initiator_xtor_if.sv
+      - fw_rv_initiator_xtor_core.sv
+      - fw_rv_initiator_xtor.sv
+      - fw_rv_target_xtor_if.sv
+      - fw_rv_target_xtor_core.sv
+      - fw_rv_target_xtor.sv
+      - fw_rv_monitor_xtor_if.sv
+      - fw_rv_monitor_xtor_core.sv
+      - fw_rv_monitor_xtor.sv
+      incdirs:
+      - .
+
+  - export: rv-cores
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      base: std/rv
+      include:
+      - fw_rv_initiator_xtor_core.sv
+      - fw_rv_target_xtor_core.sv
+      - fw_rv_monitor_xtor_core.sv

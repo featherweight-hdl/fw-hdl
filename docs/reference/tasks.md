@@ -1,6 +1,6 @@
 # Flow tasks
 
-The dv-flow tasks fw-hdl provides. The fw-hdl Python package registers the three
+The dv-flow tasks fw-hdl provides. The fw-hdl Python package registers these
 packages (entry point `dv_flow.mgr`); a flow imports the ones it uses.
 
 ## fw.hdl.xls
@@ -24,5 +24,29 @@ packages (entry point `dv_flow.mgr`); a flow imports the ones it uses.
 ```{eval-rst}
 .. dvf:autopackage::
    :root: ../python/fw/hdl/spl.dv
+   :types:
+```
+
+## fw.hdl.knobs
+
+```{eval-rst}
+.. dvf:autopackage::
+   :root: ../python/fw/hdl/knobs.dv
+   :types:
+```
+
+## fw.hdl.check
+
+```{eval-rst}
+.. dvf:autopackage::
+   :root: ../python/fw/hdl/check.dv
+   :types:
+```
+
+## fw.hdl.report
+
+```{eval-rst}
+.. dvf:autopackage::
+   :root: ../python/fw/hdl/report.dv
    :types:
 ```

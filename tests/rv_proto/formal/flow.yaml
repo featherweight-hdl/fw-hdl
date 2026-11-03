@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+fragment:
+  name: rv_formal
+
+  tasks:
+  # The kit's two synthesizable cores back to back (src/std/rv, hdl.rv-cores):
+  # the handshake rule on both sides and lossless, in-order transfer.
+  - name: harness
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      include: [fw_rv_cores_fv.sv]
+      # The properties are under `ifdef FORMAL; read_verilog -sv does not
+      # define it, and without it the proof has nothing to check.
+      defines: [FORMAL]
+
+  # depth 14 lets several beats cross the pair (about 3 cycles each).
+  - name: fv
+    uses: formal.sby.BMC
+    needs: [hdl.rv-cores, harness]
+    with:
+      top: fw_rv_cores_fv
+      depth: 14

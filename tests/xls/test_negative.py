@@ -49,7 +49,7 @@ CASES = [
      "                bit [7:0] x;\n"
      "                for (int i = 0; i < 4; i++) in.t.get(x);\n"
      "            end",
-     "", StaticSubsetError, r"inside a loop.*one iteration per activation", 2),
+     "", StaticSubsetError, r"second operation on channel .in. .*one of them is unguarded", 2),
     ("p10_second_get",
      "            forever begin\n"
      "                bit [7:0] x, y;\n"

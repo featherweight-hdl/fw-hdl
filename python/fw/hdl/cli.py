@@ -219,8 +219,37 @@ def _run_synth(cfg: FlowConfig, files: List[str], *, with_report: bool) -> int:
     return 0
 
 
+def _cmd_knobs(argv: List[str]) -> int:
+    """``fw-hdl knobs resolve <file> -o <dir>``: merge and check a knob file,
+    write <top>.knobs.json and <top>_knobs_pkg.sv. ``fw-hdl knobs codegen
+    <file> <block>``: print that block's codegen_main flags."""
+    from .knobs import KnobError, load
+    p = argparse.ArgumentParser(prog="fw-hdl knobs")
+    sub = p.add_subparsers(dest="op", required=True)
+    r = sub.add_parser("resolve", help="merge, check and write the resolved knobs")
+    r.add_argument("file")
+    r.add_argument("-o", "--outdir", default=".")
+    c = sub.add_parser("codegen", help="print a block's codegen_main flags")
+    c.add_argument("file")
+    c.add_argument("block")
+    args = p.parse_args(argv)
+    try:
+        k = load(args.file)
+    except KnobError as e:
+        print(f"fw-hdl knobs: {e}", file=sys.stderr)
+        return 1
+    if args.op == "resolve":
+        for kind, path in k.write(args.outdir).items():
+            print(f"{kind}: {path}")
+    else:
+        print(" ".join(k.codegen_args(args.block)))
+    return 0
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     raw = list(sys.argv[1:] if argv is None else argv)
+    if raw[:1] == ["knobs"]:
+        return _cmd_knobs(raw[1:])
     plus_incdirs, plus_defines, rest = _split_plusargs(raw)
     args = _build_parser().parse_args(rest)
     cfg = _config_from_args(args, plus_incdirs, plus_defines)

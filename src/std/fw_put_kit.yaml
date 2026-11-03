@@ -1,0 +1,22 @@
+# The put kit (src/std): put() registers each value on one output pin, with no
+# handshake. Format zuspec.kit v1 (zuspec-synth docs/kits.md). Lowering reads
+# this entry for fw_put_xtor_bridge.
+format: zuspec.kit
+version: 1
+kit: fw_put
+protocol: put
+description: One registered output pin, no handshake.
+
+transactors:
+  - api: fw_put_if
+    endpoint: port
+    module: fw_put_xtor_if          # an interface: the shell instances it directly
+    params: {T: "$T"}
+    if_path: ""
+    bridge: "fw_put_xtor_bridge #($T)"
+    ports:      {data: out}
+    directions: {data: out}
+    pins:       {data: "${ep}"}
+    method: put
+    registered: true
+    flow_control: none

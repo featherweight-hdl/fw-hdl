@@ -80,3 +80,27 @@ def test_fw_rv_fifo(workdir, depth):
     got = [int(m[1]) for l in out if (m := re.match(r"O (\d+)$", l))]
     assert got[:depth] == [1000 + i for i in range(depth)]       # the stalled values drain first
     assert got[depth:] == [(i * 37 + 5) & 0xfff for i in range(N)]
+
+
+def _yosys():
+    import shutil
+    return shutil.which("yosys") or (
+        str(REPO / "packages" / "yosys" / "bin" / "yosys")
+        if (REPO / "packages" / "yosys" / "bin" / "yosys").exists() else None)
+
+
+@pytest.mark.parametrize("depth", [0, 1, 2, 3, 16])
+def test_fw_rv_fifo_yosys_elaborates(workdir, depth):
+    """Yosys's own SV reader takes every DEPTH, including the DEPTH=0 wire
+    (no parameter-width casts, RQ-B4a)."""
+    import subprocess
+    yosys = _yosys()
+    if yosys is None:
+        pytest.skip("yosys not found")
+    workdir.mkdir(parents=True, exist_ok=True)
+    script = (f"read_verilog -sv {FIFO}; "
+              f"chparam -set DEPTH {depth} -set WIDTH 8 fw_rv_fifo; "
+              f"synth -top fw_rv_fifo; check -assert")
+    r = subprocess.run([yosys, "-q", "-p", script], cwd=workdir,
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr

@@ -5,10 +5,11 @@ installed in the flow's environment (``python/pyproject.toml``).
 """
 from __future__ import annotations
 
+import json
 import os
 import time
 from pathlib import Path
-from typing import List
+from typing import Dict, List
 
 from dv_flow.mgr import (FileSet, SeverityE, TaskDataInput, TaskDataResult, TaskMarker,
                          TaskMarkerLoc, TaskRunCtxt)
@@ -23,6 +24,8 @@ from fw.hdl.xls_flow import XlsFlowError
 _LIB = {os.path.realpath(f) for f in FW_LIB_FILES}
 _SRC = Path(FW_LIB_FILES[0]).resolve().parent
 FIFO_SV = _SRC / "rtl" / "fw_rv_fifo.sv"
+VALID_CHECK_SV = _SRC / "rtl" / "fw_valid_check.sv"
+XLS_FIFO_SV = _SRC / "rtl" / "fw_xls_fifo_wrapper.sv"
 
 
 def _sv_inputs(input: TaskDataInput):
@@ -44,6 +47,14 @@ def _files(input: TaskDataInput, filetype: str) -> List[str]:
             if getattr(fs, "filetype", None) == filetype for f in fs.files]
 
 
+def _lowering_errors() -> tuple:
+    """The errors XLS lowering raises for a design outside the static subset.
+    A task reports them as markers; anything else is a bug and propagates."""
+    from zuspec.be.xls.width import StaticSubsetError
+    from zuspec.be.xls.xir import XlsTypeError
+    return (FwHdlError, XlsFlowError, StaticSubsetError, XlsTypeError)
+
+
 def _markers(reporter: ErrorReporter, exc: Exception) -> List[TaskMarker]:
     out = []
     for d in reporter.diagnostics:
@@ -51,8 +62,135 @@ def _markers(reporter: ErrorReporter, exc: Exception) -> List[TaskMarker]:
             if d.file else None
         out.append(TaskMarker(msg=d.message, severity=SeverityE.Error, loc=loc))
     if not out:
-        out.append(TaskMarker(msg=str(exc), severity=SeverityE.Error))
+        # A lowering error carries its source location (ir.Loc) itself.
+        where = getattr(exc, "loc", None)
+        if where is not None and getattr(where, "file", None):
+            out.append(TaskMarker(msg=getattr(exc, "msg", str(exc)), severity=SeverityE.Error,
+                                  loc=TaskMarkerLoc(path=where.file, line=where.line or -1,
+                                                    pos=where.pos or -1)))
+        else:
+            out.append(TaskMarker(msg=str(exc), severity=SeverityE.Error))
     return out
+
+
+async def KnobsResolve(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
+    from fw.hdl.knobs import KnobError, load
+    files = _files(input, "fwKnobFile")
+    if len(files) != 1:
+        return TaskDataResult(status=1, changed=False, output=[], markers=[TaskMarker(
+            msg=f"fw.hdl.knobs.Resolve takes exactly one fwKnobFile; got {len(files)}",
+            severity=SeverityE.Error)])
+    try:
+        k = load(files[0])
+    except KnobError as e:
+        markers = []
+        for line in str(e).splitlines():
+            path, _, rest = line.partition(": ")
+            f, _, ln = path.rpartition(":")
+            loc = TaskMarkerLoc(path=f, line=int(ln)) if f and ln.isdigit() else None
+            markers.append(TaskMarker(msg=rest or line, severity=SeverityE.Error, loc=loc))
+        return TaskDataResult(status=1, changed=True, output=[], markers=markers)
+    out = k.write(input.rundir)
+    return TaskDataResult(status=0, changed=True, output=[
+        FileSet(src=input.name, filetype="fwKnobs", basedir=input.rundir,
+                files=[os.path.basename(out["json"])]),
+        FileSet(src=input.name, filetype="systemVerilogSource", basedir=input.rundir,
+                files=[os.path.basename(out["sv"])]),
+        FileSet(src=input.name, filetype="xlsCodegenOptions", basedir=input.rundir,
+                files=[os.path.basename(out["codegen"])])])
+
+
+#: Knob flop kinds -> the spelling of XLS IR's ``chan_interface flop_kind``.
+_IR_FLOP_KIND = {"none": "none", "flop": "flop", "skid": "skid", "zerolatency": "zero_latency"}
+
+
+def apply_chan_flops(pkg, block: str, knobs) -> None:
+    """Set each proc channel's register from the knobs (RQ-B1 ``chan_flop``)."""
+    for proc in pkg.procs:
+        for ch in proc.channels:
+            ch.flop_kind = _IR_FLOP_KIND[knobs.chan_flop(block, ch.name, ch.direction)]
+
+
+def _by_module(input: TaskDataInput, filetype: str) -> dict:
+    out = {}
+    for fs in getattr(input, "inputs", []) or []:
+        if getattr(fs, "filetype", None) != filetype:
+            continue
+        mod = (getattr(fs, "params", None) or {}).get("module")
+        for f in fs.files:
+            m = mod or os.path.basename(f).split(".")[0]
+            out[m] = os.path.join(fs.basedir, f)
+    return out
+
+
+async def ReportLatency(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
+    from fw.hdl import latency
+    from fw.hdl.spl_flow import Shell
+    parts = _files(input, "splPartition")
+    if len(parts) != 1:
+        return TaskDataResult(status=1, changed=False, output=[], markers=[TaskMarker(
+            msg=f"fw.hdl.report.Latency takes one splPartition; got {len(parts)}",
+            severity=SeverityE.Error)])
+    shell = Shell.load(parts[0])
+    opt, sched = _by_module(input, "xlsOptIR"), _by_module(input, "xlsSchedule")
+    sig = _by_module(input, "xlsModuleSignature")
+    groups = {c["module"]: c["group"] for sh in shell.walk() for c in sh.children
+              if "group" in c}
+    try:
+        blocks = latency.load_blocks([(m, opt[m], sched[m], sig.get(m))
+                                      for m in opt if m in sched], groups)
+    except (OSError, ValueError) as e:
+        return TaskDataResult(status=1, changed=False, output=[], markers=[TaskMarker(
+            msg=f"fw.hdl.report.Latency: {e}", severity=SeverityE.Error)])
+    rep = latency.report(shell, blocks)
+    out = latency.write(rep, input.rundir)
+    markers = [TaskMarker(msg=n, severity=SeverityE.Warning) for n in rep.notes]
+    kfiles = _files(input, "fwKnobs")
+    if kfiles:
+        from fw.hdl.check.contracts import postcheck
+        from fw.hdl.knobs import from_resolved
+        markers += [TaskMarker(msg=m, severity=SeverityE.Error)
+                    for m in postcheck(rep, from_resolved(kfiles[0]))]
+    status = 1 if any(m.severity == SeverityE.Error for m in markers) else 0
+    return TaskDataResult(status=status, changed=True, markers=markers, output=[
+        FileSet(src=input.name, filetype="fwLatencyReport", basedir=input.rundir,
+                files=[os.path.basename(out["md"]), os.path.basename(out["json"])])])
+
+
+async def CheckContracts(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
+    from fw.hdl.check.contracts import precheck
+    from fw.hdl.knobs import from_resolved
+    from fw.hdl.spl_flow import Shell
+    parts, kfiles = _files(input, "splPartition"), _files(input, "fwKnobs")
+    if len(parts) != 1 or len(kfiles) != 1:
+        return TaskDataResult(status=1, changed=False, output=[], markers=[TaskMarker(
+            msg="fw.hdl.check.Contracts takes one splPartition and one fwKnobs",
+            severity=SeverityE.Error)])
+    errs = precheck(Shell.load(parts[0]), from_resolved(kfiles[0]))
+    return TaskDataResult(status=1 if errs else 0, changed=True, output=[], markers=[
+        TaskMarker(msg=e, severity=SeverityE.Error) for e in errs])
+
+
+async def ReportPpa(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
+    from fw.hdl import ppa
+    from zuspec.be.xls.signature import signature_from_codegen
+    opt, sched = _by_module(input, "xlsOptIR"), _by_module(input, "xlsSchedule")
+    sigs = _by_module(input, "xlsModuleSignature")
+    rows = []
+    for m in sorted(opt):
+        if m not in sched:
+            continue
+        ii = None
+        if m in sigs:
+            with open(sigs[m]) as f:
+                ii = signature_from_codegen(f.read()).initiation_interval
+        rows += ppa.load([(m, opt[m], sched[m], ii)])
+    os.makedirs(input.rundir, exist_ok=True)
+    with open(os.path.join(input.rundir, "xls_ppa.csv"), "w") as f:
+        f.write(ppa.to_csv(rows))
+    return TaskDataResult(status=0, changed=True, output=[
+        FileSet(src=input.name, filetype="fwPpaReport", basedir=input.rundir,
+                files=["xls_ppa.csv"])])
 
 
 async def Partition(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
@@ -64,34 +202,146 @@ async def Partition(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
     p = input.params
     files, incdirs = _sv_inputs(input)
     reporter = ErrorReporter()
+    knobs = None
+    kfiles = _files(input, "fwKnobs")
+    if kfiles:
+        from fw.hdl.knobs import from_resolved
+        knobs = from_resolved(kfiles[0])
+    extern = knobs.extern_blocks() if knobs is not None else {}
+    groups = knobs.groups() if knobs is not None else {}
     try:
-        part = partition(files, p.top, list(p.xls or []), FlowConfig(incdirs=incdirs), reporter)
+        part = partition(files, p.top, list(p.xls or []), FlowConfig(incdirs=incdirs), reporter,
+                         extern=extern, groups=groups)
     except (FwHdlError, XlsFlowError) as e:
         return TaskDataResult(status=1, changed=True, output=[], markers=_markers(reporter, e))
     rundir = input.rundir
     os.makedirs(rundir, exist_ok=True)
+    # Native children are emitted here; Integrate finds them as it finds extern
+    # blocks, by the signature and files on their shell entry.
+    from fw.hdl import native
+    native_files = {}
+    for spelling, rc in part.natives.items():
+        sig, text = native.reg_child_rtl(rc)
+        sv, sj = os.path.join(rundir, f"{rc.module}.sv"), os.path.join(rundir, f"{rc.module}.sig.json")
+        with open(sv, "w") as f:
+            f.write(text)
+        sig.sources = [sv]
+        ir.save_signature(sig, sj)
+        native_files[spelling] = {"signature": sj, "files": [sv]}
+    for sh in part.shell.walk():
+        for c in sh.children:
+            if c.get("engine") == "native":
+                c["native"].update(native_files[c["class"]])
     part.shell.save(os.path.join(rundir, "partition.json"))
-    irs, preds = [], []
-    for spelling, comp in part.blocks.items():
-        module = module_name(spelling)
+    from zuspec.be.xls.multi_proc import MULTI_PROC_FLAGS
+    known = knobs.xls_blocks() + list(knobs.get("xls", "blocks", default={}) or {}) \
+        if knobs is not None else []
+    known_mods = {module_name(b) for b in known}
+    irs, preds, markers = [], [], []
+    cg_mods: Dict[str, dict] = {}
+
+    def emit(module: str, text: str, comp) -> None:
         with open(os.path.join(rundir, f"{module}.ir"), "w") as f:
-            f.write(format_package(lower_component(comp)))
+            f.write(text)
         irs.append(f"{module}.ir")
         ir.save_signature(predict_signature(comp, CodegenOptions(module_name=module)),
                           os.path.join(rundir, f"{module}.pred.json"))
         preds.append(f"{module}.pred.json")
-    return TaskDataResult(status=0, changed=True, output=[
-        FileSet(src=input.name, filetype="splPartition", basedir=rundir,
-                files=["partition.json"]),
-        FileSet(src=input.name, filetype="xlsIR", basedir=rundir, files=irs),
-        FileSet(src=input.name, filetype="blockSignaturePrediction", basedir=rundir,
-                files=preds)])
+
+    for spelling, comp in part.standalone().items():
+        module = module_name(spelling)
+        key = part.knob_key(spelling, known)
+        try:
+            if spelling in part.texts:
+                # The registry's lowering (RQ-F4): its channels keep their own flops.
+                text = part.texts[spelling]
+            else:
+                pkg = lower_component(comp)
+                if knobs is not None:
+                    apply_chan_flops(pkg, key, knobs)
+                text = format_package(pkg)
+        except _lowering_errors() as e:
+            markers += _markers(ErrorReporter(), e)
+            continue
+        emit(module, text, comp)
+        # A block the knob file names by class, not by its generated module
+        # (a specialization, a parameter object), gets its options here.
+        if knobs is not None and module not in known_mods and key != spelling:
+            cg_mods[module] = knobs.codegen_module_options(key)
+    for g, entry in part.groups.items():
+        module = module_name(g)
+        keys = {m["name"]: part.knob_key(m["class"], known) for m in entry["members"]}
+        if knobs is not None:
+            for e in entry["external"]:
+                comp = part.blocks[next(m["class"] for m in entry["members"]
+                                        if m["name"] == e["inst"])]
+                f = next(x for x in comp.fields if x.name == e["port"])
+                d = "receive" if isinstance(f.datatype, ir.DataTypeGetIF) else "send"
+                e["flop_kind"] = _IR_FLOP_KIND[knobs.chan_flop(keys[e["inst"]], e["port"], d)]
+        try:
+            text = part.group_text(g)
+        except _lowering_errors() as e:
+            markers += _markers(ErrorReporter(), e)
+            continue
+        emit(module, text, part.group_component(g))
+        # One schedule per package: the members' (the knob check makes them equal).
+        opts = dict(knobs.codegen_module_options(next(iter(keys.values())))) \
+            if knobs is not None else {}
+        opts["args"] = list(opts.get("args", [])) + MULTI_PROC_FLAGS
+        cg_mods[module] = opts
+    if markers:
+        return TaskDataResult(status=1, changed=True, output=[], markers=markers)
+    part.shell.save(os.path.join(rundir, "partition.json"))
+    out = [FileSet(src=input.name, filetype="splPartition", basedir=rundir,
+                   files=["partition.json"]),
+           FileSet(src=input.name, filetype="xlsIR", basedir=rundir, files=irs),
+           FileSet(src=input.name, filetype="blockSignaturePrediction", basedir=rundir,
+                   files=preds)]
+    if cg_mods:
+        with open(os.path.join(rundir, "partition.codegen.json"), "w") as f:
+            json.dump({"format": "xls.codegen-options", "modules": cg_mods}, f, indent=2)
+        out.append(FileSet(src=input.name, filetype="xlsCodegenOptions", basedir=rundir,
+                           files=["partition.codegen.json"]))
+    return TaskDataResult(status=0, changed=True, output=out)
+
+
+_SEV = {"error": SeverityE.Error, "warn": SeverityE.Warning}
+
+
+def _boundary_markers(input: TaskDataInput, shell, sigs) -> List[TaskMarker]:
+    """RQ-B3 on the blocks' Verilog. ``boundary`` sets the severity of the
+    loop, loopback and valid-on-ready rules; ``registered_boundaries`` that of
+    the registered-both-ways rule. Knob exceptions (``island.exceptions``)
+    waive the latter per channel."""
+    from fw.hdl.check import boundary as B
+    p = input.params
+    sev_hard = getattr(p, "boundary", "error") or "error"
+    sev_reg = getattr(p, "registered_boundaries", "warn") or "warn"
+    if sev_hard == "off" and sev_reg == "off":
+        return []
+    exceptions = []
+    kfiles = _files(input, "fwKnobs")
+    if kfiles:
+        from fw.hdl.knobs import from_resolved
+        exceptions = from_resolved(kfiles[0]).exceptions()
+    try:
+        blocks = {c["name"]: B.block_ports(sigs[c["module"]], list(sigs[c["module"]].sources))
+                  for c in shell.children if sigs[c["module"]].sources}
+        found = B.check(shell, blocks, exceptions, require_registered=sev_reg != "off")
+    except B.BoundaryError as e:
+        return [TaskMarker(msg=f"boundary check: {e}", severity=SeverityE.Warning)]
+    out = []
+    for f in found:
+        sev = sev_reg if f.rule == "registered" else sev_hard
+        if sev != "off":
+            out.append(TaskMarker(msg=f"boundary {f}", severity=_SEV[sev]))
+    return out
 
 
 async def Integrate(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
     from fw.hdl import ir_build as _b
     from fw.hdl.emit.be_sv import emit_sv
-    from fw.hdl.spl_flow import Shell, integrate
+    from fw.hdl.spl_flow import Shell, extern_signatures, integrate
     shells = _files(input, "splPartition")
     if len(shells) != 1:
         return TaskDataResult(status=1, changed=False, output=[], markers=[TaskMarker(
@@ -102,32 +352,62 @@ async def Integrate(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
     for path in _files(input, "blockSignature"):
         s = ir.load_signature(path)
         sigs[s.name] = s
-    try:
-        top, top_sig = integrate(shell, sigs, top_name=input.params.top_name or None)
-    except XlsFlowError as e:
-        return TaskDataResult(status=1, changed=True, output=[], markers=[TaskMarker(
-            msg=str(e), severity=SeverityE.Error)])
     rundir = input.rundir
     os.makedirs(rundir, exist_ok=True)
-    top_sv = os.path.join(rundir, f"{top_sig.name}.sv")
-    with open(top_sv, "w") as f:
-        f.write(emit_sv(_b.context([top])))
-    top_sig.sources = [top_sv]
+    nested = []
+    try:
+        sigs.update({k: v for k, v in extern_signatures(shell).items() if k not in sigs})
+        top, top_sig = integrate(shell, sigs, top_name=input.params.top_name or None,
+                                 nested=nested)
+    except (XlsFlowError, OSError, ValueError) as e:
+        return TaskDataResult(status=1, changed=True, output=[], markers=[TaskMarker(
+            msg=str(e), severity=SeverityE.Error)])
+    # Each structural module (innermost first, then the top) is written next
+    # to the others; its sources list its own file after everything under it.
+    written = []
+    for comp, sig in nested + [(top, top_sig)]:
+        path = os.path.join(rundir, f"{sig.name}.sv")
+        with open(path, "w") as f:
+            f.write(emit_sv(_b.context([comp])))
+        sig.sources = _child_sources(_shell_of(shell, sig.name), sigs) + [path]
+        sigs[sig.name] = sig
+        written.append(path)
+    markers = []
+    for sh in shell.walk():
+        markers += _boundary_markers(input, sh, sigs)
+    if any(m.severity == SeverityE.Error for m in markers):
+        return TaskDataResult(status=1, changed=True, output=[], markers=markers)
     ir.save_signature(top_sig, os.path.join(rundir, f"{top_sig.name}.sig.json"))
     # Everything a simulator or synthesis tool needs, in compile order: the
-    # channel FIFO, the blocks, then the top.
+    # channel FIFO, the blocks, then the structural modules and the top.
     out = [FileSet(src=input.name, filetype="systemVerilogSource",
-                   basedir=str(FIFO_SV.parent), files=[FIFO_SV.name])]
-    for c in shell.children:
-        for src in dict.fromkeys(sigs[c["module"]].sources):
-            out.append(FileSet(src=input.name, filetype="systemVerilogSource",
-                               basedir=os.path.dirname(src), files=[os.path.basename(src)]))
+                   basedir=str(FIFO_SV.parent), files=[FIFO_SV.name, VALID_CHECK_SV.name, XLS_FIFO_SV.name])]
+    for src in dict.fromkeys(_child_sources(shell, sigs)):
+        if src in written:
+            continue
+        out.append(FileSet(src=input.name, filetype="systemVerilogSource",
+                           basedir=os.path.dirname(src), files=[os.path.basename(src)]))
     out = list({(fs.basedir, tuple(fs.files)): fs for fs in out}.values())
     out += [FileSet(src=input.name, filetype="systemVerilogSource", basedir=rundir,
-                    files=[os.path.basename(top_sv)], params={"top": top_sig.name}),
+                    files=[os.path.basename(p) for p in written], params={"top": top_sig.name}),
             FileSet(src=input.name, filetype="blockSignature", basedir=rundir,
                     files=[f"{top_sig.name}.sig.json"])]
-    return TaskDataResult(status=0, changed=True, output=out)
+    return TaskDataResult(status=0, changed=True, output=out, markers=markers)
+
+
+def _shell_of(shell, module: str):
+    return next(sh for sh in shell.walk() if sh.module == module) \
+        if module != shell.module else shell
+
+
+def _child_sources(shell, sigs) -> List[str]:
+    """Every source under *shell*'s children, innermost first."""
+    out: List[str] = []
+    for c in shell.children:
+        if c.get("engine") == "structural":
+            out += _child_sources(shell.nested(c), sigs)
+        out += [s for s in sigs[c["module"]].sources if s not in out]
+    return list(dict.fromkeys(out))
 
 
 async def XlsIR(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
@@ -182,7 +462,7 @@ async def XlsIR(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
                 ir.save_signature(predict_signature(comp, CodegenOptions(module_name=module)),
                                   os.path.join(rundir, f"{module}.pred.json"))
                 preds.append(f"{module}.pred.json")
-        except (FwHdlError, XlsFlowError) as e:
+        except _lowering_errors() as e:
             markers += _markers(reporter, e)
             continue
         with open(os.path.join(rundir, f"{module}.ir"), "w") as f:

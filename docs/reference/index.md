@@ -10,10 +10,15 @@ dv-flow task definitions (with
 
 components
 std
+rv
 clocking
 registers
 debug
 macros
 rtl
+contracts
+registry
+knobs
+reports
 tasks
 ```

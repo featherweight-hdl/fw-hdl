@@ -24,11 +24,21 @@ maps to a ``DataTypeComponent`` whose fields are
 
 and whose ``bind_map`` holds one ``Bind(lhs=<child port>, rhs=<provider>)`` per
 ``connect()`` call. The provider is an own port or a channel's ``put_ex`` /
-``get_ex``.
+``get_ex`` / ``get_nb_ex`` (the last for a polling ``fw_get_nb_if`` port; a
+channel has exactly one consumer end).
 
-``build()`` and ``connect()`` must be straight-line: one ``x = new("x", this)``
-per field, and one ``<child>.<port>.connect(<provider>)`` per child port. Anything
-else is rejected at its SV line; the structure is read, not elaborated.
+``build()`` and ``connect()`` are elaborated, not read (RQ-F1): they run in
+the path-D interpreter (:mod:`.elab.hier`), so loops, ``if`` on parameters,
+arrays of children, ports and channels (``x[i]``, RTL name ``x_i``) and
+``fw_component_param`` objects all work. What is checked is meaning, at the SV
+line that broke it: child-to-child binds, ends left unconnected or connected
+twice, an instance name that differs from its field, and a component with both
+children and ``run()``.
+
+Each distinct child (its class specialization plus its parameter-object
+values) is one generated block. A plain class or a typedef keeps its name; a
+bare specialization or a parameter object is named ``<class>__<hash8>``
+(:meth:`.elab.hier.Node.spelling`), with the SV class kept as a readable alias.
 """
 from __future__ import annotations
 
@@ -49,6 +59,20 @@ class Child:
     spelling: str               # how SV names it: a class name or a typedef
     ports: Dict[str, ir.Field]  # its fw_port fields, as the static mapper maps them
     decl: object = None         # the property declaring it (for diagnostics)
+    #: The elaborated instance (.elab.hier.Node): its parameter object, binds, children.
+    node: object = None
+    #: A structural child's own structure (None for a leaf).
+    structure: Optional["Structure"] = None
+
+    @property
+    def param_values(self) -> Dict[str, object]:
+        """``m_params.<field>`` values, folded into constants by the static mapper."""
+        return dict(self.node.param_obj) if self.node is not None else {}
+
+    @property
+    def alias(self) -> str:
+        """The SV class this block was generated from (readable, not unique)."""
+        return str(self.cls)
 
 
 @dc.dataclass
@@ -81,183 +105,94 @@ class StructureMapper(StaticMapper):
     """Maps a structural component class (no ``run()``)."""
 
     def map_structure(self, cls, spelling: Optional[str] = None) -> Structure:
+        from .elab.hier import HierError, elaborate_tree
+        from .elab.interp import ElabError
         self.fields, self.port_dirs = {}, {}
         self.cls_name, self.cls_spelling = cls.name, spelling or cls.name
+        run = next((m for m in cls if m.kind == ast.SymbolKind.Subroutine
+                    and m.name == "run" and m.body is not None), None)
+        if run is not None:
+            raise self.fail(f"class {cls.name!r} has children and a run() task; a component is "
+                            f"either structural (build/connect) or a process (run), not both", run)
+        try:
+            node = elaborate_tree(cls.compilation, cls, self.cls_spelling)
+        except HierError as e:
+            raise self.fail(str(e), e.node) from None
+        except ElabError as e:
+            raise self.fail(f"elaborating {cls.name}: {e}", cls) from None
+        return self.from_node(node, self.cls_spelling)
+
+    def from_node(self, node, spelling: str) -> Structure:
+        """The structure of one elaborated structural instance; a structural
+        child gets its own (``Child.structure``)."""
+        saved = (self.fields, self.port_dirs, self.cls_name, self.cls_spelling)
+        self.fields, self.port_dirs = {}, {}
+        self.cls_name, self.cls_spelling = node.cls.name, spelling
+        try:
+            return self._from_node(node)
+        finally:
+            self.fields, self.port_dirs, self.cls_name, self.cls_spelling = saved
+
+    def _from_node(self, node) -> Structure:
+        cls = node.cls
         fields: List[ir.Field] = []
         children: Dict[str, Child] = {}
-        build = connect = None
-        for m in cls:
-            if m.kind == ast.SymbolKind.ClassProperty:
-                f = self._structural_field(m, children)
-                self.fields[m.name] = len(fields)
-                fields.append(f)
-            elif m.kind == ast.SymbolKind.Subroutine and m.body is not None:
-                if m.name == "run":
-                    raise self.fail(
-                        f"class {cls.name!r} has children and a run() task; a component is "
-                        f"either structural (build/connect) or a process (run), not both", m)
-                if m.name == "build":
-                    build = m
-                elif m.name == "connect":
-                    connect = m
+        for name, p in node.ports.items():
+            ctype = None if p.index is None else p.prop.type.canonicalType.arrayElementType
+            f = self.port_field(p.prop, name=name, ctype=ctype)
+            self.fields[name] = len(fields)
+            fields.append(f)
+        for name, ch in node.channels.items():
+            et = self.dtype(ch.elem_type, ch.prop, f"payload of channel {name!r}", decl=True)
+            self.fields[name] = len(fields)
+            fields.append(ir.Field(name=name, datatype=ir.DataTypeChannel(element_type=et,
+                                                                          depth=ch.depth),
+                                   loc=self.loc(ch.prop),
+                                   pragmas={"fw_role": "channel", "sv_type": str(ch.elem_type),
+                                            "fw_kind": ch.kind}))
+        for name, c in node.children.items():
+            sp = c.spelling()
+            children[name] = Child(name, c.cls, sp, self._child_ports(c.cls, sp, c), c.prop, c,
+                                   self.from_node(c, sp) if c.structural else None)
+            self.fields[name] = len(fields)
+            fields.append(ir.Field(name=name, datatype=ir.DataTypeRef(ref_name=sp),
+                                   loc=self.loc(c.prop),
+                                   pragmas={"fw_role": "child", "sv_class": sp,
+                                            "alias": str(c.cls)}))
         comp = ir.DataTypeComponent(name=self.cls_spelling, super=None, fields=fields,
-                                    loc=self.loc(cls))
-        self._check_build(cls, build, fields)
-        comp.bind_map = self._binds(cls, connect, fields, children)
+                                    loc=self.loc(node.prop or cls))
+        comp.bind_map = [ir.Bind(lhs=self._ref(child, port), rhs=self._ref(pname, end))
+                         for (child, port), (pname, end) in node.binds]
         return Structure(comp, children)
 
-    # ------------------------------------------------------------------
-    def _structural_field(self, m, children: Dict[str, Child]) -> ir.Field:
-        f = self.port_field(m)
-        if f is not None:
-            return f
-        t = m.type
-        ct = t.canonicalType
-        if ct.kind != ast.SymbolKind.ClassType or not _is_component(ct):
-            raise self.fail(f"property {m.name!r}: a structural component holds only ports, "
-                            f"child components and channels", m)
-        if _generic_name(ct) == "fw_channel":
-            return self._channel_field(m, ct)
-        if ct.genericClass is not None and not t.isAlias:
-            raise self.fail(f"child {m.name!r}: a specialization of a parameterized class "
-                            f"needs a typedef, which names its generated block",
-                            m, suggestion=f"typedef {t} <name>_t; and declare {m.name} as <name>_t")
-        spelling = t.name
-        children[m.name] = Child(m.name, ct, spelling, self._child_ports(ct, spelling), m)
-        return ir.Field(name=m.name, datatype=ir.DataTypeRef(ref_name=spelling),
-                        loc=self.loc(m), pragmas={"fw_role": "child", "sv_class": spelling})
+    def _ref(self, name: str, attr: Optional[str]) -> ir.Expr:
+        base = ir.ExprRefField(base=ir.TypeExprRefSelf(), index=self.fields[name])
+        return base if attr is None else ir.ExprAttribute(value=base, attr=attr)
 
-    def _channel_field(self, m, ct) -> ir.Field:
-        elem = depth = None
-        for x in ct:
-            if x.kind == ast.SymbolKind.TypeParameter and x.name == "T":
-                elem = x.targetType.type
-            elif x.kind == ast.SymbolKind.Parameter and x.name == "DEPTH":
-                depth = self.svint_value(x.value.value)
-        if elem is None or depth is None or depth < 0:
-            raise self.fail(f"channel {m.name!r}: cannot read its type and DEPTH", m)
-        et = self.dtype(elem, m, f"payload of channel {m.name!r}", decl=True)
-        return ir.Field(name=m.name, datatype=ir.DataTypeChannel(element_type=et, depth=depth),
-                        loc=self.loc(m), pragmas={"fw_role": "channel", "sv_type": str(elem)})
-
-    def _child_ports(self, ct, spelling: str) -> Dict[str, ir.Field]:
+    def _child_ports(self, ct, spelling: str, node=None) -> Dict[str, ir.Field]:
+        """The child's port fields, by RTL name. From the elaborated *node*
+        when there is one, so an array of ports gives one field per element
+        (``in[2]`` -> ``in_2``)."""
         saved = (self.cls_name, self.cls_spelling, self.port_dirs)
         self.cls_name, self.cls_spelling, self.port_dirs = ct.name, spelling, {}
         try:
             ports = {}
-            for m in ct:
-                if m.kind == ast.SymbolKind.ClassProperty:
-                    f = self.port_field(m)
-                    if f is not None:
-                        ports[m.name] = f
+            if node is not None:
+                for name, p in node.ports.items():
+                    ctype = None if p.index is None else \
+                        p.prop.type.canonicalType.arrayElementType
+                    ports[name] = self.port_field(p.prop, name=name, ctype=ctype)
+                return ports
+            c = ct
+            while c is not None and c.kind == ast.SymbolKind.ClassType \
+                    and _generic_name(c) not in ("fw_component", "fw_component_param"):
+                for m in c:
+                    if m.kind == ast.SymbolKind.ClassProperty and m.name not in ports:
+                        f = self.port_field(m)
+                        if f is not None:
+                            ports[m.name] = f
+                b = c.baseClass
+                c = b.canonicalType if b is not None else None
             return ports
         finally:
             self.cls_name, self.cls_spelling, self.port_dirs = saved
-
-    # ------------------------------------------------------------------
-    def _stmts(self, sub) -> list:
-        b = sub.body
-        return list(b.list) if b.kind == ast.StatementKind.List else [b]
-
-    @staticmethod
-    def _is_super_call(e, name: str) -> bool:
-        return e.kind == ast.ExpressionKind.Call and e.subroutineName == name \
-            and e.thisClass is None
-
-    def _check_build(self, cls, build, fields: List[ir.Field]) -> None:
-        built: Dict[str, object] = {}
-        for s in (self._stmts(build) if build is not None else []):
-            e = s.expr if s.kind == ast.StatementKind.ExpressionStatement else None
-            if e is not None and self._is_super_call(e, "build"):
-                continue
-            ok = e is not None and e.kind == ast.ExpressionKind.Assignment \
-                and e.left.kind == ast.ExpressionKind.NamedValue \
-                and e.left.symbol.name in self.fields \
-                and e.right.kind == ast.ExpressionKind.NewClass
-            if not ok:
-                raise self.fail("build() of a structural component may only construct its "
-                                "fields: `x = new(\"x\", this);`", s)
-            name = e.left.symbol.name
-            if name in built:
-                raise self.fail(f"{name!r} is constructed twice", s)
-            args = e.right.constructorCall.arguments if e.right.constructorCall else []
-            inst = _strip(args[0]) if args else None
-            if inst is None or inst.kind != ast.ExpressionKind.StringLiteral \
-                    or inst.value != name:
-                raise self.fail(f"{name!r} must be constructed as new(\"{name}\", this): the "
-                                f"name becomes the RTL instance name", s)
-            built[name] = s
-        missing = [f.name for f in fields if f.name not in built]
-        if missing:
-            raise self.fail(f"build() of {cls.name!r} does not construct {missing}",
-                            build or cls)
-
-    def _endpoint(self, e, node) -> Tuple[ir.Expr, str]:
-        """An IR expression for a connect() operand, and a readable name."""
-        e = _strip(e)
-        if e.kind == ast.ExpressionKind.NamedValue and e.symbol.name in self.fields:
-            n = e.symbol.name
-            return ir.ExprRefField(base=ir.TypeExprRefSelf(), index=self.fields[n]), n
-        if e.kind == ast.ExpressionKind.MemberAccess:
-            v = _strip(e.value)
-            if v.kind == ast.ExpressionKind.NamedValue and v.symbol.name in self.fields:
-                n = v.symbol.name
-                return (ir.ExprAttribute(
-                    value=ir.ExprRefField(base=ir.TypeExprRefSelf(), index=self.fields[n]),
-                    attr=e.member.name), f"{n}.{e.member.name}")
-        raise self.fail("connect() operands must be `child.port`, `channel.put_ex` / "
-                        "`channel.get_ex`, or one of this component's ports", node)
-
-    def _binds(self, cls, connect, fields: List[ir.Field],
-               children: Dict[str, Child]) -> List[ir.Bind]:
-        kind = {f.name: f.pragmas.get("fw_role", "port") for f in fields}
-        binds: List[ir.Bind] = []
-        used: Dict[str, object] = {}
-
-        def use(name: str, node):
-            if name in used:
-                raise self.fail(f"{name} is connected twice; a channel end and a port "
-                                f"each connect exactly once", node)
-            used[name] = node
-
-        for s in (self._stmts(connect) if connect is not None else []):
-            e = s.expr if s.kind == ast.StatementKind.ExpressionStatement else None
-            if e is not None and self._is_super_call(e, "connect"):
-                continue
-            if e is None or e.kind != ast.ExpressionKind.Call or e.subroutineName != "connect" \
-                    or e.thisClass is None or len(e.arguments) != 1:
-                raise self.fail("connect() of a structural component may only contain "
-                                "`<child>.<port>.connect(<provider>);`", s)
-            lhs, lname = self._endpoint(e.thisClass, s)
-            rhs, rname = self._endpoint(e.arguments[0], s)
-            owner = lname.split(".")[0]
-            if kind.get(owner) != "child" or "." not in lname:
-                raise self.fail(f"{lname}: only a child's port is connected (it is the "
-                                f"consumer; the provider is the argument)", s)
-            if lname.split(".")[1] not in children[owner].ports:
-                raise self.fail(f"{lname} is not a port of {children[owner].spelling}", s)
-            pown = rname.split(".")[0]
-            if kind.get(pown) == "channel":
-                if rname.split(".")[-1] not in ("put_ex", "get_ex"):
-                    raise self.fail(f"{rname}: a channel's ends are put_ex and get_ex", s)
-            elif kind.get(pown) != "port" or "." in rname:
-                raise self.fail(f"{rname}: the provider must be a channel end or one of "
-                                f"{cls.name}'s own ports (child-to-child needs a channel)", s)
-            use(lname, s)
-            use(rname, s)
-            binds.append(ir.Bind(lhs=lhs, rhs=rhs))
-
-        node = connect or cls
-        for c in children.values():
-            for p in c.ports:
-                if f"{c.name}.{p}" not in used:
-                    raise self.fail(f"port {c.name}.{p} is not connected", node)
-        for f in fields:
-            role = kind[f.name]
-            if role == "port" and f.name not in used:
-                raise self.fail(f"port {f.name} is not connected to a child", node)
-            if role == "channel":
-                for end in ("put_ex", "get_ex"):
-                    if f"{f.name}.{end}" not in used:
-                        raise self.fail(f"channel end {f.name}.{end} is not connected", node)
-        return binds

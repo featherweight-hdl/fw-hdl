@@ -1,0 +1,11 @@
+# Shared by every knob set of the response tracker.
+design:
+  top: rt_top
+  xls: [rt_tag, rt_resp]
+rtl:
+  RT_Q_DEPTH: 2
+xls:
+  default: {pipeline_stages: 1, delay_model: unit}
+contracts:
+  latency:
+    "req -> rsp": {max: 8}

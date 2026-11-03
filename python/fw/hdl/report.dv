@@ -1,0 +1,54 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+package:
+  name: fw.hdl.report
+  desc: Reports generated from schedules and knobs
+
+  tasks:
+  - name: Latency
+    scope: export
+    desc: The per-path latency table of an integrated design
+    doc: |
+      For every path from a top input to a top output of the partition, the
+      first-value latency in cycles (every input valid, every output ready):
+
+      * through a proc block, the stage of its send minus the stage of its
+        receive (from the block's schedule and optimized IR), plus one per
+        registered channel (`flop` or `skid` in its codegen signature);
+      * through a channel, 1 for a FIFO (depth >= 1) and 0 for a wire.
+
+      Consumes the `splPartition` of fw.hdl.spl.Partition and, per block, the
+      `xlsOptIR`, `xlsSchedule` and `xlsModuleSignature` of synth.xls.Codegen.
+
+      Outputs (`fwLatencyReport`): `latency.md` (the table) and
+      `latency.json`.
+
+      With an `fwKnobs` input, every top-path `contracts.latency` entry is
+      checked against the table; a violation fails the task, naming the
+      contract, the path and its hops.
+    consumes:
+    - filetype: splPartition
+    - filetype: fwKnobs
+    - filetype: xlsOptIR
+    - filetype: xlsSchedule
+    - filetype: xlsModuleSignature
+    passthrough: none
+    shell: pytask
+    run: fw.hdl.dfm_tasks.ReportLatency
+
+  - name: Ppa
+    scope: export
+    desc: Per-block schedule PPA -- stages, II, critical path and its dominant source line
+    doc: |
+      Writes `xls_ppa.csv` (`fwPpaReport`), one row per block:
+      `block, stages, ii, crit_ps, crit_src, crit_src_ps, path`.
+      `crit_src` is the source line whose nodes contribute the most delay to
+      the critical path the schedule shows; `path` lists the lines along it.
+      Consumes `xlsOptIR`, `xlsSchedule` and (for II) `xlsModuleSignature`
+      from synth.xls.Codegen.
+    consumes:
+    - filetype: xlsOptIR
+    - filetype: xlsSchedule
+    - filetype: xlsModuleSignature
+    passthrough: none
+    shell: pytask
+    run: fw.hdl.dfm_tasks.ReportPpa

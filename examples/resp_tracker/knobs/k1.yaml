@@ -1,0 +1,6 @@
+# The responder pipelined over three stages; a one-deep queue.
+base: common.yaml
+rtl: {RT_Q_DEPTH: 1}
+xls:
+  blocks:
+    rt_resp: {pipeline_stages: 3}

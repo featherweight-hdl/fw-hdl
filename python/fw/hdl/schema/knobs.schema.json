@@ -1,0 +1,151 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://featherweight-hdl/schema/knobs.schema.json",
+  "title": "fw-hdl knob file",
+  "description": "Where registers go, how deep buffers are, each block's schedule and how storage is bound -- decided here, not in the source. Files deep-merge through `base:` (dicts merge, lists and scalars replace; later wins).",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "base": {
+      "description": "Knob files merged first, in order, relative to this file.",
+      "oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}]
+    },
+    "design": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "top": {"type": "string", "description": "The structural top class."},
+        "files": {"type": "array", "items": {"type": "string"}},
+        "incdirs": {"type": "array", "items": {"type": "string"}},
+        "xls": {"type": "array", "items": {"type": "string"},
+                "description": "Classes lowered through XLS."},
+        "model_top": {"type": "string", "description": "Top of the class-model testbench."},
+        "extern": {
+          "type": "object",
+          "description": "Children supplied as RTL: class name -> its block signature and sources.",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["signature"],
+            "properties": {
+              "signature": {"type": "string"},
+              "module": {"type": "string"},
+              "files": {"type": "array", "items": {"type": "string"}}
+            }
+          }
+        }
+      }
+    },
+    "rtl": {
+      "description": "Localparams of the generated <top>_knobs_pkg.",
+      "type": "object",
+      "propertyNames": {"pattern": "^[A-Za-z_][A-Za-z0-9_]*$"},
+      "additionalProperties": {"type": ["integer", "boolean", "string"]}
+    },
+    "xls": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "default": {"$ref": "#/$defs/block"},
+        "blocks": {"type": "object", "additionalProperties": {"$ref": "#/$defs/block"}},
+        "chan_flop": {
+          "description": "Per-channel registering: \"<block>.<channel>\" -> kind.",
+          "type": "object",
+          "additionalProperties": {"$ref": "#/$defs/flop_kind_or_none"}
+        }
+      }
+    },
+    "storage": {
+      "type": "object",
+      "description": "Storage binding: instance path (or `default`) -> binding.",
+      "additionalProperties": {"$ref": "#/$defs/storage"}
+    },
+    "island": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "groups": {
+          "description": "Blocks lowered as one multi-proc XLS package.",
+          "type": "object",
+          "additionalProperties": {"type": "array", "items": {"type": "string"}, "minItems": 1}
+        },
+        "exceptions": {
+          "description": "Island boundaries that are not registered both ways, and why.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["channel", "kind", "reason"],
+            "properties": {
+              "channel": {"type": "string"},
+              "kind": {"enum": ["same_cycle", "fixed_timing", "single_value", "cdc", "merged"]},
+              "reason": {"type": "string", "minLength": 1}
+            }
+          }
+        }
+      }
+    },
+    "delay": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "scale": {"type": "number", "exclusiveMinimum": 0,
+                  "description": "Delay-model pessimism: the scheduler is given clock_period_ps * scale."},
+        "model": {"type": "string", "description": "A delay model name or file for the scheduler."}
+      }
+    },
+    "contracts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "latency": {
+          "description": "\"<block>.<port> -> <block>.<port>\" -> bounds, in cycles.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "min": {"type": "integer", "minimum": 0},
+              "max": {"type": "integer", "minimum": 0},
+              "fixed": {"type": "integer", "minimum": 0}
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "flop_kind": {"enum": ["flop", "skid", "zerolatency"]},
+    "flop_kind_or_none": {"enum": ["none", "flop", "skid", "zerolatency"]},
+    "block": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pipeline_stages": {"type": "integer", "minimum": 1},
+        "clock_period_ps": {"type": "integer", "minimum": 1},
+        "delay_model": {"type": "string"},
+        "worst_case_throughput": {"type": "integer", "minimum": 1},
+        "flop_inputs": {"type": "boolean"},
+        "flop_outputs": {"type": "boolean"},
+        "flop_inputs_kind": {"$ref": "#/$defs/flop_kind"},
+        "flop_outputs_kind": {"$ref": "#/$defs/flop_kind"},
+        "reset": {"type": "string"},
+        "reset_active_low": {"type": "boolean"},
+        "io_constraints": {"type": "array", "items": {"type": "string"}},
+        "extra_args": {"type": "array", "items": {"type": "string"},
+                       "description": "Passed to codegen_main unchanged."}
+      }
+    },
+    "storage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bind"],
+      "properties": {
+        "bind": {"enum": ["flops", "xls_fifo", "wrapper", "sram"]},
+        "module": {"type": "string", "description": "bind: wrapper -- the FIFO module."},
+        "macro": {"type": "string", "description": "bind: sram -- the memory cell."},
+        "read_latency": {"type": "integer", "minimum": 1}
+      }
+    }
+  }
+}

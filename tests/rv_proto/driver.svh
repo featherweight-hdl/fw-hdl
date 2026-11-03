@@ -2,7 +2,7 @@
     // Driver: consumes the initiator API through a port.
     // --------------------------------------------------------------
     class driver extends fw_component implements fw_runnable;
-        fw_port #(rv_initiator_if #(data_t)) out;
+        fw_port #(fw_rv_initiator_if #(data_t)) out;
 
         function new(string name, fw_component parent);
             super.new(name, parent);
@@ -15,9 +15,9 @@
 
         virtual task run();
             for (int unsigned i = 0; i < N; i++) begin
-                automatic data_t v = 32'hcafe_0000 + i;
+                automatic data_t v = beat(i);
                 out.t.send(v);       // out.t resolved at connect
-                $display("[driver]  sent 0x%08h @ %0t", v, $time);
+                $display("[driver]  sent 0x%0h @ %0t", v, $time);
             end
         endtask
     endclass

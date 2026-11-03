@@ -1,0 +1,9 @@
+# Registered block boundaries: skid buffers on the tagger's output and the
+# responder's input, so the queue can be a wire (depth 0) and still be a
+# registered island boundary.
+base: common.yaml
+rtl: {RT_Q_DEPTH: 0}
+xls:
+  chan_flop:
+    rt_tag.out: skid
+    rt_resp.in: skid

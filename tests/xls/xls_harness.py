@@ -217,15 +217,24 @@ class ProcRun:
 
 
 def proc_testbench(pkg_name, cls: str, comp: ir.DataTypeComponent,
-                   inputs: Dict[str, Sequence[int]]) -> str:
-    """*pkg_name* is the package to import, or a list of them."""
+                   inputs: Dict[str, Sequence[int]],
+                   after: Optional[Dict[str, str]] = None) -> str:
+    """*pkg_name* is the package to import, or a list of them. *after* maps an
+    input to another: it is offered only once that one's values are all taken
+    (configuration before data, as :func:`rtl_testbench`)."""
+    after = after or {}
     pkgs = [pkg_name] if isinstance(pkg_name, str) else list(pkg_name)
     gets, puts = [], []
+    flow = {}
     for f in comp.fields:
         if f.kind == ir.FieldKind.Port:
             t = f.pragmas["sv_type"]
             w = f.datatype.element_type.bits
+            flow[f.name] = f.pragmas.get("fw_flow", "ready_valid")
             (gets if isinstance(f.datatype, ir.DataTypeGetIF) else puts).append((f.name, t, w))
+    # The API each harness end provides, by the port's flow control.
+    get_api = {"ready_valid": "fw_get_if", "level": "fw_level_if"}
+    put_api = {"ready_valid": "fw_put_if", "valid": "fw_valid_put_if", "level": "fw_level_set_if"}
     L = ['`include "fw_std_macros.svh"', "module xh_proc_tb;",
          "  import fw_hdl_pkg::*;", "  import fw_std_pkg::*;"]
     L += [f"  import {p}::*;" for p in pkgs]
@@ -235,6 +244,14 @@ def proc_testbench(pkg_name, cls: str, comp: ir.DataTypeComponent,
     gets = [(n, f"xh_t_{n}", w) for n, _, w in gets]
     puts = [(n, f"xh_t_{n}", w) for n, _, w in puts]
     for name, t, w in gets:
+        if flow[name] == "level":       # holds the first input value
+            L += [f"  class xh_src_{name} implements fw_level_if #({t});",
+                  f"    {t} q[$];",
+                  f"    virtual function {t} get();",
+                  "      return q.size() ? q[0] : '0;",
+                  "    endfunction",
+                  "  endclass"]
+            continue
         L += [f"  class xh_src_{name} implements fw_get_if #({t});",
               f"    {t} q[$];",
               f"    virtual task get(output {t} t);",
@@ -243,20 +260,30 @@ def proc_testbench(pkg_name, cls: str, comp: ir.DataTypeComponent,
               "    endtask",
               "  endclass"]
     for name, t, w in puts:
-        L += [f"  class xh_snk_{name} implements fw_put_if #({t});",
+        if flow[name] == "level":       # a level output is not observed
+            L += [f"  class xh_snk_{name} implements fw_level_set_if #({t});",
+                  f"    {t} q[$];",
+                  f"    virtual function void set(input {t} t);",
+                  "    endfunction",
+                  "  endclass"]
+            continue
+        kw = "function void" if flow[name] == "valid" else "task"
+        L += [f"  class xh_snk_{name} implements {put_api[flow[name]]} #({t});",
               f"    {t} q[$];",
-              f"    virtual task put(input {t} t);",
+              f"    virtual {kw} put(input {t} t);",
               # Print on arrival, so a run that stops at an assertion still
               # reports what it sent before.
               f'      $display("O {name} %0d %0h", q.size(), t);',
               "      q.push_back(t);",
-              "    endtask",
+              f"    end{kw.split()[0]}",
               "  endclass"]
     L += ["  class xh_top extends fw_component;", f"    {cls} dut;"]
     for name, t, w in gets:
-        L += [f"    xh_src_{name} src_{name} = new;", f"    fw_export #(fw_get_if #({t})) e_{name};"]
+        L += [f"    xh_src_{name} src_{name} = new;",
+              f"    fw_export #({get_api[flow[name]]} #({t})) e_{name};"]
     for name, t, w in puts:
-        L += [f"    xh_snk_{name} snk_{name} = new;", f"    fw_export #(fw_put_if #({t})) e_{name};"]
+        L += [f"    xh_snk_{name} snk_{name} = new;",
+              f"    fw_export #({put_api[flow[name]]} #({t})) e_{name};"]
     L += ["    function new(string name, fw_component parent);",
           "      super.new(name, parent);", "    endfunction",
           "    function void build();", '      dut = new("dut", this);']
@@ -277,9 +304,18 @@ def proc_testbench(pkg_name, cls: str, comp: ir.DataTypeComponent,
           '    clk_dom = new("clock", top, u_clk);',
           "    top.clock.connect(clk_dom);"]
     for name, t, w in gets:
+        if name in after:
+            continue
         for v in inputs.get(name, []):
             L.append(f"    top.src_{name}.q.push_back({t}'({sv_hex(v, w)}));")
-    L += ["    fork top.start(); join_none", "    #10;"]
+    L += ["    fork top.start(); join_none"]
+    for name, t, w in gets:
+        if name in after:
+            L.append(f"    while (top.src_{after[name]}.q.size() != 0) #1;")
+            L.append("    #1;")
+            for v in inputs.get(name, []):
+                L.append(f"    top.src_{name}.q.push_back({t}'({sv_hex(v, w)}));")
+    L += ["    #10;"]
     for f in comp.fields:
         if f.kind != ir.FieldKind.Port and isinstance(f.datatype, ir.DataTypeInt):
             L.append(f'    $display("S {f.name} %0h", top.dut.{f.name});')
@@ -289,7 +325,8 @@ def proc_testbench(pkg_name, cls: str, comp: ir.DataTypeComponent,
 
 def rtl_testbench(sig: ir.BlockSignature, inputs: Dict[str, Sequence[int]],
                   seed: int, throttle: int = 3, idle: int = 200,
-                  max_cycles: int = 200000) -> str:
+                  max_cycles: int = 200000, after: Optional[Dict[str, str]] = None,
+                  settle: int = 8) -> str:
     """A testbench for the RTL that XLS codegen produced, written from its
     signature alone.
 
@@ -298,20 +335,39 @@ def rtl_testbench(sig: ir.BlockSignature, inputs: Dict[str, Sequence[int]],
     valid and data until the handshake. Each output channel is a sink whose
     ready is random in the same way. Every handshake on an output prints
     ``O <channel> <index> <hex>``, the same format as :func:`proc_testbench`.
-    The run ends ``idle`` cycles after the last handshake."""
+    The run ends ``idle`` cycles after the last handshake.
+
+    By channel kind (``spl_flow.channel_kind``): a **level** input holds
+    ``inputs[name][0]`` (or 0) from reset; a level output is not observed. A
+    **valid-only** output has no ready: every cycle with valid is a transfer.
+
+    *after* maps an input to another: it is offered only ``settle`` cycles
+    after that one's last value is taken (configuration before data)."""
+    after = after or {}
+    from fw.hdl.spl_flow import channel_kind
     rst_on, rst_off = ("1'b0", "1'b1") if sig.reset_active_low else ("1'b1", "1'b0")
     L = ["module xh_rtl_tb;", "  logic clk = 0;", f"  logic rst = {rst_on};",
          "  int cycle = 0, last = 0;"]
     conns = [f".{sig.clock}(clk)", f".{sig.reset}(rst)"]
+    kind = {ch.name: channel_kind(ch) for ch in sig.channels}
+    streams = [ch for ch in sig.channels if kind[ch.name] != "level"]
     for ch in sig.channels:
         w, n = ch.payload.bits, ch.name
         L += [f"  logic [{w - 1}:0] {n}_d;", f"  logic {n}_v, {n}_r;"]
-        conns += [f".{ch.ports['data']}({n}_d)", f".{ch.ports['valid']}({n}_v)",
-                  f".{ch.ports['ready']}({n}_r)"]
+        conns += [f".{ch.ports[r]}({n}_{r[0]})" for r in ("data", "valid", "ready")
+                  if r in ch.ports]
+        if kind[n] == "level":
+            if ch.direction == "in":
+                v = (list(inputs.get(n, [])) or [0])[0]
+                L += [f"  initial {n}_d = {sv_hex(v, w)};"]
+            continue
+        if kind[n] == "valid":
+            L += [f"  assign {n}_r = 1'b1;"]
         if ch.direction == "in":
             vals = list(inputs.get(n, []))
             L += [f"  localparam int {n}_n = {len(vals)};",
-                  f"  logic [{w - 1}:0] {n}_q [{max(len(vals), 1)}];", f"  int {n}_i = 0;"]
+                  f"  logic [{w - 1}:0] {n}_q [{max(len(vals), 1)}];", f"  int {n}_i = 0;",
+                  f"  int {n}_at = {0 if not vals else -1};"]
             L += ["  initial begin"] + [f"    {n}_q[{i}] = {sv_hex(v, w)};"
                                         for i, v in enumerate(vals)] + ["  end"]
         else:
@@ -319,33 +375,41 @@ def rtl_testbench(sig: ir.BlockSignature, inputs: Dict[str, Sequence[int]],
     L += [f"  {sig.name} dut({', '.join(conns)});",
           "  initial begin",
           f"    void'($urandom({seed}));"]
-    for ch in sig.channels:
+    for ch in streams:
         n = ch.name
-        L += [f"    {n}_v = 0; {n}_d = 0;" if ch.direction == "in" else f"    {n}_r = 0;"]
+        if ch.direction == "in":
+            L += [f"    {n}_v = 0; {n}_d = 0;"]
+        elif kind[n] != "valid":
+            L += [f"    {n}_r = 0;"]
     L += ["    repeat (4) begin #5 clk = 1; #5 clk = 0; end",
           f"    rst = {rst_off};",
           f"    while (cycle - last < {idle} && cycle < {max_cycles}) begin",
           "      // drive, then sample on the rising edge"]
-    for ch in sig.channels:
+    for ch in streams:
         n = ch.name
         if ch.direction == "in":
-            L += [f"      if (!{n}_v && {n}_i < {n}_n && ($urandom % {throttle + 1}) != 0) begin",
+            gate = ""
+            if n in after:
+                d = after[n]
+                gate = f" && {d}_at >= 0 && cycle >= {d}_at + {settle}"
+            L += [f"      if (!{n}_v && {n}_i < {n}_n{gate} && ($urandom % {throttle + 1}) != 0) begin",
                   f"        {n}_v = 1; {n}_d = {n}_q[{n}_i];",
                   "      end"]
-        else:
+        elif kind[n] != "valid":
             L += [f"      {n}_r = ($urandom % {throttle + 1}) != 0;"]
     L += ["      #5 clk = 1;"]
-    for ch in sig.channels:
+    for ch in streams:
         n = ch.name
         if ch.direction == "in":
-            L += [f"      if ({n}_v && {n}_r) begin {n}_i++; last = cycle; end"]
+            L += [f"      if ({n}_v && {n}_r) begin {n}_i++; last = cycle; "
+                  f"if ({n}_i == {n}_n) {n}_at = cycle; end"]
         else:
             L += [f"      if ({n}_v && {n}_r) begin",
                   f'        $display("O {n} %0d %0h", {n}_i, {n}_d);',
                   f"        {n}_i++; last = cycle;",
                   "      end"]
     L += ["      #5 clk = 0;"]
-    for ch in sig.channels:
+    for ch in streams:
         if ch.direction == "in":
             n = ch.name
             L += [f"      if ({n}_v && {n}_r_q) {n}_v = 0;"]
@@ -353,7 +417,7 @@ def rtl_testbench(sig: ir.BlockSignature, inputs: Dict[str, Sequence[int]],
           '    $display("X done");', "    $finish;", "  end"]
     # ready is sampled at the edge, before the DUT's combinational outputs settle
     # on the new state, so keep a copy of the handshake for the falling edge.
-    for ch in sig.channels:
+    for ch in streams:
         if ch.direction == "in":
             n = ch.name
             L += [f"  logic {n}_r_q = 0;",

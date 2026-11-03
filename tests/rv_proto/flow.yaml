@@ -3,22 +3,22 @@ fragment:
   name: rv_proto
 
   tasks:
-  # Ready/valid protocol-kit test: defines a small ready/valid API +
-  # transactor and drives data across the signal-level handshake.
+  # The ready/valid kit (src/std/rv) at its default 32-bit payload: a driver,
+  # sink and observer over the initiator, target and monitor transactors.
+  # tests/rv_proto/test_rv_kit.py also runs it at 8 bits and at a struct type.
   - name: rv-proto-tb
     uses: std.FileSet
     with:
       type: systemVerilogSource
       include:
       - rv_proto_pkg.sv
-      - rv_proto_xtors.sv
       - rv_proto_tb.sv
       incdirs:
       - .
 
   - name: rv-proto-img
     uses: hdlsim.vlt.SimImage
-    needs: [hdl.sv-src, rv-proto-tb]
+    needs: [hdl.sv-src, hdl.rv-src, rv-proto-tb]
     with:
       top: [rv_proto_tb]
 

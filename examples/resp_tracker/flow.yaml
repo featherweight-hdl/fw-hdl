@@ -1,0 +1,53 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+# The response-tracker reference design: one source, many schedules.
+#
+#   dfm run all -D kset=k1
+#
+# builds knob set knobs/<kset>.yaml with fw-hdl tasks only: resolve the knobs,
+# partition, check the latency contracts (before any XLS tool runs), generate
+# each block with its own schedule, integrate with the boundary checks, and
+# write the latency table and the per-block PPA.
+package:
+  name: resp_tracker
+  imports: [fw.hdl.spl, fw.hdl.knobs, fw.hdl.check, fw.hdl.report, synth.xls, zuspec.xls]
+  with:
+    kset:
+      type: str
+      value: k0
+
+  tasks:
+  - name: knob-file
+    uses: std.FileSet
+    with: {type: fwKnobFile, base: knobs, include: ["${{ kset }}.yaml"]}
+  - name: knobs
+    uses: fw.hdl.knobs.Resolve
+    needs: [knob-file]
+  - name: src
+    uses: std.FileSet
+    needs: [knobs]
+    with: {type: systemVerilogSource, base: src, include: [rt_pkg.sv]}
+  - name: part
+    uses: fw.hdl.spl.Partition
+    needs: [src, knobs]
+    with: {top: rt_top, xls: [rt_tag, rt_resp]}
+  - name: contracts
+    uses: fw.hdl.check.Contracts
+    needs: [part, knobs]
+  - name: rtl
+    uses: synth.xls.Codegen
+    needs: [part, knobs, contracts]
+  - name: sig
+    uses: zuspec.xls.Signature
+    needs: [part, rtl]
+  - name: top
+    uses: fw.hdl.spl.Integrate
+    needs: [part, sig, knobs]
+    with: {registered_boundaries: error}
+  - name: latency
+    uses: fw.hdl.report.Latency
+    needs: [part, rtl, knobs]
+  - name: ppa
+    uses: fw.hdl.report.Ppa
+    needs: [rtl]
+  - name: all
+    needs: [top, latency, ppa]

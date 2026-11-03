@@ -20,4 +20,23 @@ puts on a channel with a depth.
    :files: fw_*_xtor_if.sv
 
 .. autosvmodule:: fw_rv_fifo
+
+.. autosvmodule:: fw_valid_check
 ```
+
+## `fw_rv_fifo` behaviour (normative)
+
+The library's FIFO-bound classes rely on these points. A replacement FIFO (an XLS-internal
+FIFO, a supplied wrapper, or a memory macro behind a wrapper) must keep them:
+
+| Property | `DEPTH >= 1` | `DEPTH == 0` |
+|---|---|---|
+| `in_rdy` | `count != DEPTH`, from registered state only | `out_rdy` (a wire) |
+| `out_vld` | `count != 0`, from registered state only | `in_vld` |
+| Bypass (a value in and out in the same cycle) | none: latency ≥ 1 | the handshake *is* the transfer |
+| Push while full and popping | refused: there is no pass-through when full, so full rate needs `DEPTH >= 2` | — |
+| Head | shown ahead: `out_data` is the oldest value while `out_vld` | `in_data` |
+| Reset | synchronous, active high | — |
+
+`DEPTH == 0` is safe to chain only because a block's valid never depends on its ready.
+The boundary check (`RQ-B3` in the plan) enforces that.

@@ -1,0 +1,59 @@
+# The ready/valid kit (src/std/rv), described for shell generation and
+# lowering: format zuspec.kit v1 (zuspec-synth docs/kits.md).
+format: zuspec.kit
+version: 1
+kit: fw_rv
+protocol: rv
+description: Ready/valid streaming, payload type T, one beat per valid && ready.
+
+transactors:
+  # The class calls send(): pins driven outward.
+  - api: fw_rv_initiator_if
+    endpoint: port
+    module: fw_rv_initiator_xtor
+    params: {T: "$T"}
+    if_path: u_if
+    bridge: "fw_rv_initiator_bridge #($T)"
+    ports:      {data: data, valid: valid, ready: ready}
+    directions: {data: out,  valid: out,   ready: in}
+    pins:       {data: "${ep}", valid: "${ep}_valid", ready: "${ep}_ready"}
+    method: send
+    mirror: fw_rv_target_xtor
+    monitor: fw_rv_monitor_xtor
+
+  # The class provides put(): pins driven inward.
+  - api: fw_rv_target_if
+    endpoint: export
+    module: fw_rv_target_xtor
+    params: {T: "$T"}
+    if_path: u_if
+    bridge: "fw_rv_target_bridge #($T)"
+    ports:      {data: data, valid: valid, ready: ready}
+    directions: {data: in,   valid: in,    ready: out}
+    pins:       {data: "${ep}", valid: "${ep}_valid", ready: "${ep}_ready"}
+    method: put
+    mirror: fw_rv_initiator_xtor
+    monitor: fw_rv_monitor_xtor
+
+  # The class observes: every pin is an input.
+  - api: fw_rv_monitor_if
+    endpoint: export
+    module: fw_rv_monitor_xtor
+    params: {T: "$T"}
+    if_path: u_if
+    bridge: "fw_rv_monitor_bridge #($T)"
+    ports:      {data: data, valid: valid, ready: ready}
+    directions: {data: in,   valid: in,    ready: in}
+    pins:       {data: "${ep}", valid: "${ep}_valid", ready: "${ep}_ready"}
+    method: observe
+
+# The std put/get APIs over ready/valid pins.
+adapters:
+  - from: {api: fw_put_if, endpoint: port}
+    to:   {api: fw_rv_initiator_if}
+    bridge: "fw_put_to_rv_bridge #($T)"
+    method: put
+  - from: {api: fw_get_if, endpoint: port}
+    to:   {api: fw_rv_target_if, endpoint: export}
+    bridge: "fw_get_from_rv_bridge #($T)"
+    method: get

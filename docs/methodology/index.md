@@ -6,6 +6,8 @@
 overview
 components
 synthesis
+knobs
+islands
 testing
 flows
 ```

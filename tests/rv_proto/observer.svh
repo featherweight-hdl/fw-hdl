@@ -1,5 +1,5 @@
     // --------------------------------------------------------------
-    // Observer: PROVIDES the rv_monitor_if implementation (via the API macro).
+    // Observer: PROVIDES the fw_rv_monitor_if implementation (via the API macro).
     // A passive subscriber -- records every beat the monitor publishes.
     // --------------------------------------------------------------
     class observer extends fw_component;
@@ -17,6 +17,6 @@
 
         virtual function void mon_observe(input data_t t);
             seen.push_back(t);
-            $display("[monitor] observed 0x%08h @ %0t", t, $time);
+            $display("[monitor] observed 0x%0h @ %0t", t, $time);
         endfunction
     endclass

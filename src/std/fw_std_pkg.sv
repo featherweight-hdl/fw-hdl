@@ -15,6 +15,8 @@ package fw_std_pkg;
     `include "fw_put_if.svh"      // put(t)            -- write to an output, no handshake
     `include "fw_get_if.svh"      // get(t)            -- sample an input, no handshake
     `include "fw_get_nb_if.svh"   // + try_get(t)      -- poll an input (opt-in; not KPN)
+    `include "fw_valid_put_if.svh" // put(t), a function -- valid only: never waits (credits)
+    `include "fw_level_if.svh"    // get() / set(t)    -- a level: no handshake
     `include "fw_reqrsp_if.svh"   // call(out, in)     -- blocking request/response
     `include "fw_mem_if.svh"      // read/write(addr)  -- protocol-independent memory access
 
@@ -26,8 +28,19 @@ package fw_std_pkg;
     // (DEPTH == 0) between two components.
     `include "fw_channel.svh"
 
+    // The other two channel kinds: valid-only (the producer never waits) and
+    // a level (a wire in RTL).
+    `include "fw_valid_channel.svh"
+    `include "fw_level_channel.svh"
+
     // A FIFO with packed storage and one writer per side, which lowers:
     // count, peek and flush for designs (fw_channel does not lower).
     `include "fw_fifo.svh"
+
+    `include "fw_reg_component.svh" // a register block as a child: write stream in, levels out
+
+    // Library classes the registry recognizes (fw.hdl.lib): the bodies are models.
+    `include "credit/fw_credit_tx.svh" // credit-gated sender, valid-only out
+    `include "arb/fw_arbiter.svh"      // N-input arbiter, {index, value} out
 
 endpackage

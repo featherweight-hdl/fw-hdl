@@ -34,6 +34,9 @@ module fw_rv_fifo #(
 
         wire push = in_vld && in_rdy;
         wire pop  = out_vld && out_rdy;
+        // push/pop widened to the count width without a parameter-width cast.
+        wire [AW:0] inc = {{AW{1'b0}}, push};
+        wire [AW:0] dec = {{AW{1'b0}}, pop};
 
         assign in_rdy   = (count != DEPTH[AW:0]);
         assign out_vld  = (count != '0);
@@ -61,7 +64,7 @@ module fw_rv_fifo #(
                 end
                 if (pop)
                     rd <= next(rd);
-                count <= count + (AW+1)'(push) - (AW+1)'(pop);
+                count <= count + inc - dec;
             end
         end
     end

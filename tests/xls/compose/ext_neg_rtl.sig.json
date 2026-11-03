@@ -1,0 +1,55 @@
+{
+  "format": "zuspec.block-signature",
+  "version": 3,
+  "name": "ext_neg_rtl",
+  "kind": "proc",
+  "engine": "rtl",
+  "sources": [
+    "ext_neg_rtl.sv"
+  ],
+  "clock": "clk",
+  "reset": "rst",
+  "reset_active_low": false,
+  "latency": null,
+  "initiation_interval": null,
+  "channels": [
+    {
+      "name": "in",
+      "direction": "in",
+      "flow_control": "ready_valid",
+      "ports": {
+        "data": "in",
+        "valid": "in_vld",
+        "ready": "in_rdy"
+      },
+      "payload": {
+        "kind": "int",
+        "bits": 8,
+        "signed": false
+      },
+      "payload_sv_type": "bit [7:0]",
+      "stage": null,
+      "flop_kind": "flop"
+    },
+    {
+      "name": "out",
+      "direction": "out",
+      "flow_control": "ready_valid",
+      "ports": {
+        "data": "out",
+        "valid": "out_vld",
+        "ready": "out_rdy"
+      },
+      "payload": {
+        "kind": "int",
+        "bits": 8,
+        "signed": false
+      },
+      "payload_sv_type": "bit [7:0]",
+      "stage": null,
+      "flop_kind": "flop"
+    }
+  ],
+  "data_ports": [],
+  "valid_ports": {}
+}

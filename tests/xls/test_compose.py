@@ -101,6 +101,21 @@ STRUCT = """package sneg_pkg;
             forever begin bit [7:0] x; in.t.get(x); out.t.put(x); end
         endtask
     endclass
+    class poll extends fw_component implements fw_runnable;
+        fw_port #(fw_get_nb_if #(bit [7:0])) in;
+        fw_port #(fw_put_if #(bit [7:0])) out;
+        function new(string name, fw_component parent);
+            super.new(name, parent);
+            add_runnable(this);
+        endfunction
+        function void build();
+            in = new("in", this);
+            out = new("out", this);
+        endfunction
+        virtual task run();
+            forever begin bit [7:0] x; bit g; g = in.t.try_get(x); if (g) out.t.put(x); end
+        endtask
+    endclass
     class top extends fw_component;
         fw_port #(fw_get_if #(bit [7:0])) in;
         fw_port #(fw_put_if #(bit [7:0])) out;
@@ -128,6 +143,10 @@ endpackage
 
 GOOD_BUILD = '            ch = new("ch", this);'
 GOOD_CONNECT = "            a.out.connect(ch.put_ex);\n            b.in.connect(ch.get_ex);"
+# a -> ch -> p (polling) -> ch2 -> b
+NB_MEMBERS = "        poll p;\n        fw_channel #(bit [7:0], 1) ch2;"
+NB_BUILD = GOOD_BUILD + '\n            p = new("p", this);\n            ch2 = new("ch2", this);'
+NB_TAIL = "            p.out.connect(ch2.put_ex);\n            b.in.connect(ch2.get_ex);"
 
 STRUCT_CASES = [
     ("good", "", GOOD_BUILD, GOOD_CONNECT, None),
@@ -144,8 +163,19 @@ STRUCT_CASES = [
     ("wrong_instance_name", "", '            ch = new("fifo", this);  // HERE', GOOD_CONNECT,
      r"must be constructed as new\(\"ch\", this\)"),
     ("not_constructed", "", "", GOOD_CONNECT, r"does not construct \['ch'\]"),
-    ("loop_in_build", "", GOOD_BUILD + "\n            for (int i = 0; i < 1; i++) a = new(\"a\", this);  // HERE",
-     GOOD_CONNECT, r"may only construct its fields"),
+    # RQ-F1: build() is elaborated, so a loop is fine; building one field twice is not.
+    ("loop_in_build", "", '            for (int i = 0; i < 1; i++) ch = new("ch", this);',
+     GOOD_CONNECT, None),
+    ("constructed_twice", "", GOOD_BUILD + '\n            a = new("a", this);  // HERE',
+     GOOD_CONNECT, r"'a' is constructed twice"),
+    # B4b: a polling port takes the channel's get_nb_ex end.
+    ("nb_consumer", NB_MEMBERS, NB_BUILD,
+     "            a.out.connect(ch.put_ex);\n            p.in.connect(ch.get_nb_ex);\n" + NB_TAIL,
+     None),
+    ("two_consumers", NB_MEMBERS, NB_BUILD,
+     "            a.out.connect(ch.put_ex);\n            p.in.connect(ch.get_nb_ex);\n"
+     "            b.in.connect(ch.get_ex);\n            p.out.connect(ch2.put_ex);",
+     r"channel ch has two consumers"),
     ("data_property", "        bit [7:0] count;  // HERE", GOOD_BUILD, GOOD_CONNECT,
      r"holds only ports, child components and channels"),
 ]
@@ -260,3 +290,29 @@ def test_t1_through_dv_flow(workdir, task):
                         extra=["--assert", "+define+ASSERT_ON"])
     got = [int(l.split()[3], 16) for l in out if l.startswith("O out ")]
     assert got == reference(xs)
+
+
+@needs_xls
+@pytest.mark.verilator
+@pytest.mark.parametrize("stages,seed", [(1, 3), (2, 4)])
+def test_b4b_polling_consumer_rtl_view(workdir, stages, seed):
+    """B4b: a child that polls (fw_get_nb_if) on a channel's get_nb_ex end
+    partitions, integrates and passes every value through."""
+    from fw.hdl.spl_flow import spl_to_rtl
+    from xls_harness import REPO, rtl_testbench
+    rng = random.Random(seed)
+    xs = [rng.getrandbits(8) for _ in range(300)]
+    design = spl_to_rtl([str(HERE / "compose" / "nb_pkg.sv")], "nb_top",
+                        ["nb_inc", "nb_poll"], stages=stages)
+    workdir.mkdir(parents=True, exist_ok=True)
+    paths = []
+    for name, text in design.files.items():
+        (workdir / name).write_text(text)
+        paths.append(workdir / name)
+    tb = workdir / "xh_rtl_tb.sv"
+    tb.write_text(rtl_testbench(design.signature, {"in": xs}, seed))
+    out = run_verilator(paths + [REPO / "src" / "rtl" / "fw_rv_fifo.sv", tb], "xh_rtl_tb",
+                        workdir / "rtl", with_lib=False,
+                        extra=["--assert", "+define+ASSERT_ON"])
+    got = [int(l.split()[3], 16) for l in out if l.startswith("O out ")]
+    assert got == [(x + 2) & 0xff for x in xs]

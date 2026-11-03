@@ -1,0 +1,2 @@
+# Minimum latency: one stage everywhere, no channel registers.
+base: common.yaml

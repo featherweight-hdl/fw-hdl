@@ -77,12 +77,16 @@ class StaticMapper:
         self.lvalue: List[ir.Expr] = []
         self.port_dirs: Dict[str, str] = {}       # port name -> "get" | "put"
         self.port_nb: set = set()                 # get ports that may poll (fw_get_nb_if)
+        self.port_flow: Dict[str, str] = {}       # port name -> "valid" | "level"
         self.cls_name: Optional[str] = None
         self.cls_spelling: Optional[str] = None
         # Functions reached by calls, mapped on demand.
         self.functions: Dict[str, ir.Function] = {}
         self._fn_queue: List[object] = []
         self._fn_names: Dict[str, str] = {}       # symbol key -> IR function name
+        # fw_component_param: the instance's parameter-object fields, read as
+        # constants (`m_params.<field>`); set per map_component call.
+        self.param_values: Dict[str, object] = {}
 
     # ------------------------------------------------------------------
     # Diagnostics and locations
@@ -192,8 +196,23 @@ class StaticMapper:
         return _synth(ir.ExprCast(target_type=dt, value=ir.ExprConstant(value=v),
                                   loc=self.loc(node)), "literal-type")
 
+    def _param_ref(self, e) -> Optional[object]:
+        """The value of ``m_params.<field>`` for this instance, or None."""
+        if e.kind != EK.MemberAccess or not self.param_values:
+            return None
+        v = e.value
+        while v.kind == EK.Conversion:
+            v = v.operand
+        if v.kind == EK.NamedValue and v.symbol.kind == ast.SymbolKind.ClassProperty \
+                and v.symbol.name == "m_params":
+            return self.param_values.get(e.member.name)
+        return None
+
     def const_int(self, e) -> Optional[int]:
         """The value of an elaboration-time constant expression, or None."""
+        pv = self._param_ref(e)
+        if isinstance(pv, int):
+            return pv
         cv = getattr(e, "constant", None)
         if cv is None and e.kind == EK.NamedValue \
                 and e.symbol.kind in (ast.SymbolKind.Parameter, ast.SymbolKind.EnumValue):
@@ -283,6 +302,11 @@ class StaticMapper:
         if k == EK.RangeSelect:
             return self.range_select(e)
         if k == EK.MemberAccess:
+            pv = self._param_ref(e)
+            if isinstance(pv, int) and t.isIntegral:
+                dt = self.dtype(t, e)
+                return _synth(ir.ExprCast(target_type=dt, value=ir.ExprConstant(
+                    value=pv & ((1 << dt.bits) - 1))), "literal-type")
             return self.member(e)
         if k == EK.Call:
             return self.call(e)
@@ -452,7 +476,27 @@ class StaticMapper:
         raise self.fail(f"assignment pattern of type {t} is not supported", e)
 
     # -- calls -------------------------------------------------------------
+    def _level_get(self, e) -> Optional[ir.Expr]:
+        """`v = <level>.t.get()`: an awaited get on a single_value channel."""
+        e0 = e
+        while e.kind == EK.Conversion:
+            e = e.operand
+        if e.kind != EK.Call or e.isSystemCall or e.subroutineName != "get":
+            return None
+        port = self._port_of(e.thisClass, e)
+        if port is None or self.port_flow.get(port[1]) != "level":
+            return None
+        if self.in_function is not None:
+            raise self.fail("channel operations are only allowed in run()", e0)
+        ref = ir.ExprRefField(base=ir.TypeExprRefSelf(), index=port[0])
+        return ir.ExprAwait(value=ir.ExprCall(func=ir.ExprAttribute(value=ref, attr="get"),
+                                              args=[]))
+
     def call(self, e) -> ir.Expr:
+        port = None if e.isSystemCall else self._port_of(e.thisClass, e)
+        if port is not None:
+            raise self.fail(f"{port[1]}.t.{e.subroutineName}() used as a value; read a level "
+                            f"on its own: `v = {port[1]}.t.get();`", e)
         if e.isSystemCall:
             name = e.subroutineName
             if name in ("$signed", "$unsigned") and len(e.arguments) == 1:
@@ -597,6 +641,9 @@ class StaticMapper:
             nb = self.try_get(e.right)
             if nb is not None:
                 return [ir.StmtAssign(targets=[target], value=nb)]
+            lv = self._level_get(e.right)
+            if lv is not None:
+                return [ir.StmtAssign(targets=[target], value=lv)]
             self.lvalue.append(target)
             try:
                 value = self.expr(e.right)
@@ -672,15 +719,24 @@ class StaticMapper:
             idx, pname = port
             ref = ir.ExprRefField(base=ir.TypeExprRefSelf(), index=idx)
             method = e.subroutineName
+            level = self.port_flow.get(pname) == "level"
             if self.in_function is not None:
                 raise self.fail("channel operations are only allowed in run()", e)
+            if method == "get" and self.port_dirs[pname] == "get" and level:
+                raise self.fail(f"{pname} is a level: read it as `v = {pname}.t.get();`", e)
             if method == "get" and self.port_dirs[pname] == "get":
                 if len(e.arguments) != 1 or e.arguments[0].kind != EK.Assignment:
                     raise self.fail(f"expected `{pname}.t.get(x)`", e)
                 target = self.lvalue_expr(e.arguments[0].left)
                 call = ir.ExprCall(func=ir.ExprAttribute(value=ref, attr="get"), args=[])
                 return [ir.StmtAssign(targets=[target], value=ir.ExprAwait(value=call))]
-            if method == "put" and self.port_dirs[pname] == "put":
+            if method == "set" and level and self.port_dirs[pname] == "put":
+                if len(e.arguments) != 1:
+                    raise self.fail(f"expected `{pname}.t.set(v)`", e)
+                call = ir.ExprCall(func=ir.ExprAttribute(value=ref, attr="put"),
+                                   args=[self.expr(e.arguments[0])])
+                return [ir.StmtExpr(expr=ir.ExprAwait(value=call))]
+            if method == "put" and self.port_dirs[pname] == "put" and not level:
                 if len(e.arguments) != 1:
                     raise self.fail(f"expected `{pname}.t.put(v)`", e)
                 call = ir.ExprCall(func=ir.ExprAttribute(value=ref, attr="put"),
@@ -789,8 +845,11 @@ class StaticMapper:
             (self.locals, self.local_names, self.params, self.ret_var,
              self.in_function) = saved
 
-    def port_field(self, m) -> Optional[ir.Field]:
-        ct = m.type.canonicalType
+    def port_field(self, m, name: Optional[str] = None, ctype=None) -> Optional[ir.Field]:
+        """The port field for property *m*; *name* and *ctype* override its
+        name and type (one element of an array of ports)."""
+        ct = (ctype or m.type).canonicalType
+        pname = name or m.name
         if ct.kind != ast.SymbolKind.ClassType or ct.genericClass is None \
                 or ct.genericClass.name != "fw_port":
             return None
@@ -799,22 +858,25 @@ class StaticMapper:
             if x.kind == ast.SymbolKind.TypeParameter and x.name == "T":
                 inner = x.targetType.type.canonicalType
         if inner is None or inner.kind != ast.SymbolKind.ClassType or inner.genericClass is None:
-            raise self.fail(f"port {m.name!r}: cannot read its interface type", m)
+            raise self.fail(f"port {pname!r}: cannot read its interface type", m)
         api = inner.genericClass.name
-        if api not in ("fw_get_if", "fw_get_nb_if", "fw_put_if"):
-            raise self.fail(f"port {m.name!r} uses {api}; the static subset has channel "
-                            f"ports only (fw_get_if / fw_get_nb_if / fw_put_if)", m)
-        nb = api == "fw_get_nb_if"
-        if nb:
-            api = "fw_get_if"
+        # Port APIs and their flow control are registry entries (fw.hdl.lib).
+        from ..lib.registry import port_apis
+        apis = port_apis()
+        if api not in apis:
+            raise self.fail(f"port {pname!r} uses {api}; the static subset has channel "
+                            f"ports only ({' / '.join(sorted(apis))})", m)
+        nb = apis[api].polls
+        flow = apis[api].flow
+        api = "fw_get_if" if apis[api].direction == "get" else "fw_put_if"
         elem = None
         for x in inner:
             if x.kind == ast.SymbolKind.TypeParameter and x.name == "T":
                 elem = x.targetType.type
-        et = self.dtype(elem, m, f"payload of port {m.name!r}", decl=True)
-        self.port_dirs[m.name] = "get" if api == "fw_get_if" else "put"
+        et = self.dtype(elem, m, f"payload of port {pname!r}", decl=True)
+        self.port_dirs[pname] = "get" if api == "fw_get_if" else "put"
         if nb:
-            self.port_nb.add(m.name)
+            self.port_nb.add(pname)
         dt = ir.DataTypeGetIF(element_type=et) if api == "fw_get_if" else \
             ir.DataTypePutIF(element_type=et)
         # The payload type as SV spells it from outside the class, for
@@ -823,14 +885,22 @@ class StaticMapper:
         sv_type = str(elem)
         if elem.isAlias and f"::{self.cls_name}::" in sv_type:
             sv_type = f"{self.cls_spelling}::{elem.name}"
-        return ir.Field(name=m.name, datatype=dt, kind=ir.FieldKind.Port, loc=self.loc(m),
-                        pragmas={"sv_type": sv_type, **({"get_nb": True} if nb else {})})
+        if flow != "ready_valid":
+            self.port_flow[pname] = flow
+        return ir.Field(name=pname, datatype=dt, kind=ir.FieldKind.Port, loc=self.loc(m),
+                        pragmas={"sv_type": sv_type, **({"get_nb": True} if nb else {}),
+                                 **({"fw_flow": flow} if flow != "ready_valid" else {})})
 
-    def map_component(self, cls, spelling: Optional[str] = None) -> ir.DataTypeComponent:
+    def map_component(self, cls, spelling: Optional[str] = None,
+                      param_values: Optional[Dict[str, object]] = None) -> ir.DataTypeComponent:
         """Map component class *cls*. ``spelling`` is how SV names it from
         outside: the class name, or a typedef of a parameterized class's
-        specialization; it names the component and its class-scoped types."""
+        specialization; it names the component and its class-scoped types.
+        ``param_values`` are this instance's ``m_params`` fields (an
+        ``fw_component_param``), which the body reads as constants."""
         self.fields, self.port_dirs, self.port_nb = {}, {}, set()
+        self.port_flow = {}
+        self.param_values = dict(param_values or {})
         self.cls_name, self.cls_spelling = cls.name, spelling or cls.name
         fields: List[ir.Field] = []
         run = None

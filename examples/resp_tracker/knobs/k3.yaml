@@ -1,0 +1,6 @@
+# A contract no schedule of k1 can meet -- the one-deep queue alone costs a
+# cycle -- so fw.hdl.check.Contracts rejects it before any XLS tool runs.
+base: k1.yaml
+contracts:
+  latency:
+    "req -> rsp": {max: 0}
