@@ -601,7 +601,9 @@ def step_testbench(pkg_name: str, cls: str, comp: ir.DataTypeComponent,
           "    function void build();", '      dut = new("dut", this);']
     L += [f'      e_{n} = new("e_{n}", this, x_{n});' for n, *_ in ports]
     L += ["    endfunction", "    function void connect();"]
-    L += [f"      dut.{n}.connect(e_{n});" for n, *_ in ports]
+    svn = {f.name: f.pragmas.get("sv_name", f.name) for f in comp.fields
+           if f.kind == ir.FieldKind.Port}
+    L += [f"      dut.{svn[n]}.connect(e_{n});" for n, *_ in ports]
     L += ["    endfunction", "  endclass",
           "  bit clock = 0, reset = 0;",
           "  always #5 clock = ~clock;",
@@ -679,10 +681,13 @@ def _trace(out: Sequence[str]) -> Trace:
 
 
 def check_step(sv_files: Sequence[str], pkg_name: str, cls: str, schedule: Schedule,
-               cycles: int, workdir: Path, rtl_stages: Sequence[int] = (1,)) -> Trace:
+               cycles: int, workdir: Path, rtl_stages: Sequence[int] = (1,),
+               rtl_flags: Sequence[Sequence[str]] = ((),)) -> Trace:
     """The class model's per-cycle output trace, and XLS's RTL against
-    it cycle for cycle at each of *rtl_stages*. At k stages the RTL's outputs
-    come k - 1 cycles later; nothing else may differ."""
+    it cycle for cycle at each of *rtl_stages*. At k stages each RTL output
+    may come a fixed 0 to k - 1 cycles later (the stage XLS schedules its
+    send in), plus one per flopped side named in *rtl_flags* (codegen
+    flags, one set per RTL build); nothing else may differ."""
     comp = sv_to_component(sv_files, cls)
     pkg = lower_component(comp)
     workdir.mkdir(parents=True, exist_ok=True)
@@ -691,9 +696,9 @@ def check_step(sv_files: Sequence[str], pkg_name: str, cls: str, schedule: Sched
     model = _trace(run_verilator(list(sv_files) + [tb], "xh_step_tb", workdir / "model"))
     if codegen_main() is None or opt_main() is None:
         return model
-    for stages in rtl_stages:
-        res = run_codegen(format_package(pkg), CodegenOptions(), stages=stages)
-        d = workdir / f"xls_s{stages}"
+    for stages, flags in ((st, fl) for st in rtl_stages for fl in rtl_flags):
+        res = run_codegen(format_package(pkg), CodegenOptions(), stages=stages, extra=flags)
+        d = workdir / f"xls_s{stages}{''.join(f.split('=')[0].replace('-', '_') for f in flags)}"
         d.mkdir(parents=True, exist_ok=True)
         (d / "xls_rtl.sv").write_text(res.verilog)
         (d / "xh_rtl_step_tb.sv").write_text(rtl_step_testbench(res.signature, schedule,
@@ -701,9 +706,14 @@ def check_step(sv_files: Sequence[str], pkg_name: str, cls: str, schedule: Sched
         rtl = _trace(run_verilator([d / "xls_rtl.sv", d / "xh_rtl_step_tb.sv"],
                                    "xh_rtl_step_tb", d / "rtl", with_lib=False,
                                    extra=["--assert", "+define+ASSERT_ON"]))
-        lag = stages - 1
         for name in set(model) | set(rtl):
-            want = [(c + lag, v) for c, v in model.get(name, [])]
-            assert rtl.get(name, []) == want, \
-                f"{cls}.{name} ({stages} stage(s)): rtl={rtl.get(name)} model+{lag}={want}"
+            m, r = model.get(name, []), rtl.get(name, [])
+            # The output's pipeline delay: the stage its send is scheduled in.
+            lag = r[0][0] - m[0][0] if m and r else 0
+            r = [(c, v) for c, v in r if c < cycles + lag]      # the model's window
+            want = [(c + lag, v) for c, v in m]
+            # Each flopped side (--flop_inputs/--flop_outputs=true) may add a cycle.
+            most = stages - 1 + sum(f.endswith("=true") for f in flags)
+            assert 0 <= lag <= most and r == want, \
+                f"{cls}.{name} ({stages} stage(s) {list(flags)}): rtl={r} model+{lag}={want}"
     return model

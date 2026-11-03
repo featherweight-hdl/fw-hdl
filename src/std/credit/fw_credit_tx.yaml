@@ -1,0 +1,15 @@
+# The fw_credit_tx contract: what every implementation of the class keeps,
+# whatever its timing. Checked on the class model in tests/stdlib (with
+# fw_order_pkg) and on the class model and RTL in tests/xls/lib (with
+# fw.hdl.verif.canon).
+class: fw_credit_tx
+points:
+  in: "in[v]: a value taken (key: v)"
+  out: "out: {vc, value} sent (key: vc)"
+  cr: "cr: one credit returned to a VC"
+# fw.hdl.verif.canon.Rule.from_dict / fw_order_rule
+order:
+  per_key: true          # in order within a VC; VCs interleave freely
+conservation:
+  # Credits spent and not yet returned, at the end of every cycle.
+  credits_out_max: CREDITS

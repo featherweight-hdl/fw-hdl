@@ -83,6 +83,19 @@ same way, with its `step()` body as the activation:
 | `out.t.put(v)` on an `fw_valid_put_if` port | a send that the design never back-pressures (Integrate ties its ready and asserts it is not needed) |
 | statement order | none across channels: the cycle is atomic, and a receive token-ordered after a send cannot be scheduled at II=1. Operations on one channel keep the rules above |
 
+An array of ports, `fw_port #(..) in[N]`, becomes one channel per element (`in_0`,
+`in_1`, ...). An element is named by a constant or by the variable of a loop
+`for (int k = A; k < B; k++)` with constant `A` and `B`; such a loop is unrolled
+in the front end, so each iteration names one channel:
+
+```systemverilog
+for (int k = 0; k < NVC; k++)
+    if (!m_hv[k] && in[k].t.try_get(x)) begin
+        m_hold[k] = x;
+        m_hv[k] = 1'b1;
+    end
+```
+
 The flow rejects, with a located diagnostic, what it cannot lower. That includes:
 - a component with both `run()` and `step()`;
 - two operations on one port where one is unguarded;
@@ -114,7 +127,6 @@ Partition takes the entry's lowering:
 
 | Class | Lowering | Parameters it takes |
 |---|---|---|
-| `fw_credit_tx #(T, CREDITS)` | XLS: credit-gated sender (`fw.hdl.lib.xls_ir.credit_tx`) | any |
 | `fw_arbiter #(T, N, POLICY)` | XLS: round-robin arbiter with one hold per input (`rr_arb`) | `POLICY = FW_ARB_RR`; `N` 2–64 |
 | `fw_reg_component #(BLK, W, AW)` | native: the regblock core ({doc}`islands`, Register blocks as children) | `W` 8/16/32/64 |
 
@@ -126,6 +138,10 @@ following are errors at the child's SV line, not a fallback to mapping the body:
 
 An extern assignment in the knob file wins over an entry, so RTL supplied for a
 library class is used as is. A recognized class cannot join a multi-proc group yet.
+
+A library class written as a cycle step, such as `fw_credit_tx`, has no entry: its
+`step()` is in the static subset, so it is mapped like any component and assigned to
+XLS by its class name ({doc}`../reference/lib`).
 
 The registry is the zuspec lowering registry, keyed by SV class name. The channel
 classes and port APIs that the front end matches are entries too.

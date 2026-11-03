@@ -64,9 +64,4 @@ the channels that join two ports, and the put transactor. The three channel kind
 .. autosvclass:: fw_std_pkg::fw_reg_level
    :members:
 
-.. autosvclass:: fw_std_pkg::fw_credit_tx
-   :members:
-
-.. autosvclass:: fw_std_pkg::fw_arbiter
-   :members:
 ```

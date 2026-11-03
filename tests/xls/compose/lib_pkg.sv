@@ -1,7 +1,8 @@
 // Recognized library classes as children:
 //
-//   ctop: in -> tx (fw_credit_tx #(bit [7:0], 2), valid-only out) -> v
-//            (fw_valid_channel, 3) -> rx (crx: ^ 8'h3c, returns a credit) -> out;
+//   ctop: in -> tx (fw_credit_tx #(bit [7:0], 2), valid-only out {vc, value})
+//            -> v (fw_valid_channel, 3) -> rx (crx: ^ 8'h3c, returns a credit
+//            to VC 0) -> out;
 //         rx -> cr (fw_channel, 2) -> tx
 //   atop: a, b, c -> arb (fw_arbiter #(bit [7:0], 3), round robin) -> out
 //         ({index, value}, 10 bits)
@@ -14,9 +15,9 @@ package lib_pkg;
     import fw_std_pkg::*;
 
     class crx extends fw_component implements fw_runnable;
-        fw_port #(fw_get_if #(bit [7:0])) in;
+        fw_port #(fw_get_if #(bit [8:0])) in;
         fw_port #(fw_put_if #(bit [7:0])) out;
-        fw_port #(fw_put_if #(bit))       cr;
+        fw_port #(fw_put_if #(bit [0:0])) cr;
         function new(string name, fw_component parent);
             super.new(name, parent);
             add_runnable(this);
@@ -28,21 +29,21 @@ package lib_pkg;
         endfunction
         virtual task run();
             forever begin
-                bit [7:0] x;
+                bit [8:0] x;
                 in.t.get(x);
-                cr.t.put(1'b1);
-                out.t.put(x ^ 8'h3c);
+                cr.t.put(1'b0);
+                out.t.put(x[7:0] ^ 8'h3c);
             end
         endtask
     endclass
 
     class ctop extends fw_component;
-        fw_port #(fw_get_if #(bit [7:0])) in;
-        fw_port #(fw_put_if #(bit [7:0])) out;
-        fw_credit_tx #(bit [7:0], 2)      tx;
-        crx                               rx;
-        fw_valid_channel #(bit [7:0], 3)  v;
-        fw_channel #(bit, 2)              cr;
+        fw_port #(fw_get_nb_if #(bit [7:0])) in;
+        fw_port #(fw_put_if #(bit [7:0]))    out;
+        fw_credit_tx #(bit [7:0], 2)         tx;
+        crx                                  rx;
+        fw_valid_channel #(bit [8:0], 3)     v;
+        fw_channel #(bit [0:0], 2)           cr;
         function new(string name, fw_component parent);
             super.new(name, parent);
         endfunction
@@ -55,12 +56,12 @@ package lib_pkg;
             cr = new("cr", this);
         endfunction
         function void connect();
-            tx.in.connect(in);
+            tx.in[0].connect(in);
             tx.out.connect(v.put_ex);
             rx.in.connect(v.get_ex);
             rx.out.connect(out);
             rx.cr.connect(cr.put_ex);
-            tx.cr.connect(cr.get_ex);
+            tx.cr.connect(cr.get_nb_ex);
         endfunction
     endclass
 

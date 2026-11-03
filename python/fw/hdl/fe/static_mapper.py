@@ -102,6 +102,8 @@ class StaticMapper:
         self.config = config
         self.reporter = reporter
         self.sm = source_manager
+        self.port_arrays: Dict[str, int] = {}     # port-array property -> N
+        self.unroll_vals: Dict[str, int] = {}     # unrolled loop variable -> value
         # Per-body scopes
         self.fields: Dict[str, int] = {}
         self.locals: Dict[str, str] = {}          # symbol key -> IR local name
@@ -366,6 +368,11 @@ class StaticMapper:
                 raise self.fail(f"unknown argument {sym.name!r}", e)
             return ir.ExprRefParam(name=self.params[key])
         if sk == ast.SymbolKind.Variable:
+            if key in self.unroll_vals:
+                return _synth(ir.ExprCast(target_type=self.dtype(sym.type, e),
+                                          value=ir.ExprConstant(value=self.unroll_vals[key] &
+                                                                ((1 << int(sym.type.bitWidth)) - 1))),
+                              "unroll")
             if key not in self.locals:
                 raise self.fail(f"variable {sym.name!r} is used outside the scope it was "
                                 f"declared in, or is not a local", e)
@@ -715,11 +722,102 @@ class StaticMapper:
             return ir.ExprConcat(values=[self.lvalue_expr(o) for o in e.operands])
         raise self.fail(f"cannot assign to {k.name}", e)
 
+    @staticmethod
+    def _port_array_len(m) -> Optional[int]:
+        """N for a property declared ``fw_port #(..) p[N]``, else None."""
+        ct = m.type.canonicalType
+        if not m.type.isUnpackedArray or ct.kind != ast.SymbolKind.FixedSizeUnpackedArrayType:
+            return None
+        et = ct.elementType.canonicalType
+        if et.kind != ast.SymbolKind.ClassType or et.genericClass is None \
+                or et.genericClass.name != "fw_port":
+            return None
+        return int(ct.range.width)
+
+    def _const_index(self, e) -> Optional[int]:
+        """The value of index expression *e*: a constant, or a loop variable
+        of a loop being unrolled."""
+        while e.kind == EK.Conversion:
+            e = e.operand
+        cv = getattr(e, "constant", None)
+        if cv is not None:
+            return self.svint_value(cv.value)
+        if e.kind == EK.IntegerLiteral:
+            return self.svint_value(e.value)
+        if e.kind == EK.NamedValue and e.symbol.kind == ast.SymbolKind.Parameter:
+            cv = getattr(e.symbol, "value", None)
+            return None if cv is None else self.svint_value(cv.value)
+        if e.kind == EK.NamedValue:
+            return self.unroll_vals.get(self.key(e.symbol))
+        return None
+
+    def _uses_port_array(self, s) -> bool:
+        """Statement *s* indexes an array of ports."""
+        names = self.port_arrays
+        hit = []
+
+        def f(x):
+            if not hit and isinstance(x, ast.ElementSelectExpression) \
+                    and x.value.kind == EK.NamedValue and x.value.symbol.name in names:
+                hit.append(x)
+            return True
+        if names:
+            s.visit(f)
+        return bool(hit)
+
+    def unrolled_for(self, s) -> List[ir.Stmt]:
+        """A loop that indexes an array of ports, unrolled here so each
+        iteration names one port: ``for (int k = A; k < B; k++)`` (or ``<=``,
+        ``k += 1``) with constant A and B."""
+        bad = "a loop over an array of ports must be `for (int k = A; k < B; k++)` with " \
+              "constant A and B"
+        if len(s.loopVars) != 1 or s.loopVars[0].initializer is None or len(s.steps) != 1:
+            raise self.fail(bad, s)
+        var = s.loopVars[0]
+        a = self._const_index(var.initializer)
+        c = s.stopExpr
+        while c is not None and c.kind == EK.Conversion:
+            c = c.operand
+        if a is None or c is None or c.kind != EK.BinaryOp \
+                or c.op not in (BO.LessThan, BO.LessThanEqual):
+            raise self.fail(bad, s)
+        lhs = c.left
+        while lhs.kind == EK.Conversion:
+            lhs = lhs.operand
+        b = self._const_index(c.right)
+        if lhs.kind != EK.NamedValue or self.key(lhs.symbol) != self.key(var) or b is None:
+            raise self.fail(bad, s)
+        st = s.steps[0]
+        if not (st.kind == EK.UnaryOp and str(st.op).lower().endswith("increment")) and \
+                not (st.kind == EK.Assignment and st.isCompound() and
+                     self._const_index(st.right) == 1):
+            raise self.fail(bad, s)
+        out: List[ir.Stmt] = []
+        key = self.key(var)
+        for k in range(a, b + 1 if c.op == BO.LessThanEqual else b):
+            self.unroll_vals[key] = k
+            try:
+                out.extend(self.body(s.body))
+            finally:
+                del self.unroll_vals[key]
+        return out
+
     def _port_of(self, this, e) -> Optional[Tuple[int, str]]:
         """``<port>.t`` -> (field index, port name) for a channel port."""
         if this is None or this.kind != EK.MemberAccess or this.member.name != "t":
             return None
         v = this.value
+        if v.kind == EK.ElementSelect and v.value.kind == EK.NamedValue \
+                and v.value.symbol.name in self.port_arrays:
+            k = self._const_index(v.selector)
+            n = self.port_arrays[v.value.symbol.name]
+            if k is None:
+                raise self.fail(f"{v.value.symbol.name}[...]: a port array is indexed by a "
+                                f"constant or a constant-bound loop variable", v)
+            if not 0 <= k < n:
+                raise self.fail(f"{v.value.symbol.name}[{k}] is out of range [0:{n - 1}]", v)
+            name = f"{v.value.symbol.name}_{k}"
+            return self.fields[name], name
         if v.kind != EK.NamedValue or v.symbol.kind != ast.SymbolKind.ClassProperty:
             return None
         name = v.symbol.name
@@ -844,6 +942,8 @@ class StaticMapper:
         return ir.StmtMatch(subject=subject, cases=cases)
 
     def for_loop(self, s) -> List[ir.Stmt]:
+        if self._uses_port_array(s.body):
+            return self.unrolled_for(s)
         out: List[ir.Stmt] = []
         for v in s.loopVars:
             if self.key(v) not in self.locals:
@@ -954,7 +1054,13 @@ class StaticMapper:
         # generated harnesses and glue. A typedef inside the class is reached
         # through the class (or its specialization's typedef).
         sv_type = str(elem)
-        if elem.isAlias and f"::{self.cls_name}::" in sv_type:
+        ct_e = elem.canonicalType
+        if elem.isAlias and sv_type.count("::") >= 2 and \
+                (ct_e.isSimpleBitVector or ct_e.isScalar):
+            # Declared in a class (a type parameter, or a class typedef): a
+            # plain vector is spelled as itself.
+            sv_type = str(ct_e)
+        elif elem.isAlias and f"::{self.cls_name}::" in sv_type:
             sv_type = f"{self.cls_spelling}::{elem.name}"
         if flow != "ready_valid":
             self.port_flow[pname] = flow
@@ -974,8 +1080,20 @@ class StaticMapper:
         self.param_values = dict(param_values or {})
         self.cls_name, self.cls_spelling = cls.name, spelling or cls.name
         fields: List[ir.Field] = []
+        self.port_arrays, self.unroll_vals = {}, {}
         for m in cls:
             if m.kind == ast.SymbolKind.ClassProperty:
+                n = self._port_array_len(m)
+                if n is not None:
+                    # An array of ports: one port per element (`in[2]` -> `in_2`).
+                    et = m.type.canonicalType.elementType
+                    self.port_arrays[m.name] = n
+                    for k in range(n):
+                        f = self.port_field(m, name=f"{m.name}_{k}", ctype=et)
+                        f.pragmas["sv_name"] = f"{m.name}[{k}]"
+                        self.fields[f.name] = len(fields)
+                        fields.append(f)
+                    continue
                 f = self.port_field(m)
                 if f is None:
                     dt = self.dtype(m.type, m, f"property {m.name!r}", decl=True)

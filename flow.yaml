@@ -44,6 +44,7 @@ package:
     - rv_proto.rv-proto
     - xls.xls-conformance
     - order.selftest
+    - stdlib.unit
 
   fragments:
   - src/flow.yaml
@@ -73,3 +74,4 @@ package:
   - tests/xls/flow.yaml
   - tests/xls/compose/flow.yaml
   - tests/order/flow.yaml
+  - tests/stdlib/flow.yaml

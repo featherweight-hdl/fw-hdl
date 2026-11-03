@@ -10,6 +10,7 @@ dv-flow task definitions (with
 
 components
 std
+lib
 rv
 clocking
 registers

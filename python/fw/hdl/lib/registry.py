@@ -9,7 +9,6 @@ child's SV line, not a fallback to mapping the body.
 ======================  ========  ===========================================
 class                   target    lowering
 ======================  ========  ===========================================
-``fw_credit_tx``        xls       :func:`.xls_ir.credit_tx`
 ``fw_arbiter``          xls       :func:`.xls_ir.rr_arb` (``FW_ARB_RR`` only)
 ``fw_reg_component``    native    :mod:`fw.hdl.native` (regblock core)
 ``fw_channel`` and      elab      :class:`ChannelKind`: the channel's kind
@@ -17,6 +16,9 @@ the other channels
 ``fw_get_if`` and the   elab      :class:`PortApi`: the port's direction and
 other port APIs                   flow control
 ======================  ========  ===========================================
+
+A library class written as a cycle step (``fw_credit_tx``) has no entry: its
+step() is mapped like any other component's.
 
 The entries load through the ``zuspec.lowering`` entry point (``register``)
 and, for an install that predates it, on first use (:func:`registry`).
@@ -74,12 +76,6 @@ def _clog2(n: int) -> int:
     return max(1, (n - 1).bit_length())
 
 
-def _credit_tx(p: Dict[str, Any], name: str) -> str:
-    return xls_ir.package(name, xls_ir.credit_tx(
-        width=p["T"], credits=p["CREDITS"], cbits=(p["CREDITS"]).bit_length() or 1, name=name,
-        ports=("in", "cr", "out")))
-
-
 def _arbiter(p: Dict[str, Any], name: str) -> str:
     n = p["N"]
     return xls_ir.package(name, xls_ir.rr_arb(n=n, width=p["T"], name=name,
@@ -87,8 +83,6 @@ def _arbiter(p: Dict[str, Any], name: str) -> str:
 
 
 ENTRIES = [
-    ("fw_credit_tx", {"T": int, "CREDITS": range(1, 1 << 16)}, "xls",
-     XlsLowering(_credit_tx, lambda p: ["in", "cr", "out"])),
     ("fw_arbiter", {"T": int, "N": range(2, 65), "POLICY": ("FW_ARB_RR",)}, "xls",
      XlsLowering(_arbiter, lambda p: [f"in_{k}" for k in range(p["N"])] + ["out"])),
     ("fw_reg_component", {"BLK": str, "W": (8, 16, 32, 64), "AW": range(1, 65)}, "native",

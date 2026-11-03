@@ -1,0 +1,36 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+# The library classes (src/std/<area>/) on SVUnit: directed corner cases on
+# each class model, with the class's contract checked.
+fragment:
+  name: stdlib
+
+  tasks:
+  - name: svunit
+    uses: hdltest.svunit.Lib
+  - name: order
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      base: ../../src/std/order
+      include: [fw_order_pkg.sv]
+  - name: unit-tests
+    uses: std.FileSet
+    with:
+      type: svunitTest
+      include: [fw_credit_tx_unit_test.sv]
+      incdirs: [.]
+  - name: runner
+    uses: hdltest.svunit.TestRunner
+    needs: [unit-tests]
+  - name: img
+    uses: hdlsim.vlt.SimImage
+    needs: [svunit, hdl.sv-src, order, runner]
+    with: {top: [testrunner]}
+  - name: run
+    uses: hdlsim.vlt.SimRun
+    needs: [img]
+    with: {mode: test}
+  - name: unit
+    uses: hdltest.svunit.Check
+    needs: [run]
+    with: {name: stdlib, gate: true}
