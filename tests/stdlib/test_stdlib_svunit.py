@@ -25,4 +25,4 @@ def test_stdlib_unit(tmp_path):
     (REPO / "build" / "stdlib-unit.log").write_text(out)
     assert r.returncode == 0, out[-3000:]
     m = re.search(r"SVUnit pass: (\d+) of (\d+) tests passing", out)
-    assert m and m.group(1) == m.group(2) and int(m.group(2)) >= 6, out[-3000:]
+    assert m and m.group(1) == m.group(2) and int(m.group(2)) >= 12, out[-3000:]

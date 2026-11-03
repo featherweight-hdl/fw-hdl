@@ -9,7 +9,8 @@ child's SV line, not a fallback to mapping the body.
 ======================  ========  ===========================================
 class                   target    lowering
 ======================  ========  ===========================================
-``fw_arbiter``          xls       :func:`.xls_ir.rr_arb` (``FW_ARB_RR`` only)
+``fw_arbiter``          xls       :func:`.xls_ir.rr_arb` (round robin or
+                                  fixed priority)
 ``fw_reg_component``    native    :mod:`fw.hdl.native` (regblock core)
 ``fw_channel`` and      elab      :class:`ChannelKind`: the channel's kind
 the other channels
@@ -79,11 +80,12 @@ def _clog2(n: int) -> int:
 def _arbiter(p: Dict[str, Any], name: str) -> str:
     n = p["N"]
     return xls_ir.package(name, xls_ir.rr_arb(n=n, width=p["T"], name=name,
-                                              ins=[f"in_{k}" for k in range(n)], out="out"))
+                                              ins=[f"in_{k}" for k in range(n)], out="out",
+                                              prio=p["POLICY"] == "FW_ARB_PRIO"))
 
 
 ENTRIES = [
-    ("fw_arbiter", {"T": int, "N": range(2, 65), "POLICY": ("FW_ARB_RR",)}, "xls",
+    ("fw_arbiter", {"T": int, "N": range(2, 65), "POLICY": ("FW_ARB_RR", "FW_ARB_PRIO")}, "xls",
      XlsLowering(_arbiter, lambda p: [f"in_{k}" for k in range(p["N"])] + ["out"])),
     ("fw_reg_component", {"BLK": str, "W": (8, 16, 32, 64), "AW": range(1, 65)}, "native",
      NativeLowering("regblock")),

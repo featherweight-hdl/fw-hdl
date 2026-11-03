@@ -10,8 +10,12 @@ their facts are checked by tests/xls/test_ir_templates.py.
               The credit return is a non-blocking receive taken every
               activation, so a return is never held behind data.
   rr_arb      accept-then-arbitrate round-robin arbiter: a 1-entry hold
-              register per input (ready = slot empty), a rotated mask,
-              one_hot, and priority_sel over (data, index) tuples.
+              register per input, a grant over the full holds only (a
+              rotated mask, one_hot, and priority_sel over (data, index)
+              tuples), and ready = hold empty or granted this cycle. A
+              stalled send therefore offers the same value until it is taken.
+              With prio=True, fixed priority: one_hot over the holds as they
+              are.
   arb_credit  rr_arb -> in-package chan (depth 2) -> credit_tx under one top
               proc (proc_instantiation), for --multi_proc codegen.
 
@@ -70,7 +74,8 @@ def credit_tx(width: int = 8, credits: int = 4, cbits: int = 4, name: str = "cre
 
 
 def rr_arb(n: int = 4, width: int = 8, name: str = "rr_arb", top: bool = True,
-           ins=None, out: str = "arb_out", id0: int = 1) -> str:
+           ins=None, out: str = "arb_out", id0: int = 1, prio: bool = False) -> str:
+    """*prio*: fixed priority (the lowest valid index) instead of round robin."""
     ins = list(ins or [f"in{k}" for k in range(n)])
     ib = max(1, (n - 1).bit_length())
     ow = width + ib
@@ -83,35 +88,27 @@ def rr_arb(n: int = 4, width: int = 8, name: str = "rr_arb", top: bool = True,
     L += [f"  hv: bits[{n}] = state_read(state_element=hv, id={i()})",
           f"  last: bits[{n}] = state_read(state_element=last, id={i()})",
           f"  tok0: token = after_all(id={i()})"]
-    for k, c in enumerate(ins):
+    for k in range(n):
         L += [f"  h{k}: bits[{width}] = state_read(state_element=h{k}, id={i()})",
               f"  hv{k}: bits[1] = bit_slice(hv, start={k}, width=1, id={i()})",
-              f"  free{k}: bits[1] = not(hv{k}, id={i()})",
-              f"  r{k}: (token, bits[{width}], bits[1]) = receive(tok0, predicate=free{k}, "
-              f"channel={c}, blocking=false, id={i()})",
-              f"  rt{k}: token = tuple_index(r{k}, index=0, id={i()})",
-              f"  rd{k}: bits[{width}] = tuple_index(r{k}, index=1, id={i()})",
-              f"  rv{k}: bits[1] = tuple_index(r{k}, index=2, id={i()})",
-              f"  v{k}: bits[1] = or(hv{k}, rv{k}, id={i()})",
-              f"  d{k}: bits[{width}] = sel(hv{k}, cases=[rd{k}, h{k}], id={i()})",
               f"  ix{k}: bits[{ib}] = literal(value={k}, id={i()})",
-              f"  t{k}: (bits[{width}], bits[{ib}]) = tuple(d{k}, ix{k}, id={i()})"]
-    vs = ", ".join(f"v{k}" for k in reversed(range(n)))
+              f"  t{k}: (bits[{width}], bits[{ib}]) = tuple(h{k}, ix{k}, id={i()})"]
     ts = ", ".join(f"t{k}" for k in range(n))
-    rts = ", ".join(f"rt{k}" for k in range(n))
-    L += [f"  req: bits[{n}] = concat({vs}, id={i()})",
-          f"  none: bits[{n}] = literal(value=0, id={i()})",
+    # The grant is over the holds only (registered state), so a stalled send
+    # offers the same value until it is taken.
+    L += [f"  none: bits[{n}] = literal(value=0, id={i()})",
           f"  nonen: bits[{n}] = literal(value=1, id={i()})",
           # gt = the inputs above the last grant: ~((last << 1) - 1)
           f"  lsh: bits[{n}] = shll(last, nonen, id={i()})",
           f"  lm1: bits[{n}] = sub(lsh, nonen, id={i()})",
           f"  gt: bits[{n}] = not(lm1, id={i()})",
-          f"  hi: bits[{n}] = and(req, gt, id={i()})",
+          f"  hi: bits[{n}] = and(hv, gt, id={i()})",
           f"  anyhi: bits[1] = ne(hi, none, id={i()})",
-          f"  src: bits[{n}] = sel(anyhi, cases=[req, hi], id={i()})",
+          (f"  src: bits[{n}] = identity(hv, id={i()})" if prio else
+           f"  src: bits[{n}] = sel(anyhi, cases=[hv, hi], id={i()})"),
           f"  oh: bits[{n + 1}] = one_hot(src, lsb_prio=true, id={i()})",
           f"  g: bits[{n}] = bit_slice(oh, start=0, width={n}, id={i()})",
-          f"  anyv: bits[1] = ne(req, none, id={i()})",
+          f"  anyv: bits[1] = ne(hv, none, id={i()})",
           f"  z{width}: bits[{width}] = literal(value=0, id={i()})",
           f"  zi: bits[{ib}] = literal(value=0, id={i()})",
           f"  dflt: (bits[{width}], bits[{ib}]) = tuple(z{width}, zi, id={i()})",
@@ -120,14 +117,26 @@ def rr_arb(n: int = 4, width: int = 8, name: str = "rr_arb", top: bool = True,
           f"  od: bits[{width}] = tuple_index(ps, index=0, id={i()})",
           f"  oi: bits[{ib}] = tuple_index(ps, index=1, id={i()})",
           f"  ov: bits[{ow}] = concat(oi, od, id={i()})",
-          f"  rtok: token = after_all({rts}, id={i()})",
-          f"  stok: token = send(rtok, ov, predicate=anyv, channel={out}, id={i()})",
+          f"  stok: token = send(tok0, ov, predicate=anyv, channel={out}, id={i()})"]
+    # An input is ready while its hold is empty or is granted this cycle.
+    for k, c in enumerate(ins):
+        L += [f"  g{k}: bits[1] = bit_slice(g, start={k}, width=1, id={i()})",
+              f"  e{k}: bits[1] = not(hv{k}, id={i()})",
+              f"  free{k}: bits[1] = or(e{k}, g{k}, id={i()})",
+              f"  r{k}: (token, bits[{width}], bits[1]) = receive(tok0, predicate=free{k}, "
+              f"channel={c}, blocking=false, id={i()})",
+              f"  rd{k}: bits[{width}] = tuple_index(r{k}, index=1, id={i()})",
+              f"  rv{k}: bits[1] = tuple_index(r{k}, index=2, id={i()})",
+              f"  nh{k}: bits[{width}] = sel(rv{k}, cases=[h{k}, rd{k}], id={i()})"]
+    rvs = ", ".join(f"rv{k}" for k in reversed(range(n)))
+    L += [f"  rvb: bits[{n}] = concat({rvs}, id={i()})",
           f"  ng: bits[{n}] = not(g, id={i()})",
-          f"  nhv: bits[{n}] = and(req, ng, id={i()})",
+          f"  kept: bits[{n}] = and(hv, ng, id={i()})",
+          f"  nhv: bits[{n}] = or(kept, rvb, id={i()})",
           f"  nlast: bits[{n}] = sel(anyv, cases=[last, g], id={i()})",
           f"  nv_hv: () = next_value(state_element=hv, value=nhv, id={i()})",
           f"  nv_last: () = next_value(state_element=last, value=nlast, id={i()})"]
-    L += [f"  nv_h{k}: () = next_value(state_element=h{k}, value=d{k}, id={i()})"
+    L += [f"  nv_h{k}: () = next_value(state_element=h{k}, value=nh{k}, id={i()})"
           for k in range(n)]
     L.append("}")
     return "\n".join(L) + "\n"

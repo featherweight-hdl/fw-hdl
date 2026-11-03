@@ -8,15 +8,16 @@ credit senders, arbiters, and (to come) tables, pools and queues. Each class sta
 - how **ties** break;
 - whether a grant can depend on **same-cycle valid**.
 
-The class model implements exactly that, and the RTL is checked against the class
-model cycle for cycle. Each class also has a **contract** (a YAML file next to its
+A cycle-step class model implements exactly that, and the RTL is checked against it
+cycle for cycle. A class whose output can be back-pressured has a process model
+instead, and its per-cycle rules are checked on the RTL. Each class also has a **contract** (a YAML file next to its
 source): the order and conservation rules any implementation must keep, whatever its
 timing ({doc}`contracts`).
 
 | Class | Source | Form | Lowering |
 |---|---|---|---|
 | `fw_credit_tx` | `src/std/credit/` | cycle step | its `step()`, mapped |
-| `fw_arbiter` | `src/std/arb/` | process | registry entry: the `rr_arb` template ({doc}`registry`) |
+| `fw_arbiter` | `src/std/arb/` | process | registry entry: the `rr_arb` template, round robin or fixed priority ({doc}`registry`) |
 
 ## fw_credit_tx
 
@@ -90,9 +91,66 @@ the knob file, like any component. One activation per cycle, at II=1.
 
 ## fw_arbiter
 
-An `N`-input arbiter, accept-then-arbitrate: one hold per input, with `ready` meaning
-the hold is empty. It is in the first-cut form and is recognized by the registry
-(`FW_ARB_RR` only). The full per-cycle definition and its policies are next.
+An `N`-input arbiter, accept-then-arbitrate: one hold per input, and a grant over the
+full holds. Its output is a stream, so the consumer may back-pressure it.
+
+```systemverilog
+fw_arbiter #(type T, int N = 2, fw_arb_policy_e POLICY = FW_ARB_RR)
+```
+
+| Port | API | Carries |
+|---|---|---|
+| `in[N]` | `fw_get_if #(T)` | the inputs |
+| `out` | `fw_put_if #(bit [IB+$bits(T)-1:0])` | `{index, value}`: which input won, and its value |
+
+`IB` is `$clog2(N)`, and 1 when `N` is 1.
+
+**Policies.**
+- `FW_ARB_RR`: round robin, the first full hold after the last winner. Input 0 goes
+  first.
+- `FW_ARB_PRIO`: fixed priority, the lowest full hold.
+
+**Per cycle.**
+
+| | |
+|---|---|
+| Observes | the holds at the start of the cycle. A value arriving in the cycle is not seen, so the grant never depends on same-cycle valid |
+| Consumes | one held value, when `out` accepts it. Every empty hold, and the hold granted this cycle, takes its input |
+| Ties | by `POLICY` |
+| Back-pressure | stalls the whole arbiter: `out` keeps offering the same value, no hold fills, and the round-robin pointer moves only when `out` accepts |
+
+What follows from those rules:
+- An input is ready while its hold is empty or is being granted. Every ready comes
+  from registered state.
+- A value is offered from the cycle after it arrives, and one input alone streams one
+  value per cycle.
+- Round robin advances only when `out` accepts, so it is already the "fair" variant.
+- `out` is stable under back-pressure: valid and data do not change until the value
+  is taken.
+
+**Class model.** The model is a process, not a cycle step: a step cannot see whether
+`out` will accept (an XLS send has no non-blocking form). It makes one grant per clock
+over the holds that are full at that edge, and it blocks while `out` back-pressures.
+Its holds may fill during a stall, which the RTL's do not. So model and RTL are
+compared under the contract, per input, and the per-cycle rules above are checked on
+the RTL directly.
+
+**Contract** (`src/std/arb/fw_arbiter.yaml`): values leave in order within an input
+(`per_key`), and none is lost or duplicated.
+
+**Lowering.** A registry entry (no knob needed), the `rr_arb` template from
+`fw.hdl.lib.xls_ir`, with `prio=True` for `FW_ARB_PRIO`. It takes `N` from 2 to 64.
+
+**Tests.**
+- `tests/stdlib/fw_arbiter_unit_test.sv` (SVUnit), on the model: empty, round-robin
+  rotation, fixed priority, grant held under back-pressure, one input at full rate,
+  and reset mid-traffic. The contract is checked throughout.
+- `tests/xls/lib/test_arbiter.py`:
+  - model and RTL under the contract, for round robin and fixed priority with 3
+    inputs and round robin with 5, at 1 and 2 stages;
+  - the RTL's tie rule under each policy, cycle by cycle;
+  - the grant held under back-pressure, with `out` stable;
+  - `N` out of range, rejected at the child's line.
 
 ```{eval-rst}
 .. autosvclass:: fw_std_pkg::fw_arbiter

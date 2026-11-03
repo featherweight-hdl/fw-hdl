@@ -127,13 +127,12 @@ Partition takes the entry's lowering:
 
 | Class | Lowering | Parameters it takes |
 |---|---|---|
-| `fw_arbiter #(T, N, POLICY)` | XLS: round-robin arbiter with one hold per input (`rr_arb`) | `POLICY = FW_ARB_RR`; `N` 2–64 |
+| `fw_arbiter #(T, N, POLICY)` | XLS: arbiter with one hold per input, round robin or fixed priority (`rr_arb`) | `POLICY` `FW_ARB_RR` or `FW_ARB_PRIO`; `N` 2–64 |
 | `fw_reg_component #(BLK, W, AW)` | native: the regblock core ({doc}`islands`, Register blocks as children) | `W` 8/16/32/64 |
 
 A child is recognized by its own class or by the nearest base with an entry. The
 following are errors at the child's SV line, not a fallback to mapping the body:
-- a parameter value the entry does not take, such as `fw_arbiter` with
-  `FW_ARB_PRIO`;
+- a parameter value the entry does not take, such as `fw_arbiter` with `N = 1`;
 - a subclass that defines `run()`.
 
 An extern assignment in the knob file wins over an entry, so RTL supplied for a

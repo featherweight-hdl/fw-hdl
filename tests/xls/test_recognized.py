@@ -5,7 +5,8 @@ lowered by the entry (fw.hdl.lib), not mapped from its body:
   (fw.hdl.lib.xls_ir); fw_credit_tx, a cycle step, is mapped from its step();
 * the class model and the RTL agree under each class's contract: in order for
   the credited link, in order per input for the arbiter;
-* a parameter value the entry does not take is rejected at the child's line;
+* a parameter value the entry does not take is rejected at the child's line
+  (tests/xls/lib/test_arbiter.py);
 * a subclass that defines run() is rejected (its body would be replaced).
 """
 import random
@@ -45,8 +46,8 @@ def _rtl(tmp_path, top, inputs, seed, stages=1):
 def _model(tmp_path, top, inputs):
     comp = sv_to_structure(FILES, top).component
     tb = tmp_path / "xh_proc_tb.sv"
-    # ctop's credit sender is a cycle step: it needs the clock.
-    tb.write_text(proc_testbench(["lib_pkg"], top, comp, inputs, clocked=top == "ctop"))
+    # The credit sender is a cycle step and the arbiter grants once a clock.
+    tb.write_text(proc_testbench(["lib_pkg"], top, comp, inputs, clocked=True))
     out = run_verilator(FILES + [tb], "xh_proc_tb", tmp_path / "model")
     return [int(l.split()[3], 16) for l in out if l.startswith("O out ")]
 
@@ -118,14 +119,12 @@ def test_arbiter_round_robin_when_all_inputs_wait(tmp_path):
     assert [v >> 8 for v in model] == [0, 1, 2] * 6
 
 
-def test_unsupported_policy_is_rejected_at_the_child():
-    from fw.hdl.errors import FwHdlError
+def test_fixed_priority_lowers_to_the_prio_template():
     from fw.hdl.spl_flow import partition
-    with pytest.raises(FwHdlError) as e:
-        partition(FILES, "ptop", [])
-    msg = str(e.value)
-    assert "lib_pkg.sv:" in msg and \
-        "POLICY='FW_ARB_PRIO' has no xls lowering (supported: FW_ARB_RR)" in msg, msg
+    p = partition(FILES, "ptop", [])
+    (arb,) = list(p.texts)
+    assert p.texts[arb] == xls_ir.package(arb, xls_ir.rr_arb(
+        n=3, width=8, name=arb, ins=["in_0", "in_1", "in_2"], out="out", prio=True))
 
 
 SUB = """\

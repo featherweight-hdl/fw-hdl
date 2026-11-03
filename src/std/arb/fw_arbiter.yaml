@@ -1,0 +1,13 @@
+# The fw_arbiter contract: what every implementation of the class keeps,
+# whatever its timing. Checked on the class model and RTL in
+# tests/xls/lib/test_arbiter.py and on the class model in tests/stdlib.
+class: fw_arbiter
+points:
+  in: "in[k]: a value taken (key: k)"
+  out: "out: {k, value} accepted (key: k)"
+# fw.hdl.verif.canon.Rule.from_dict / fw_order_rule
+order:
+  per_key: true          # in order within an input; inputs interleave freely
+conservation:
+  # Every value taken leaves exactly once, tagged with its input.
+  lossless: true

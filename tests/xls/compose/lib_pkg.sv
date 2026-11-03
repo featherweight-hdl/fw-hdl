@@ -6,7 +6,7 @@
 //         rx -> cr (fw_channel, 2) -> tx
 //   atop: a, b, c -> arb (fw_arbiter #(bit [7:0], 3), round robin) -> out
 //         ({index, value}, 10 bits)
-//   ptop: as atop, fixed priority (FW_ARB_PRIO): no xls lowering
+//   ptop: as atop, fixed priority (FW_ARB_PRIO)
 //
 // v holds credits + 1: rx returns its credit in the activation that sends on
 // a backpressured out (docs/methodology/islands.md, Credited links).
