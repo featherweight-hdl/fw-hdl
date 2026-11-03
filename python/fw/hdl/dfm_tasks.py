@@ -686,7 +686,8 @@ async def ApiComponents(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResu
                 t = declared.get(f.name) or f.pragmas.get("sv_type", "")
                 role = "put" if isinstance(f.datatype, ir.DataTypeGetIF) else "get"
                 ports.append(comp_api.CompPort(f.name, role, t, f.datatype.element_type.bits,
-                                               bool(f.pragmas.get("get_nb"))))
+                                               bool(f.pragmas.get("get_nb")),
+                                               bool(f.pragmas.get("put_step"))))
             comps.append(comp_api.CompApi(n, sv, module_name(n), ports))
     except (FwHdlError, XlsFlowError, ValueError) as e:
         return TaskDataResult(status=1, changed=True, output=[], markers=_markers(reporter, e))

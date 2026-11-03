@@ -18,6 +18,13 @@ fit together.
    :members:
    :undoc-members:
 
+.. autosvclass:: fw_hdl_pkg::fw_atomic_step
+   :members:
+
+.. autosvclass:: fw_hdl_pkg::fw_step_undo
+   :members:
+   :undoc-members:
+
 .. autosvclass:: fw_hdl_pkg::fw_elaboratable
    :members:
    :undoc-members:

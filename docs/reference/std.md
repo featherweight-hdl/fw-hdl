@@ -20,6 +20,10 @@ the channels that join two ports, and the put transactor. The three channel kind
    :members:
    :undoc-members:
 
+.. autosvclass:: fw_std_pkg::fw_put_step_if
+   :members:
+   :undoc-members:
+
 .. autosvclass:: fw_std_pkg::fw_valid_put_if
    :members:
    :undoc-members:

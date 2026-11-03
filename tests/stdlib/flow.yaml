@@ -17,7 +17,7 @@ fragment:
     uses: std.FileSet
     with:
       type: svunitTest
-      include: [fw_credit_tx_unit_test.sv, fw_arbiter_unit_test.sv]
+      include: [fw_credit_tx_unit_test.sv, fw_arbiter_unit_test.sv, fw_atomic_step_unit_test.sv]
       incdirs: [.]
   - name: runner
     uses: hdltest.svunit.TestRunner

@@ -108,9 +108,10 @@ waits:
 | send a value | `put(x)` on an `fw_valid_put_if` port |
 | set a level | `set(x)` on an `fw_level_set_if` port |
 
-A blocking `get()` or `put()` is a task and does not compile in `step()`. So a step's
-outputs have no back-pressure. When it must know whether the receiver has room,
-that knowledge comes in as an input, such as credits or a level.
+A blocking `get()` or `put()` is a task and does not compile in `step()`. So a plain
+step's outputs have no back-pressure. When it must know whether the receiver has
+room, that knowledge comes in as an input, such as credits or a level, or the class
+is an all-or-nothing step (below).
 
 **What a cycle sees.** Fields have ordinary sequential semantics inside `step()`;
 they belong to the component, so nothing else sees them mid-cycle. Between
@@ -133,6 +134,47 @@ effects on different channels are not ordered, because the cycle is atomic.
 both. `tests/xls/test_step.py` checks a step counter and a round-robin arbiter
 against XLS's RTL cycle for cycle. `examples/resp_tracker` builds its two blocks in
 either form (`-D form=rt_step_pkg`).
+
+### All-or-nothing steps
+
+A step whose output is a stream, which the receiver may back-pressure, extends
+{sv:class}`fw_hdl_pkg::fw_atomic_step` and puts with `put_or_stall(v)` on an
+`fw_put_step_if` port. Each cycle:
+
+- if every `put_or_stall` found its output ready at the start of the cycle, the step
+  commits, as an ordinary step does;
+- otherwise the step has no effect: no state changes, nothing is taken from an input,
+  and nothing is put or set. The next edge runs it again from the same state.
+
+`put_or_stall` returns nothing, so the step cannot branch on whether its output is
+ready, and it cannot tell a stalled cycle from one that did not happen. This is how
+XLS runs a proc activation whose send blocks, so the class model and the RTL agree
+cycle for cycle under any back-pressure.
+
+The runtime puts the state back after a stall, so all of it lives in one packed
+struct, `s`, the base class's type parameter. `s` is zero at reset, in the model and
+in the RTL, so choose encodings whose reset state is zero. Fields outside `s` must
+not change in `step()`.
+
+```{literalinclude} ../../tests/xls/micro/micro_f6_pkg.sv
+:language: systemverilog
+:start-at: typedef struct packed
+:end-before: // Rejected: put_or_stall
+```
+
+Connect an `fw_put_step_if` port to a channel's `put_step_ex`. The channel is ready
+when it had space at the start of the edge: a value another step took during the
+edge frees space from the next edge. So a one-deep channel between an
+all-or-nothing step and its consumer carries one value every other cycle; use
+`DEPTH >= 2` for full rate.
+
+The library channels undo their own effects after a stall. A class that implements
+a port API itself, such as a test's source, and changes state in `try_get`, `put`
+or `set` must record an {sv:class}`fw_hdl_pkg::fw_step_undo` with
+`fw_step_ctx::record()` while `fw_step_ctx::atomic` is set.
+
+`put_or_stall` in an ordinary step is an error, at the call's line in the front end
+and when it runs in the model.
 
 ## Structural components
 

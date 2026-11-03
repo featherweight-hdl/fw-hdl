@@ -343,15 +343,20 @@ class fw_component implements fw_elaboratable;
         end
         foreach (m_step[i]) begin
             automatic fw_steppable s = m_step[i];
+            automatic fw_atomic_steppable a;
+            void'($cast(a, s));
             `fw_ev_op(dbg_if(), FW_L_VITAL, "fw_component.step_fork", FW_OP_BEGUN)
                 `fw_field_as("index", i)
             `fw_ev_end
             fork
                 forever begin
                     clock.t.tick(1);
-                    fw_step_ctx::active = 1'b1;
+                    if (a != null)
+                        a.step_save();
+                    fw_step_ctx::begin_step(a != null);
                     s.step();
-                    fw_step_ctx::active = 1'b0;
+                    if (!fw_step_ctx::end_step())
+                        a.step_restore();
                 end
             join_none
         end

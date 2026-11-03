@@ -9,8 +9,6 @@ child's SV line, not a fallback to mapping the body.
 ======================  ========  ===========================================
 class                   target    lowering
 ======================  ========  ===========================================
-``fw_arbiter``          xls       :func:`.xls_ir.rr_arb` (round robin or
-                                  fixed priority)
 ``fw_reg_component``    native    :mod:`fw.hdl.native` (regblock core)
 ``fw_channel`` and      elab      :class:`ChannelKind`: the channel's kind
 the other channels
@@ -18,8 +16,8 @@ the other channels
 other port APIs                   flow control
 ======================  ========  ===========================================
 
-A library class written as a cycle step (``fw_credit_tx``) has no entry: its
-step() is mapped like any other component's.
+A library class written as a cycle step (``fw_credit_tx``, ``fw_arbiter``)
+has no entry: its step() is mapped like any other component's.
 
 The entries load through the ``zuspec.lowering`` entry point (``register``)
 and, for an install that predates it, on first use (:func:`registry`).
@@ -27,6 +25,11 @@ and, for an install that predates it, on first use (:func:`registry`).
 Parameters reach a lowering as Python values: an ``int`` parameter as an
 int, an enum parameter as its enumerator's name, and a type parameter as its
 width in bits (a class type as its name).
+
+Besides the classes above, an entry may target ``zuspec``
+(:class:`ZuspecLowering`): a factory that builds the block as Zuspec IR from
+the parameters. The ``xls`` target (:class:`XlsLowering`, IR text) remains
+for a user with an existing XLS proc; the library itself does not use it.
 
 A class is recognized by its own generic class or by the nearest base that
 has an entry (a register-block child extends ``fw_reg_component #(BLK)``). A
@@ -40,7 +43,6 @@ from typing import Any, Callable, Dict, List, Optional
 
 from zuspec.ir.core import global_registry
 
-from . import xls_ir
 
 ORIGIN = "fw.hdl.lib"
 
@@ -51,6 +53,16 @@ class XlsLowering:
     ``ports`` are the class's port names in the order the IR declares them."""
     text: Callable[[Dict[str, Any], str], str]
     ports: Callable[[Dict[str, Any]], List[str]]
+
+
+@dc.dataclass(frozen=True)
+class ZuspecLowering:
+    """``component(params, name, ports)`` builds the block as Zuspec IR: a
+    ``DataTypeComponent`` named *name*, whose port fields are taken from
+    *ports* (the child's port fields, by name). Partition treats it like a
+    class it mapped itself, so any backend can lower it. For a class whose
+    model cannot be its implementation (a staged variant, say)."""
+    component: Callable[[Dict[str, Any], str, Dict[str, Any]], Any]
 
 
 @dc.dataclass(frozen=True)
@@ -66,27 +78,16 @@ class ChannelKind:
 
 @dc.dataclass(frozen=True)
 class PortApi:
-    """A port API: ``get`` or ``put``, its flow control, and whether a get
-    may poll (``try_get``)."""
+    """A port API: ``get`` or ``put``, its flow control, whether a get may
+    poll (``try_get``), and whether a put may stall an all-or-nothing step
+    (``put_or_stall``)."""
     direction: str
     flow: str
     polls: bool = False
-
-
-def _clog2(n: int) -> int:
-    return max(1, (n - 1).bit_length())
-
-
-def _arbiter(p: Dict[str, Any], name: str) -> str:
-    n = p["N"]
-    return xls_ir.package(name, xls_ir.rr_arb(n=n, width=p["T"], name=name,
-                                              ins=[f"in_{k}" for k in range(n)], out="out",
-                                              prio=p["POLICY"] == "FW_ARB_PRIO"))
+    stalls: bool = False
 
 
 ENTRIES = [
-    ("fw_arbiter", {"T": int, "N": range(2, 65), "POLICY": ("FW_ARB_RR", "FW_ARB_PRIO")}, "xls",
-     XlsLowering(_arbiter, lambda p: [f"in_{k}" for k in range(p["N"])] + ["out"])),
     ("fw_reg_component", {"BLK": str, "W": (8, 16, 32, 64), "AW": range(1, 65)}, "native",
      NativeLowering("regblock")),
     ("fw_channel", {"T": object, "DEPTH": int}, "elab", ChannelKind("ready_valid")),
@@ -95,6 +96,7 @@ ENTRIES = [
     ("fw_get_if", {"T": object}, "elab", PortApi("get", "ready_valid")),
     ("fw_get_nb_if", {"T": object}, "elab", PortApi("get", "ready_valid", polls=True)),
     ("fw_put_if", {"T": object}, "elab", PortApi("put", "ready_valid")),
+    ("fw_put_step_if", {"T": object}, "elab", PortApi("put", "ready_valid", stalls=True)),
     ("fw_valid_put_if", {"T": object}, "elab", PortApi("put", "valid")),
     ("fw_level_if", {"T": object}, "elab", PortApi("get", "level")),
     ("fw_level_set_if", {"T": object}, "elab", PortApi("put", "level")),

@@ -41,6 +41,7 @@ class CompPort:
     type: str        # SV payload type, as spelled inside its package (Spec::T)
     bits: int
     nb: bool = False # the component polls this input (fw_get_nb_if)
+    step: bool = False  # an all-or-nothing step puts to this output (fw_put_step_if)
 
 
 @dc.dataclass
@@ -166,8 +167,10 @@ def model_harness_sv(api: CompApiSet) -> str:
                 o += ["    endclass"]
             else:
                 # A rendezvous: the component's put returns once the test
-                # has taken the value.
-                o += [f"    class {cid}_{p.name}_snk implements fw_put_if #({p.type});",
+                # has taken the value. put_or_stall stalls the step while the
+                # value before is still waiting.
+                iface = "fw_put_step_if" if p.step else "fw_put_if"
+                o += [f"    class {cid}_{p.name}_snk implements {iface} #({p.type});",
                       f"        {p.type} q[$];",
                       "        longint unsigned n_put, n_taken;",
                       f"        virtual task put(input {p.type} t);",
@@ -175,8 +178,17 @@ def model_harness_sv(api: CompApiSet) -> str:
                       "            q.push_back(t);",
                       "            seq = ++n_put;",
                       "            wait (n_taken >= seq);",
-                      "        endtask",
-                      "    endclass"]
+                      "        endtask"]
+                if p.step:
+                    o += [f"        virtual function void put_or_stall(input {p.type} t);",
+                          "            if (n_put > n_taken) begin",
+                          "                fw_step_ctx::stall();",
+                          "                return;",
+                          "            end",
+                          "            q.push_back(t);",
+                          "            n_put++;",
+                          "        endfunction"]
+                o += ["    endclass"]
         o += [f"    class {cid}_model implements {api.pkg}::{cid}_api;"]
         for p in c.ports:
             kind = "src" if p.role == "put" else "snk"
@@ -197,7 +209,8 @@ def model_harness_sv(api: CompApiSet) -> str:
         o.append(f"        {c.sv} {cid}_dut;")
         o.append(f"        {cid}_model {cid}_m = new;")
         for p in c.ports:
-            iface = ("fw_get_nb_if" if p.nb else "fw_get_if") if p.role == "put" else "fw_put_if"
+            iface = ("fw_get_nb_if" if p.nb else "fw_get_if") if p.role == "put" else \
+                ("fw_put_step_if" if p.step else "fw_put_if")
             o.append(f"        fw_export #({iface} #({p.type})) {cid}_{p.name}_e;")
     o += ["        function new(string name, fw_component parent);",
           "            super.new(name, parent);", "        endfunction",

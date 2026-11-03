@@ -55,6 +55,24 @@ def rr_ref(sched, cycles):
     return {"out": out}
 
 
+def rr_stall_ref(sched, cycles, stalls):
+    """rr_ref with out back-pressured in the *stalls* cycles: a cycle whose
+    grant finds out not ready has no effect at all (no refill either)."""
+    pend = [list(sched.get(f"in{k}", [])) for k in range(4)]
+    full, hold, nxt, out = [False] * 4, [0] * 4, 0, []
+    for cyc in range(cycles):
+        g = next((i for i in ((nxt + k) % 4 for k in range(4)) if full[i]), None)
+        if g is not None and cyc in stalls:
+            continue
+        if g is not None:
+            out.append((cyc, (g << 8) | hold[g]))
+            full[g], nxt = False, (g + 1) % 4
+        for i in range(4):
+            if not full[i] and pend[i] and pend[i][0][0] <= cyc:
+                hold[i], full[i] = pend[i].pop(0)[1], True
+    return {"out": out}
+
+
 COUNT_IN = {"inc": [(0, 3), (1, 4), (3, 250), (4, 1), (5, 7), (9, 9), (10, 2)]}
 RR_IN = {
     "in0": [(0, 0x10), (0, 0x11), (1, 0x12), (6, 0x13)],
@@ -81,6 +99,43 @@ def test_rr_cycle_exact(tmp_path):
         sorted(v for s in RR_IN.values() for _, v in s)
 
 
+# Out back-pressured in runs, and while inputs are still arriving.
+RR_STALLS = {2, 3, 4, 7, 11, 12, 13, 14, 18}
+
+
+@needs_sim
+@pytest.mark.parametrize("stalls", [set(), RR_STALLS], ids=["ready", "stalled"])
+def test_rr_stall_cycle_exact(tmp_path, stalls):
+    """An all-or-nothing step: model and RTL cycle for cycle under the same
+    back-pressure, and both match the reference. With out always ready it
+    is f6_rr."""
+    got = check_step([PKG], "micro_f6_pkg", "f6_rr_stall", RR_IN, 28, tmp_path,
+                     stalls={"out": sorted(stalls)})
+    assert got == rr_stall_ref(RR_IN, 28, stalls)
+    if not stalls:
+        assert got == rr_ref(RR_IN, 28)
+    assert not any(c in stalls for c, _ in got["out"])
+    assert sorted(v & 0xFF for _, v in got["out"]) == \
+        sorted(v for s in RR_IN.values() for _, v in s)
+
+
+def test_atomic_step_lowers_to_one_blocking_send():
+    """put_or_stall is the proc's one send, which blocks (a stall stalls the
+    activation); every receive stays non-blocking and unordered."""
+    txt = _ir("f6_rr_stall")
+    recvs = re.findall(r"receive\((\w+)[^)]*blocking=false", txt)
+    assert len(recvs) == 4 and "blocking=true" not in txt
+    assert all(t.startswith("after_all") for t in recvs), recvs
+    sends = re.findall(r"= send\(([^)]*)\)", txt)
+    assert len(sends) == 1 and "predicate=" in sends[0] and "channel=out" in sends[0]
+
+
+def test_put_or_stall_needs_an_atomic_step():
+    with pytest.raises(FwHdlError, match=r"micro_f6_pkg.sv:\d+:\d+: .*put_or_stall\(\) "
+                                         r"stalls the whole step"):
+        sv_to_component([PKG], "f6_bad_stall")
+
+
 def test_step_lowers_to_nonblocking_unordered_proc():
     txt = _ir("f6_rr")
     recvs = re.findall(r"receive\((\w+)[^)]*blocking=false", txt)
@@ -93,3 +148,36 @@ def test_step_lowers_to_nonblocking_unordered_proc():
 def test_run_and_step_rejected():
     with pytest.raises(FwHdlError, match="has both run\\(\\) and step\\(\\)"):
         sv_to_component([PKG], "f6_bad_both")
+
+
+BAD_PUT = '''`include "fw_std_macros.svh"
+package bad_put_pkg;
+    import fw_hdl_pkg::*;
+    import fw_std_pkg::*;
+    class bad_put extends fw_component implements fw_steppable;
+        fw_port #(fw_get_nb_if #(bit [7:0])) in;
+        fw_port #(fw_put_if #(bit [7:0]))    out;
+        function new(string name, fw_component parent);
+            super.new(name, parent);
+            add_steppable(this);
+        endfunction
+        function void build();
+            in = new("in", this);
+            out = new("out", this);
+        endfunction
+        virtual function void step();
+            bit [7:0] x;
+            if (in.t.try_get(x))
+                out.t.put(x);
+        endfunction
+    endclass
+endpackage
+'''
+
+
+def test_blocking_put_in_a_step_rejected(tmp_path):
+    """A put that waits for ready is a task, so it cannot be called from
+    step(): rejected at its line."""
+    (tmp_path / "bad_put.sv").write_text(BAD_PUT)
+    with pytest.raises(Exception, match=r"bad_put.sv:19:\d+: error: cannot invoke a task"):
+        sv_to_component([str(tmp_path / "bad_put.sv")], "bad_put")

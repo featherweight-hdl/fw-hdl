@@ -48,6 +48,18 @@ class fw_valid_channel_get_nb_ex #(type T = int, int DEPTH = 1)
     endfunction
 endclass
 
+// Undoes one take or put of a step that stalled.
+class fw_valid_channel_undo #(type T = int, int DEPTH = 1) extends fw_step_undo;
+    fw_valid_channel #(T, DEPTH) ch;
+    bit      take;
+    T        v;
+    realtime t;
+
+    virtual function void undo();
+        ch.ch_undo(take, v, t);
+    endfunction
+endclass
+
 // A channel whose producer never waits (fw_valid_put_if) and whose consumer
 // gets with an ordinary blocking get:
 //
@@ -98,6 +110,8 @@ class fw_valid_channel #(type T = int, int DEPTH = 1) extends fw_component;
         end
         m_q.push_back(t);
         m_t.push_back($realtime);
+        if (fw_step_ctx::atomic)
+            log_undo(1'b0, t, $realtime);
     endfunction
 
     task ch_get(output T t);
@@ -109,6 +123,8 @@ class fw_valid_channel #(type T = int, int DEPTH = 1) extends fw_component;
     function bit ch_try_get(inout T t);
         if (m_q.size() == 0 || fw_step_ctx::hidden(m_t[0]))
             return 1'b0;
+        if (fw_step_ctx::atomic)
+            log_undo(1'b1, m_q[0], m_t[0]);
         t = m_q.pop_front();
         void'(m_t.pop_front());
         if (fw_step_ctx::active) begin
@@ -118,6 +134,28 @@ class fw_valid_channel #(type T = int, int DEPTH = 1) extends fw_component;
             m_npop++;
         end
         return 1'b1;
+    endfunction
+
+    local function void log_undo(bit take, T v, realtime t);
+        fw_valid_channel_undo #(T, DEPTH) u = new;
+        u.ch = this;
+        u.take = take;
+        u.v = v;
+        u.t = t;
+        fw_step_ctx::record(u);
+    endfunction
+
+    // Undo a step's take (put the value back at the head) or put (drop the
+    // newest value).
+    function void ch_undo(bit take, T v, realtime t);
+        if (take) begin
+            m_q.push_front(v);
+            m_t.push_front(t);
+            m_npop--;
+        end else begin
+            void'(m_q.pop_back());
+            void'(m_t.pop_back());
+        end
     endfunction
 
     function int size();

@@ -238,10 +238,13 @@ def proc_testbench(pkg_name, cls: str, comp: ir.DataTypeComponent,
             flow[f.name] = f.pragmas.get("fw_flow", "ready_valid")
             if f.pragmas.get("get_nb"):
                 flow[f.name] = "nb"
+            if f.pragmas.get("put_step"):
+                flow[f.name] = "step"
             (gets if isinstance(f.datatype, ir.DataTypeGetIF) else puts).append((f.name, t, w))
     # The API each harness end provides, by the port's flow control.
     get_api = {"ready_valid": "fw_get_if", "level": "fw_level_if", "nb": "fw_get_nb_if"}
-    put_api = {"ready_valid": "fw_put_if", "valid": "fw_valid_put_if", "level": "fw_level_set_if"}
+    put_api = {"ready_valid": "fw_put_if", "valid": "fw_valid_put_if", "level": "fw_level_set_if",
+               "step": "fw_put_step_if"}
     L = ['`include "fw_std_macros.svh"', "module xh_proc_tb;",
          "  import fw_hdl_pkg::*;", "  import fw_std_pkg::*;"]
     L += [f"  import {p}::*;" for p in pkgs]
@@ -288,8 +291,13 @@ def proc_testbench(pkg_name, cls: str, comp: ir.DataTypeComponent,
               # reports what it sent before.
               f'      $display("O {name} %0d %0h", q.size(), t);',
               "      q.push_back(t);",
-              f"    end{kw.split()[0]}",
-              "  endclass"]
+              f"    end{kw.split()[0]}"]
+        if flow[name] == "step":        # always ready: never stalls the step
+            L += [f"    virtual function void put_or_stall(input {t} t);",
+                  f'      $display("O {name} %0d %0h", q.size(), t);',
+                  "      q.push_back(t);",
+                  "    endfunction"]
+        L += ["  endclass"]
     L += ["  class xh_top extends fw_component;", f"    {cls} dut;"]
     for name, t, w in gets:
         L += [f"    xh_src_{name} src_{name} = new;",
@@ -540,6 +548,9 @@ def check_proc(sv_files: Sequence[str], pkg_name, cls: str,
 Schedule = Dict[str, Sequence[Tuple[int, int]]]
 #: output port -> [(cycle, value)], one entry per transfer
 Trace = Dict[str, List[Tuple[int, int]]]
+#: stream output port -> the cycles it is not ready (an all-or-nothing step's
+#: put_or_stall stalls the step in those cycles)
+Stalls = Dict[str, Sequence[int]]
 
 
 def _ports(comp: ir.DataTypeComponent):
@@ -550,11 +561,14 @@ def _ports(comp: ir.DataTypeComponent):
 
 
 def step_testbench(pkg_name: str, cls: str, comp: ir.DataTypeComponent,
-                   schedule: Schedule, cycles: int) -> str:
+                   schedule: Schedule, cycles: int, stalls: Optional[Stalls] = None) -> str:
     """The class model on a free-running clock. Rising edge n is at time
     10n + 5, so a source knows the cycle from $time and never races the steps.
     A stream source offers each value from its cycle until try_get takes it;
-    each valid put prints ``C <port> <cycle> <hex>``."""
+    each valid put, and each put_or_stall in a cycle its output is ready
+    (*stalls*), prints ``C <port> <cycle> <hex>``. That print assumes one
+    stalling output: it is not undone when another output stalls the step."""
+    stalls = stalls or {}
     L = ['`include "fw_std_macros.svh"', "module xh_step_tb;",
          "  import fw_hdl_pkg::*;", "  import fw_std_pkg::*;", f"  import {pkg_name}::*;",
          "  function automatic int now(); return int'(($time - 5) / 10); endfunction"]
@@ -570,13 +584,24 @@ def step_testbench(pkg_name: str, cls: str, comp: ir.DataTypeComponent,
                   "      foreach (q[i]) if (at[i] <= now()) v = q[i];",
                   "      return v;", "    endfunction", "  endclass"]
         elif is_in:
-            L += [f"  class xh_src_{name} implements fw_get_nb_if #({t});",
+            # A take is undone if an all-or-nothing step stalls (fw_step_ctx).
+            L += [f"  typedef class xh_src_{name};",
+                  f"  class xh_undo_{name} extends fw_step_undo;",
+                  f"    xh_src_{name} src; int at; {t} v;",
+                  "    virtual function void undo();",
+                  "      src.q.push_front(v); src.at.push_front(at);",
+                  "    endfunction", "  endclass",
+                  f"  class xh_src_{name} implements fw_get_nb_if #({t});",
                   f"    int at[$]; {t} q[$];",
                   f"    virtual task get(output {t} t);",
                   "      wait (q.size() > 0 && at[0] <= now());",
                   "      t = q.pop_front(); void'(at.pop_front());", "    endtask",
                   f"    virtual function bit try_get(inout {t} t);",
                   "      if (q.size() == 0 || at[0] > now()) return 1'b0;",
+                  "      if (fw_step_ctx::atomic) begin",
+                  f"        xh_undo_{name} u = new;",
+                  "        u.src = this; u.at = at[0]; u.v = q[0];",
+                  "        fw_step_ctx::record(u);", "      end",
                   "      t = q.pop_front(); void'(at.pop_front());",
                   "      return 1'b1;", "    endfunction", "  endclass"]
         elif flow == "level":
@@ -589,9 +614,18 @@ def step_testbench(pkg_name: str, cls: str, comp: ir.DataTypeComponent,
                   f'      $display("C {name} %0d %0h", now(), t);',
                   "    endfunction", "  endclass"]
         else:
-            raise ValueError(f"{cls}.{name}: a step's output must be valid or level")
+            st = ", ".join(str(c) for c in sorted(set(stalls.get(name, [])))) or "-1"
+            L += [f"  class xh_snk_{name} implements fw_put_step_if #({t});",
+                  f"    int stall[$] = '{{{st}}};",
+                  f"    virtual task put(input {t} t);", "    endtask",
+                  f"    virtual function void put_or_stall(input {t} t);",
+                  "      foreach (stall[i]) if (stall[i] == now()) begin",
+                  "        fw_step_ctx::stall(); return;", "      end",
+                  f'      $display("C {name} %0d %0h", now(), t);',
+                  "    endfunction", "  endclass"]
     api = {(True, "level"): "fw_level_if", (True, "ready_valid"): "fw_get_nb_if",
-           (False, "level"): "fw_level_set_if", (False, "valid"): "fw_valid_put_if"}
+           (False, "level"): "fw_level_set_if", (False, "valid"): "fw_valid_put_if",
+           (False, "ready_valid"): "fw_put_step_if"}
     L += ["  class xh_top extends fw_component;", f"    {cls} dut;"]
     for name, t, w, is_in, flow in ports:
         L += [f"    xh_{'src' if is_in else 'snk'}_{name} x_{name} = new;",
@@ -624,10 +658,12 @@ def step_testbench(pkg_name: str, cls: str, comp: ir.DataTypeComponent,
     return "\n".join(L) + "\n"
 
 
-def rtl_step_testbench(sig: ir.BlockSignature, schedule: Schedule, cycles: int) -> str:
+def rtl_step_testbench(sig: ir.BlockSignature, schedule: Schedule, cycles: int,
+                       stalls: Optional[Stalls] = None) -> str:
     """XLS's RTL on the same schedule as :func:`step_testbench`: cycle 0 is
-    the first rising edge after reset, every output is always ready (a step
-    never stalls), and each output transfer prints ``C <port> <cycle> <hex>``."""
+    the first rising edge after reset, every output is ready except in its
+    *stalls* cycles, and each output transfer prints ``C <port> <cycle> <hex>``."""
+    stalls = stalls or {}
     from fw.hdl.spl_flow import channel_kind
     rst_on, rst_off = ("1'b0", "1'b1") if sig.reset_active_low else ("1'b1", "1'b0")
     L = ["module xh_rtl_step_tb;", "  logic clk = 0;", f"  logic rst = {rst_on};",
@@ -641,9 +677,12 @@ def rtl_step_testbench(sig: ir.BlockSignature, schedule: Schedule, cycles: int) 
         conns += [f".{ch.ports[r]}({n}_{r[0]})" for r in ("data", "valid", "ready")
                   if r in ch.ports]
         if ch.direction == "out":
-            L += [f"  assign {n}_r = 1'b1;"]
+            st = sorted(set(stalls.get(n, [])))
+            L += [f"  bit {n}_st [{cycles + 1}];",
+                  "  initial begin"] + [f"    {n}_st[{c}] = 1;" for c in st if c <= cycles] + \
+                 ["  end", f"  assign {n}_r = !(cycle <= {cycles} && {n}_st[cycle]);"]
             if kind != "level":
-                body_edge += [f"      if ({n}_v) $display(\"C {n} %0d %0h\", cycle, {n}_d);"]
+                body_edge += [f"      if ({n}_v && {n}_r) $display(\"C {n} %0d %0h\", cycle, {n}_d);"]
             continue
         sched = list(schedule.get(n, []))
         L += [f"  int {n}_at [{max(len(sched), 1)}];",
@@ -682,9 +721,11 @@ def _trace(out: Sequence[str]) -> Trace:
 
 def check_step(sv_files: Sequence[str], pkg_name: str, cls: str, schedule: Schedule,
                cycles: int, workdir: Path, rtl_stages: Sequence[int] = (1,),
-               rtl_flags: Sequence[Sequence[str]] = ((),)) -> Trace:
+               rtl_flags: Sequence[Sequence[str]] = ((),),
+               stalls: Optional[Stalls] = None) -> Trace:
     """The class model's per-cycle output trace, and XLS's RTL against
-    it cycle for cycle at each of *rtl_stages*. At k stages each RTL output
+    it cycle for cycle at each of *rtl_stages*. *stalls* back-pressures stream
+    outputs (an all-or-nothing step's), in model and RTL alike. At k stages each RTL output
     may come a fixed 0 to k - 1 cycles later (the stage XLS schedules its
     send in), plus one per flopped side named in *rtl_flags* (codegen
     flags, one set per RTL build); nothing else may differ."""
@@ -692,7 +733,7 @@ def check_step(sv_files: Sequence[str], pkg_name: str, cls: str, schedule: Sched
     pkg = lower_component(comp)
     workdir.mkdir(parents=True, exist_ok=True)
     tb = workdir / "xh_step_tb.sv"
-    tb.write_text(step_testbench(pkg_name, cls, comp, schedule, cycles))
+    tb.write_text(step_testbench(pkg_name, cls, comp, schedule, cycles, stalls))
     model = _trace(run_verilator(list(sv_files) + [tb], "xh_step_tb", workdir / "model"))
     if codegen_main() is None or opt_main() is None:
         return model
@@ -702,7 +743,7 @@ def check_step(sv_files: Sequence[str], pkg_name: str, cls: str, schedule: Sched
         d.mkdir(parents=True, exist_ok=True)
         (d / "xls_rtl.sv").write_text(res.verilog)
         (d / "xh_rtl_step_tb.sv").write_text(rtl_step_testbench(res.signature, schedule,
-                                                                 cycles + stages))
+                                                                 cycles + stages, stalls))
         rtl = _trace(run_verilator([d / "xls_rtl.sv", d / "xh_rtl_step_tb.sv"],
                                    "xh_rtl_step_tb", d / "rtl", with_lib=False,
                                    extra=["--assert", "+define+ASSERT_ON"]))

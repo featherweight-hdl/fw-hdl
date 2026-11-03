@@ -424,13 +424,14 @@ class _Reader:
         own = {p.obj.oid: name for name, p in n.ports.items()}
         ends: Dict[int, Tuple[str, str]] = {}
         for cname, ch in n.channels.items():
-            for end in ("put_ex", "get_ex", "get_nb_ex"):
+            for end in ("put_ex", "put_step_ex", "get_ex", "get_nb_ex"):
                 try:
                     v = self._field(ch.obj, end)
                 except ElabError:
                     continue
                 if isinstance(v, Obj):
-                    ends[v.oid] = (cname, end)
+                    # put_step_ex (fw_put_step_if) is the same put end in RTL.
+                    ends[v.oid] = (cname, "put_ex" if end == "put_step_ex" else end)
         child_ports: Dict[int, Tuple[str, str]] = {}
         for cname, c in n.children.items():
             for pname, p in c.ports.items():

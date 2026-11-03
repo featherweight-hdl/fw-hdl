@@ -1,6 +1,6 @@
-// fw_arbiter as a child, for tests/xls/lib/test_arbiter.py: three inputs
-// (round robin or fixed priority), and five (a count that is not a power of
-// two).
+// fw_arbiter for tests/xls/lib/test_arbiter.py: as a child, with three
+// inputs (round robin or fixed priority) and five (a count that is not a
+// power of two); and the class itself.
 `include "fw_std_macros.svh"
 
 package lib_arb_pkg;
@@ -8,8 +8,8 @@ package lib_arb_pkg;
     import fw_std_pkg::*;
 
     class arb3 #(fw_arb_policy_e POLICY = FW_ARB_RR) extends fw_component;
-        fw_port #(fw_get_if #(bit [7:0])) a, b, c;
-        fw_port #(fw_put_if #(bit [9:0])) out;
+        fw_port #(fw_get_nb_if #(bit [7:0])) a, b, c;
+        fw_port #(fw_put_step_if #(bit [9:0])) out;
         fw_arbiter #(bit [7:0], 3, POLICY) arb;
         function new(string name, fw_component parent);
             super.new(name, parent);
@@ -32,8 +32,8 @@ package lib_arb_pkg;
     typedef arb3 #(FW_ARB_PRIO) arb3_prio;
 
     class arb5_rr extends fw_component;
-        fw_port #(fw_get_if #(bit [5:0])) a, b, c, d, e;
-        fw_port #(fw_put_if #(bit [8:0])) out;
+        fw_port #(fw_get_nb_if #(bit [5:0])) a, b, c, d, e;
+        fw_port #(fw_put_step_if #(bit [8:0])) out;
         fw_arbiter #(bit [5:0], 5, FW_ARB_RR) arb;
         function new(string name, fw_component parent);
             super.new(name, parent);
@@ -57,22 +57,9 @@ package lib_arb_pkg;
         endfunction
     endclass
 
-    // Rejected: N outside the lowering's range (2-64).
-    class arb_one extends fw_component;
-        fw_port #(fw_get_if #(bit [7:0])) a;
-        fw_port #(fw_put_if #(bit [8:0])) out;
-        fw_arbiter #(bit [7:0], 1, FW_ARB_RR) arb;
-        function new(string name, fw_component parent);
-            super.new(name, parent);
-        endfunction
-        function void build();
-            a = new("a", this);
-            out = new("out", this);
-            arb = new("arb", this);
-        endfunction
-        function void connect();
-            arb.in[0].connect(a);
-            arb.out.connect(out);
-        endfunction
-    endclass
+    // The class itself, for the cycle-exact tests.
+    typedef fw_arbiter #(bit [7:0], 3, FW_ARB_RR)   arb_3r;
+    typedef fw_arbiter #(bit [7:0], 3, FW_ARB_PRIO) arb_3p;
+    typedef fw_arbiter #(bit [5:0], 5, FW_ARB_RR)   arb_5r;
+    typedef fw_arbiter #(bit [7:0], 1, FW_ARB_RR)   arb_1;
 endpackage

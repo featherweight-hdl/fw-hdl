@@ -2,8 +2,9 @@
 // model, with its contract checked.
 //
 // Three inputs of 8-bit values, round robin (rr) and fixed priority (pr).
-// The out sink takes a value at once while `ready` is set, and waits clock
-// by clock while it is clear.
+// A source enters each value in the order check when it is offered. The out
+// sink is ready while `ready` is set; while it is clear, put_or_stall stalls
+// the arbiter's step, and the sources put back what the step took.
 //
 // Contract (fw_arbiter.yaml): values leave in order per input and none is
 // lost or duplicated (fw_order_check, per key).
@@ -17,27 +18,58 @@ package fw_arbiter_ut_pkg;
 
     typedef bit [9:0] out_t;                     // {input, value}
 
-    class src implements fw_get_if #(bit [7:0]);
+    typedef class src;
+    class src_undo extends fw_step_undo;
+        src       s;
+        bit [7:0] v;
+        virtual function void undo();
+            s.q.push_front(v);
+        endfunction
+    endclass
+
+    class src implements fw_get_nb_if #(bit [7:0]);
         bit [7:0]      q[$];
         fw_order_check chk;
         int            key;
+        function void offer(bit [7:0] vs[$]);
+            foreach (vs[i]) begin
+                q.push_back(vs[i]);
+                chk.enter({key, vs[i]}, key, 0, vs[i]);
+            end
+        endfunction
         virtual task get(output bit [7:0] t);
             wait (q.size() > 0);
-            t = q.pop_front();
-            chk.enter({key, t}, key, 0, t);
+            void'(try_get(t));
         endtask
+        virtual function bit try_get(inout bit [7:0] t);
+            if (q.size() == 0)
+                return 1'b0;
+            if (fw_step_ctx::atomic) begin
+                src_undo u = new;
+                u.s = this;
+                u.v = q[0];
+                fw_step_ctx::record(u);
+            end
+            t = q.pop_front();
+            return 1'b1;
+        endfunction
     endclass
 
-    class snk implements fw_put_if #(out_t);
+    class snk implements fw_put_step_if #(out_t);
         bit            ready = 1;
         out_t          got[$];
         fw_order_check chk;
-        fw_component   clk;                      // for its clock
         virtual task put(input out_t t);
-            while (!ready) clk.tick();
+            $fatal(1, "the arbiter puts with put_or_stall");
+        endtask
+        virtual function void put_or_stall(input out_t t);
+            if (!ready) begin
+                fw_step_ctx::stall();
+                return;
+            end
             got.push_back(t);
             chk.leave(t, t[7:0]);
-        endtask
+        endfunction
     endclass
 
     class ut_top #(fw_arb_policy_e POLICY = FW_ARB_RR) extends fw_component;
@@ -45,8 +77,8 @@ package fw_arbiter_ut_pkg;
         src            s[3];
         snk            o = new;
         fw_order_check order;
-        fw_export #(fw_get_if #(bit [7:0])) e[3];
-        fw_export #(fw_put_if #(out_t))     eo;
+        fw_export #(fw_get_nb_if #(bit [7:0])) e[3];
+        fw_export #(fw_put_step_if #(out_t))   eo;
 
         function new(string name, fw_component parent);
             super.new(name, parent);
@@ -55,7 +87,6 @@ package fw_arbiter_ut_pkg;
             order = new("order", fw_order_rule::in_order_per_key());
             order.quiet = 1;
             o.chk = order;
-            o.clk = this;
             arb = new("arb", this);
             foreach (s[k]) begin
                 s[k] = new;
@@ -140,9 +171,9 @@ module fw_arbiter_unit_test;
     // input 0 visits every input before any repeats.
     `SVTEST(round_robin_rotates)
         u_rr.root.o.ready = 0;
-        u_rr.root.s[0].q = '{8'h10, 8'h11};
-        u_rr.root.s[1].q = '{8'h20, 8'h21};
-        u_rr.root.s[2].q = '{8'h30, 8'h31};
+        u_rr.root.s[0].offer('{8'h10, 8'h11});
+        u_rr.root.s[1].offer('{8'h20, 8'h21});
+        u_rr.root.s[2].offer('{8'h30, 8'h31});
         edges(4);
         u_rr.root.o.ready = 1;
         edges(12);
@@ -157,9 +188,9 @@ module fw_arbiter_unit_test;
     // Fixed priority: input 0, kept busy, wins every grant until it runs dry.
     `SVTEST(priority_lowest_wins)
         u_pr.root.o.ready = 0;
-        u_pr.root.s[0].q = '{8'h10, 8'h11, 8'h12};
-        u_pr.root.s[1].q = '{8'h20};
-        u_pr.root.s[2].q = '{8'h30};
+        u_pr.root.s[0].offer('{8'h10, 8'h11, 8'h12});
+        u_pr.root.s[1].offer('{8'h20});
+        u_pr.root.s[2].offer('{8'h30});
         edges(4);
         u_pr.root.o.ready = 1;
         edges(12);
@@ -172,17 +203,19 @@ module fw_arbiter_unit_test;
         `FAIL_UNLESS(pr_contract_ok())
     `SVTEST_END
 
-    // A grant made while out stalls is kept: input 0 arriving later does not
-    // take it, under either policy.
+    // A grant made while out stalls is kept: input 0 arriving later is not
+    // even taken until out accepts, under either policy.
     `SVTEST(grant_held_under_backpressure)
         u_rr.root.o.ready = 0;
         u_pr.root.o.ready = 0;
-        u_rr.root.s[1].q = '{8'h21};
-        u_pr.root.s[1].q = '{8'h21};
+        u_rr.root.s[1].offer('{8'h21});
+        u_pr.root.s[1].offer('{8'h21});
         edges(3);
-        u_rr.root.s[0].q = '{8'h05};
-        u_pr.root.s[0].q = '{8'h05};
+        u_rr.root.s[0].offer('{8'h05});
+        u_pr.root.s[0].offer('{8'h05});
         edges(3);
+        `FAIL_UNLESS_EQUAL(u_rr.root.s[0].q.size(), 1)
+        `FAIL_UNLESS_EQUAL(u_pr.root.s[0].q.size(), 1)
         u_rr.root.o.ready = 1;
         u_pr.root.o.ready = 1;
         edges(6);
@@ -196,7 +229,7 @@ module fw_arbiter_unit_test;
 
     // One input alone streams one value per clock.
     `SVTEST(one_input_full_rate)
-        u_rr.root.s[2].q = '{8'h01, 8'h02, 8'h03, 8'h04, 8'h05, 8'h06};
+        u_rr.root.s[2].offer('{8'h01, 8'h02, 8'h03, 8'h04, 8'h05, 8'h06});
         edges(9);
         `FAIL_UNLESS_EQUAL(u_rr.root.o.got.size(), 6)
         `FAIL_UNLESS(rr_contract_ok())
@@ -205,13 +238,13 @@ module fw_arbiter_unit_test;
     // Reset with values held and out stalled: the new tree is empty.
     `SVTEST(reset_mid_traffic)
         u_rr.root.o.ready = 0;
-        u_rr.root.s[0].q = '{8'h01, 8'h02};
-        u_rr.root.s[1].q = '{8'h03};
+        u_rr.root.s[0].offer('{8'h01, 8'h02});
+        u_rr.root.s[1].offer('{8'h03});
         edges(3);
         setup();
         edges(4);
         `FAIL_UNLESS_EQUAL(u_rr.root.o.got.size(), 0)
-        u_rr.root.s[1].q = '{8'h07};
+        u_rr.root.s[1].offer('{8'h07});
         edges(4);
         `FAIL_UNLESS_EQUAL(u_rr.root.o.got.size(), 1)
         `FAIL_UNLESS_EQUAL(u_rr.root.o.got[0], ov(1, 8'h07))

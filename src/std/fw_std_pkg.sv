@@ -15,6 +15,7 @@ package fw_std_pkg;
     `include "fw_put_if.svh"      // put(t)            -- write to an output, no handshake
     `include "fw_get_if.svh"      // get(t)            -- sample an input, no handshake
     `include "fw_get_nb_if.svh"   // + try_get(t)      -- poll an input (opt-in; not KPN)
+    `include "fw_put_step_if.svh" // + put_or_stall(t) -- put from an all-or-nothing step
     `include "fw_valid_put_if.svh" // put(t), a function -- valid only: never waits (credits)
     `include "fw_level_if.svh"    // get() / set(t)    -- a level: no handshake
     `include "fw_reqrsp_if.svh"   // call(out, in)     -- blocking request/response

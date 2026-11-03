@@ -1,0 +1,37 @@
+# Cosim of fw_arbiter (python -m fw.hdl.verif.cosim): any module behind a
+# signal map, against the class's contract (src/std/arb/fw_arbiter.yaml).
+class: fw_arbiter
+params: {W: 8, N: 3}
+targets:
+  # fw-hdl's own lowering: the rr_arb template, round robin.
+  - name: own_rr
+    fallback: {files: [cosim_pkg.sv], top: arb3_rr_top, xls: [fw_arbiter], stages: 1}
+    ports: &own
+      in[0]: {data: a, valid: a_vld, ready: a_rdy}
+      in[1]: {data: b, valid: b_vld, ready: b_rdy}
+      in[2]: {data: c, valid: c_vld, ready: c_rdy}
+      out:   {data: out, valid: out_vld, ready: out_rdy}
+  # The same, fixed priority, at two stages.
+  - name: own_prio
+    fallback: {files: [cosim_pkg.sv], top: arb3_prio_top, xls: [fw_arbiter], stages: 2}
+    ports: *own
+  # A supplied module: other names, an active-low reset, other timing.
+  - name: ref
+    module: ref_arb3
+    files: [ref_arb3.sv]
+    clock: clk_i
+    reset: {port: rst_ni, active_low: true}
+    ports: &ref
+      in[0]: {data: req0_data, valid: req0_valid, ready: req0_ready}
+      in[1]: {data: req1_data, valid: req1_valid, ready: req1_ready}
+      in[2]: {data: req2_data, valid: req2_valid, ready: req2_ready}
+      out:   {data: gnt_data, valid: gnt_valid, ready: gnt_ready}
+  # The supplied module without its grant lock: out changes while stalled.
+  # Expected to fail (tests/stdlib/test_cosim.py).
+  - name: ref_nolock
+    module: ref_arb3
+    files: [ref_arb3.sv]
+    params: {LOCK: 0}
+    clock: clk_i
+    reset: {port: rst_ni, active_low: true}
+    ports: *ref

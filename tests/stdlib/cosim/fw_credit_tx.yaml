@@ -1,0 +1,16 @@
+# Cosim of fw_credit_tx (python -m fw.hdl.verif.cosim): any module behind a
+# signal map, against the class's contract (src/std/credit/fw_credit_tx.yaml)
+# and its credit rules. The testbench is the receiver: it returns CHECK
+# credits on cr for each value sent, 1-4 cycles later.
+class: fw_credit_tx
+params: {W: 8, CREDITS: 6, NVC: 3, CHECK: 1}
+targets:
+  # fw-hdl's own lowering: the class's step(), mapped.
+  - name: own
+    fallback: {files: [cosim_pkg.sv], top: ctx3_top, xls: [fw_credit_tx], stages: 1}
+    ports:
+      in[0]: {data: a, valid: a_vld, ready: a_rdy}
+      in[1]: {data: b, valid: b_vld, ready: b_rdy}
+      in[2]: {data: c, valid: c_vld, ready: c_rdy}
+      cr:    {data: cr, valid: cr_vld, ready: cr_rdy}
+      out:   {data: out, valid: out_vld}

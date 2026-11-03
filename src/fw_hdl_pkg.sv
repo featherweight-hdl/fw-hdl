@@ -35,6 +35,7 @@ package fw_hdl_pkg;
     `include "fw_clock_period_xtor_bridge.svh"
     `include "fw_quantum_keeper.svh"     // TLM-style temporal decoupling (loosely-timed speedup)
     `include "fw_component.svh"
+    `include "fw_atomic_step.svh"       // a cycle step that stalls as a whole on back-pressure
     `include "fw_component_param.svh"
     `include "fw_component_root.svh"
     `include "fw_component_root_param.svh"

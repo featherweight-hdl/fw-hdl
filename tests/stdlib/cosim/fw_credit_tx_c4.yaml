@@ -1,0 +1,10 @@
+# Cosim of fw_credit_tx with one VC and four credits per value.
+class: fw_credit_tx
+params: {W: 8, CREDITS: 8, NVC: 1, CHECK: 4}
+targets:
+  - name: own
+    fallback: {files: [cosim_pkg.sv], top: ctx1_top, xls: [fw_credit_tx], stages: 2}
+    ports:
+      in[0]: {data: a, valid: a_vld, ready: a_rdy}
+      cr:    {data: cr, valid: cr_vld, ready: cr_rdy}
+      out:   {data: out, valid: out_vld}

@@ -66,10 +66,10 @@ package lib_pkg;
     endclass
 
     class arb_top #(fw_arb_policy_e POLICY = FW_ARB_RR) extends fw_component;
-        fw_port #(fw_get_if #(bit [7:0])) a;
-        fw_port #(fw_get_if #(bit [7:0])) b;
-        fw_port #(fw_get_if #(bit [7:0])) c;
-        fw_port #(fw_put_if #(bit [9:0])) out;
+        fw_port #(fw_get_nb_if #(bit [7:0])) a;
+        fw_port #(fw_get_nb_if #(bit [7:0])) b;
+        fw_port #(fw_get_nb_if #(bit [7:0])) c;
+        fw_port #(fw_put_step_if #(bit [9:0])) out;
         fw_arbiter #(bit [7:0], 3, POLICY) arb;
         function new(string name, fw_component parent);
             super.new(name, parent);

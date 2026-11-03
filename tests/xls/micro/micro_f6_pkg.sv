@@ -107,4 +107,73 @@ package micro_f6_pkg;
                 out.t.put(x);
         endfunction
     endclass
+    // f6_rr with a stream output: an all-or-nothing step. Its state is one
+    // packed struct, zero at reset (`nxt` is the slot after the last grant).
+    // Out not ready: the whole cycle has no effect.
+    typedef struct packed {
+        bit [3:0]      full;
+        bit [3:0][7:0] hold;
+        bit [1:0]      nxt;
+    } f6_rr_state_t;
+
+    class f6_rr_stall extends fw_atomic_step #(f6_rr_state_t);
+        fw_port #(fw_get_nb_if #(bit [7:0]))   in0;
+        fw_port #(fw_get_nb_if #(bit [7:0]))   in1;
+        fw_port #(fw_get_nb_if #(bit [7:0]))   in2;
+        fw_port #(fw_get_nb_if #(bit [7:0]))   in3;
+        fw_port #(fw_put_step_if #(bit [9:0])) out;   // {input, data}
+
+        function new(string name, fw_component parent);
+            super.new(name, parent);
+        endfunction
+        function void build();
+            in0 = new("in0", this);
+            in1 = new("in1", this);
+            in2 = new("in2", this);
+            in3 = new("in3", this);
+            out = new("out", this);
+        endfunction
+
+        virtual function void step();
+            bit       found;
+            bit [1:0] g;
+            bit [7:0] x;
+            for (int k = 0; k < 4; k++) begin
+                if (!found && s.full[2'(s.nxt + 2'(k))]) begin
+                    found = 1'b1;
+                    g = 2'(s.nxt + 2'(k));
+                end
+            end
+            if (found) begin
+                out.t.put_or_stall({g, s.hold[g]});
+                s.full[g] = 1'b0;
+                s.nxt = g + 2'd1;
+            end
+            if (!s.full[0] && in0.t.try_get(x)) begin s.hold[0] = x; s.full[0] = 1'b1; end
+            if (!s.full[1] && in1.t.try_get(x)) begin s.hold[1] = x; s.full[1] = 1'b1; end
+            if (!s.full[2] && in2.t.try_get(x)) begin s.hold[2] = x; s.full[2] = 1'b1; end
+            if (!s.full[3] && in3.t.try_get(x)) begin s.hold[3] = x; s.full[3] = 1'b1; end
+        endfunction
+    endclass
+
+    // Rejected: put_or_stall in an ordinary step, which cannot stall.
+    class f6_bad_stall extends fw_component implements fw_steppable;
+        fw_port #(fw_get_nb_if #(bit [7:0]))   in;
+        fw_port #(fw_put_step_if #(bit [7:0])) out;
+
+        function new(string name, fw_component parent);
+            super.new(name, parent);
+            add_steppable(this);
+        endfunction
+        function void build();
+            in = new("in", this);
+            out = new("out", this);
+        endfunction
+
+        virtual function void step();
+            bit [7:0] x;
+            if (in.t.try_get(x))
+                out.t.put_or_stall(x);
+        endfunction
+    endclass
 endpackage

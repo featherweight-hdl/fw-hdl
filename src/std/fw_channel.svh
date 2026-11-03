@@ -15,6 +15,37 @@ class fw_channel_put_ex #(type T = int, int DEPTH = 1) extends fw_export #(fw_pu
     endtask
 endclass
 
+// The put side for an all-or-nothing step (fw_put_step_if, put_or_stall).
+class fw_channel_put_step_ex #(type T = int, int DEPTH = 1)
+        extends fw_export #(fw_put_step_if #(T)) implements fw_put_step_if #(T);
+    local fw_channel #(T, DEPTH) m_ch;
+
+    function new(string name, fw_channel #(T, DEPTH) ch);
+        super.new(name, ch, this);
+        m_ch = ch;
+    endfunction
+
+    virtual task put(input T t);
+        m_ch.ch_put(t);
+    endtask
+
+    virtual function void put_or_stall(input T t);
+        m_ch.ch_put_or_stall(t);
+    endfunction
+endclass
+
+// Undoes one take or put of a step that stalled.
+class fw_channel_undo #(type T = int, int DEPTH = 1) extends fw_step_undo;
+    fw_channel #(T, DEPTH) ch;
+    bit      take;
+    T        v;
+    realtime t;
+
+    virtual function void undo();
+        ch.ch_undo(take, v, t);
+    endfunction
+endclass
+
 // The get side.
 class fw_channel_get_ex #(type T = int, int DEPTH = 1) extends fw_export #(fw_get_if #(T))
         implements fw_get_if #(T);
@@ -64,6 +95,11 @@ endclass
 // deadlocks (xls-phase2.md §4). A consumer that polls connects to get_nb_ex
 // (fw_get_nb_if, try_get) instead, and opts out of that guarantee.
 //
+// An all-or-nothing step (fw_atomic_step) puts through put_step_ex
+// (fw_put_step_if): put_or_stall stalls the step unless the channel had space
+// at the start of the edge, counting neither values steps put during the edge
+// nor values steps took during it. A rendezvous holds one value there.
+//
 // DEPTH is how many values the channel holds:
 //   * DEPTH >= 1 -- a FIFO: put() blocks while DEPTH values are waiting.
 //   * DEPTH == 0 -- a rendezvous: put() returns once a get() has taken the
@@ -72,6 +108,7 @@ endclass
 // ready/valid FIFO otherwise.
 class fw_channel #(type T = int, int DEPTH = 1) extends fw_component;
     fw_channel_put_ex #(T, DEPTH) put_ex;
+    fw_channel_put_step_ex #(T, DEPTH) put_step_ex;
     fw_channel_get_ex #(T, DEPTH) get_ex;
     fw_channel_get_nb_ex #(T, DEPTH) get_nb_ex;
 
@@ -83,10 +120,16 @@ class fw_channel #(type T = int, int DEPTH = 1) extends fw_component;
     // to be taken.
     local longint      m_n_put;
     local longint      m_n_get;
+    // Puts and takes by steps during the latest edge, so put_or_stall sees
+    // the values waiting at the start of the edge.
+    local realtime     m_edge_t = -1;
+    local int          m_edge_put;
+    local int          m_edge_take;
 
     function new(string name, fw_component parent);
         super.new(name, parent);
         put_ex = new("put_ex", this);
+        put_step_ex = new("put_step_ex", this);
         get_ex = new("get_ex", this);
         get_nb_ex = new("get_nb_ex", this);
     endfunction
@@ -113,10 +156,67 @@ class fw_channel #(type T = int, int DEPTH = 1) extends fw_component;
     function bit ch_try_get(inout T t);
         if (m_q.size() == 0 || fw_step_ctx::hidden(m_t[0]))
             return 1'b0;
+        if (fw_step_ctx::atomic)
+            log_undo(1'b1, m_q[0], m_t[0]);
         t = m_q.pop_front();
         void'(m_t.pop_front());
         m_n_get++;
+        if (fw_step_ctx::active)
+            edge_count(0, 1);
         return 1'b1;
+    endfunction
+
+    // From an all-or-nothing step: put t if there was space at the start of
+    // the edge, else stall the step.
+    function void ch_put_or_stall(input T t);
+        int held = m_q.size();
+        fw_step_ctx::check_atomic(get_full_name());
+        if (m_edge_t == $realtime)
+            held += m_edge_take - m_edge_put;
+        if (held >= ((DEPTH == 0) ? 1 : DEPTH)) begin
+            fw_step_ctx::stall();
+            return;
+        end
+        m_q.push_back(t);
+        m_t.push_back($realtime);
+        m_n_put++;
+        edge_count(1, 0);
+        log_undo(1'b0, t, $realtime);
+    endfunction
+
+    local function void edge_count(int nput, int ntake);
+        if (m_edge_t != $realtime) begin
+            m_edge_t = $realtime;
+            m_edge_put = 0;
+            m_edge_take = 0;
+        end
+        m_edge_put += nput;
+        m_edge_take += ntake;
+    endfunction
+
+    local function void log_undo(bit take, T v, realtime t);
+        fw_channel_undo #(T, DEPTH) u = new;
+        u.ch = this;
+        u.take = take;
+        u.v = v;
+        u.t = t;
+        fw_step_ctx::record(u);
+    endfunction
+
+    // Undo a step's take (put the value back at the head) or put (drop the
+    // newest value).
+    function void ch_undo(bit take, T v, realtime t);
+        if (take) begin
+            m_q.push_front(v);
+            m_t.push_front(t);
+            m_n_get--;
+            m_edge_take--;
+        end else begin
+            void'(m_q.pop_back());
+            void'(m_t.pop_back());
+            m_n_put--;
+            m_edge_put--;
+        end
     endfunction
 
     // How many values are waiting (for tests and debug).

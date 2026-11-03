@@ -28,6 +28,17 @@ class fw_level_channel_get_ex #(type T = int) extends fw_export #(fw_level_if #(
     endfunction
 endclass
 
+// Undoes one set of a step that stalled.
+class fw_level_channel_undo #(type T = int) extends fw_step_undo;
+    fw_level_channel #(T) ch;
+    T        value, prev;
+    realtime t;
+
+    virtual function void undo();
+        ch.ch_undo(value, prev, t);
+    endfunction
+endclass
+
 // A level between two components: the writer's fw_level_set_if port sets the
 // value, the reader's fw_level_if port reads it, neither waits.
 //
@@ -54,10 +65,24 @@ class fw_level_channel #(type T = int) extends fw_component;
     endfunction
 
     function void ch_set(input T t);
+        if (fw_step_ctx::atomic) begin
+            fw_level_channel_undo #(T) u = new;
+            u.ch = this;
+            u.value = value;
+            u.prev = m_prev;
+            u.t = m_t;
+            fw_step_ctx::record(u);
+        end
         if (m_t != $realtime)
             m_prev = value;
         value = t;
         m_t = $realtime;
+    endfunction
+
+    function void ch_undo(T v, T prev, realtime t);
+        value = v;
+        m_prev = prev;
+        m_t = t;
     endfunction
 
     function T ch_get();

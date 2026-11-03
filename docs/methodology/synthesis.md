@@ -81,6 +81,8 @@ same way, with its `step()` body as the activation:
 | one call of `step()` | one activation, at II=1 |
 | `if (in.t.try_get(x)) ...`, or `if (a && in.t.try_get(x)) ...` with no `else` | a non-blocking receive into a temporary, predicated on `a` in the second form |
 | `out.t.put(v)` on an `fw_valid_put_if` port | a send that the design never back-pressures (Integrate ties its ready and asserts it is not needed) |
+| `out.t.put_or_stall(v)` on an `fw_put_step_if` port, in an `fw_atomic_step` | a send predicated on its `if`s, which blocks: when out is not ready, the whole activation stalls, with no state update and no receive |
+| the state `s` of an `fw_atomic_step` | one state element, zero at reset |
 | statement order | none across channels: the cycle is atomic, and a receive token-ordered after a send cannot be scheduled at II=1. Operations on one channel keep the rules above |
 
 An array of ports, `fw_port #(..) in[N]`, becomes one channel per element (`in_0`,
@@ -127,23 +129,27 @@ Partition takes the entry's lowering:
 
 | Class | Lowering | Parameters it takes |
 |---|---|---|
-| `fw_arbiter #(T, N, POLICY)` | XLS: arbiter with one hold per input, round robin or fixed priority (`rr_arb`) | `POLICY` `FW_ARB_RR` or `FW_ARB_PRIO`; `N` 2–64 |
 | `fw_reg_component #(BLK, W, AW)` | native: the regblock core ({doc}`islands`, Register blocks as children) | `W` 8/16/32/64 |
 
 A child is recognized by its own class or by the nearest base with an entry. The
 following are errors at the child's SV line, not a fallback to mapping the body:
-- a parameter value the entry does not take, such as `fw_arbiter` with `N = 1`;
+- a parameter value the entry does not take, such as `fw_reg_component` with
+  `W = 12`;
 - a subclass that defines `run()`.
 
 An extern assignment in the knob file wins over an entry, so RTL supplied for a
 library class is used as is. A recognized class cannot join a multi-proc group yet.
 
-A library class written as a cycle step, such as `fw_credit_tx`, has no entry: its
-`step()` is in the static subset, so it is mapped like any component and assigned to
-XLS by its class name ({doc}`../reference/lib`).
+A library class written as a cycle step, such as `fw_credit_tx`, or as an
+all-or-nothing step, such as `fw_arbiter`, has no entry: its `step()` is in the
+static subset, so it is mapped like any component and assigned to XLS by its class
+name ({doc}`../reference/lib`).
 
-The registry is the zuspec lowering registry, keyed by SV class name. The channel
-classes and port APIs that the front end matches are entries too.
+The registry is the zuspec lowering registry, keyed by SV class name. An entry's
+lowering builds Zuspec IR from the class parameters (target `zuspec`), so the block
+goes through the same backends and checks as a mapped class; XLS IR text (`xls`)
+remains for an existing XLS proc. The channel classes and port APIs that the front
+end matches are entries too.
 {doc}`../reference/registry` says how to add one.
 
 ## Types and operators

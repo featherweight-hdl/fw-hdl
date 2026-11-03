@@ -1,20 +1,19 @@
-"""Recognized classes. A child whose class has a registry entry is
-lowered by the entry (fw.hdl.lib), not mapped from its body:
+"""Library classes as children. A child whose class has a registry entry is
+lowered by the entry (fw.hdl.lib), not mapped from its body; the library's
+cycle steps have none:
 
-* fw_arbiter #(.., FW_ARB_RR) lowers to the XLS IR template
-  (fw.hdl.lib.xls_ir); fw_credit_tx, a cycle step, is mapped from its step();
+* fw_credit_tx (a cycle step) and fw_arbiter (an all-or-nothing step) are
+  mapped from their step(), assigned to XLS by class name;
 * the class model and the RTL agree under each class's contract: in order for
   the credited link, in order per input for the arbiter;
-* a parameter value the entry does not take is rejected at the child's line
-  (tests/xls/lib/test_arbiter.py);
-* a subclass that defines run() is rejected (its body would be replaced).
+* a subclass of fw_arbiter that defines run() is rejected: a component is a
+  process or a step, not both.
 """
 import random
 from pathlib import Path
 
 import pytest
 
-from fw.hdl.lib import xls_ir
 from fw.hdl.verif.canon import Event, Rule, check, compare
 from fw.hdl.xls_flow import sv_to_structure
 from xls_harness import REPO, proc_testbench, rtl_testbench, run_verilator
@@ -26,7 +25,7 @@ FILES = [str(COMPOSE / "lib_pkg.sv")]
 RTL_LIB = [REPO / "src" / "rtl" / n for n in ("fw_rv_fifo.sv", "fw_valid_check.sv")]
 needs_xls = pytest.mark.skipif(codegen_main() is None or opt_main() is None,
                                reason="needs opt_main and codegen_main")
-XLS = {"ctop": ["crx", "fw_credit_tx"], "atop": []}
+XLS = {"ctop": ["crx", "fw_credit_tx"], "atop": ["fw_arbiter"]}
 
 
 def _rtl(tmp_path, top, inputs, seed, stages=1):
@@ -46,7 +45,7 @@ def _rtl(tmp_path, top, inputs, seed, stages=1):
 def _model(tmp_path, top, inputs):
     comp = sv_to_structure(FILES, top).component
     tb = tmp_path / "xh_proc_tb.sv"
-    # The credit sender is a cycle step and the arbiter grants once a clock.
+    # The credit sender and the arbiter are cycle steps.
     tb.write_text(proc_testbench(["lib_pkg"], top, comp, inputs, clocked=True))
     out = run_verilator(FILES + [tb], "xh_proc_tb", tmp_path / "model")
     return [int(l.split()[3], 16) for l in out if l.startswith("O out ")]
@@ -54,12 +53,12 @@ def _model(tmp_path, top, inputs):
 
 def test_lowerings():
     from fw.hdl.spl_flow import partition
-    a = partition(FILES, "atop", [])
-    (arb,) = list(a.texts)
-    assert a.texts[arb] == xls_ir.package(arb, xls_ir.rr_arb(
-        n=3, width=8, name=arb, ins=["in_0", "in_1", "in_2"], out="out"))
-    # recognized: no knob names it, and its body is not mapped
-    assert [f.name for f in a.blocks[arb].fields] == ["in_0", "in_1", "in_2", "out"]
+    # fw_arbiter is an all-or-nothing step with no entry: its step() is mapped.
+    a = partition(FILES, "atop", XLS["atop"])
+    assert a.texts == {}
+    (arb,) = [k for k in a.blocks if k.startswith("fw_arbiter")]
+    assert a.blocks[arb].proc_processes[0].metadata == {"fw_step": True, "fw_stall": True}
+    assert [f.name for f in a.blocks[arb].fields] == ["s", "in_0", "in_1", "in_2", "out"]
     # fw_credit_tx is a cycle step with no entry: its step() is mapped.
     c = partition(FILES, "ctop", XLS["ctop"])
     assert c.texts == {}
@@ -119,14 +118,6 @@ def test_arbiter_round_robin_when_all_inputs_wait(tmp_path):
     assert [v >> 8 for v in model] == [0, 1, 2] * 6
 
 
-def test_fixed_priority_lowers_to_the_prio_template():
-    from fw.hdl.spl_flow import partition
-    p = partition(FILES, "ptop", [])
-    (arb,) = list(p.texts)
-    assert p.texts[arb] == xls_ir.package(arb, xls_ir.rr_arb(
-        n=3, width=8, name=arb, ins=["in_0", "in_1", "in_2"], out="out", prio=True))
-
-
 SUB = """\
 package sub_pkg;
     import fw_hdl_pkg::*;
@@ -139,10 +130,10 @@ package sub_pkg;
         endtask
     endclass
     class s_top extends fw_component;
-        fw_port #(fw_get_if #(bit [7:0])) a;
-        fw_port #(fw_get_if #(bit [7:0])) b;
-        fw_port #(fw_put_if #(bit [8:0])) out;
-        my_arb                            arb;
+        fw_port #(fw_get_nb_if #(bit [7:0]))   a;
+        fw_port #(fw_get_nb_if #(bit [7:0]))   b;
+        fw_port #(fw_put_step_if #(bit [8:0])) out;
+        my_arb                                 arb;
         function new(string name, fw_component parent);
             super.new(name, parent);
         endfunction
@@ -168,8 +159,8 @@ def test_subclass_defining_run_is_rejected(tmp_path):
     f = tmp_path / "sub_pkg.sv"
     f.write_text(SUB)
     with pytest.raises(FwHdlError) as e:
-        partition([str(f)], "s_top", [])
-    assert "my_arb extends fw_arbiter" in str(e.value) and "sub_pkg.sv:8:" in str(e.value), \
+        partition([str(f)], "s_top", ["my_arb"])
+    assert "has both run() and step()" in str(e.value) and "sub_pkg.sv:" in str(e.value), \
         str(e.value)
 
 
@@ -177,8 +168,8 @@ def test_registry_lists_fw_hdl_entries():
     from fw.hdl.lib.registry import ORIGIN, registry
     got = {(e.name, e.target) for e in registry().externals() if e.origin == ORIGIN}
     assert {x for x in got if x[1] != "elab"} == \
-        {("fw_arbiter", "xls"), ("fw_reg_component", "native")}
+        {("fw_reg_component", "native")}
     # the channel classes and port APIs the front end matches are entries too
     assert {n for n, t in got if t == "elab"} == {
         "fw_channel", "fw_valid_channel", "fw_level_channel", "fw_get_if", "fw_get_nb_if",
-        "fw_put_if", "fw_valid_put_if", "fw_level_if", "fw_level_set_if"}
+        "fw_put_if", "fw_put_step_if", "fw_valid_put_if", "fw_level_if", "fw_level_set_if"}

@@ -61,33 +61,65 @@ _CMP = {
 
 
 def _implements(cls, name: str) -> bool:
-    """Does *cls*, or a class it derives from, implement interface class *name*?"""
+    """Does *cls*, or a class it derives from, implement interface class *name*
+    (or an interface class that extends it)?"""
     ct = cls
     while ct is not None and getattr(ct, "kind", None) == ast.SymbolKind.ClassType:
-        for i in getattr(ct, "implementedInterfaces", None) or []:
+        todo = list(getattr(ct, "implementedInterfaces", None) or [])
+        while todo:
+            i = todo.pop()
             i = getattr(i, "canonicalType", i)
             g = getattr(i, "genericClass", None)
             if (g.name if g is not None else getattr(i, "name", None)) == name:
                 return True
+            todo += list(getattr(i, "implementedInterfaces", None) or [])
         b = ct.baseClass
         ct = b.canonicalType if b is not None else None
     return False
 
 
+def _atomic_state(cls):
+    """The state property ``s`` of an all-or-nothing step (a class derived
+    from fw_atomic_step), or None."""
+    b = cls.baseClass
+    ct = b.canonicalType if b is not None else None
+    while ct is not None and getattr(ct, "kind", None) == ast.SymbolKind.ClassType:
+        g = getattr(ct, "genericClass", None)
+        if g is not None and g.name == "fw_atomic_step":
+            return ct.find("s")
+        b = ct.baseClass
+        ct = b.canonicalType if b is not None else None
+    return None
+
+
 def find_behavior(cls) -> Tuple[Optional[str], Optional[object]]:
     """The behavior *cls* declares itself: ``("run", task)``, ``("step",
     function)`` for an ``fw_steppable``, or ``(None, None)`` for a structural
-    class. Raises ValueError (with the second subroutine) when it has both."""
+    class. Both may come from user bases; raises ValueError (with the more
+derived of the two) when it has both."""
     run = step = None
-    for m in cls:
-        if m.kind != ast.SymbolKind.Subroutine or m.body is None:
-            continue
-        if m.name == "run":
-            run = m
-        elif m.name == "step" and _implements(cls, "fw_steppable"):
-            step = m
+    depth, run_d, step_d = 0, 0, 0
+    # The class and its user bases, most derived first; the library roots
+    # declare neither.
+    ct = cls
+    while ct is not None and getattr(ct, "kind", None) == ast.SymbolKind.ClassType:
+        g = getattr(ct, "genericClass", None)
+        if (g.name if g is not None else ct.name) in ("fw_component", "fw_component_param",
+                                                      "fw_atomic_step"):
+            break
+        for m in ct:
+            if m.kind != ast.SymbolKind.Subroutine or m.body is None:
+                continue
+            if m.name == "run" and run is None:
+                run, run_d = m, depth
+            elif m.name == "step" and step is None and _implements(cls, "fw_steppable"):
+                step, step_d = m, depth
+        depth += 1
+        b = ct.baseClass
+        ct = b.canonicalType if b is not None else None
     if run is not None and step is not None:
-        raise ValueError(step)
+        # Located at the one the most derived class declares.
+        raise ValueError(step if step_d <= run_d else run)
     if run is not None:
         return "run", run
     if step is not None:
@@ -114,6 +146,8 @@ class StaticMapper:
         self.lvalue: List[ir.Expr] = []
         self.port_dirs: Dict[str, str] = {}       # port name -> "get" | "put"
         self.port_nb: set = set()                 # get ports that may poll (fw_get_nb_if)
+        self.port_stall: set = set()              # put ports that may stall (fw_put_step_if)
+        self.behavior: Optional[str] = None       # "run", "step" or "atomic" (fw_atomic_step)
         self.port_flow: Dict[str, str] = {}       # port name -> "valid" | "level"
         self.cls_name: Optional[str] = None
         self.cls_spelling: Optional[str] = None
@@ -905,9 +939,24 @@ class StaticMapper:
                 call = ir.ExprCall(func=ir.ExprAttribute(value=ref, attr="put"),
                                    args=[self.expr(e.arguments[0])])
                 return [ir.StmtExpr(expr=ir.ExprAwait(value=call))]
+            if method == "put_or_stall" and pname in self.port_stall:
+                if self.behavior != "atomic":
+                    raise self.fail(f"{pname}.t.put_or_stall() stalls the whole step, so it "
+                                    f"needs an all-or-nothing step (a class derived from "
+                                    f"fw_atomic_step)", e)
+                if len(e.arguments) != 1:
+                    raise self.fail(f"expected `{pname}.t.put_or_stall(v)`", e)
+                call = ir.ExprCall(func=ir.ExprAttribute(value=ref, attr="put"),
+                                   args=[self.expr(e.arguments[0])])
+                return [ir.StmtExpr(expr=ir.ExprAwait(value=call))]
             if method == "put" and self.port_dirs[pname] == "put" and not level:
                 if len(e.arguments) != 1:
                     raise self.fail(f"expected `{pname}.t.put(v)`", e)
+                if self.behavior in ("step", "atomic") and \
+                        self.port_flow.get(pname) != "valid":
+                    raise self.fail(f"{pname}.t.put() waits for ready, and a step cannot "
+                                    f"wait: use put_or_stall in an fw_atomic_step, or a "
+                                    f"valid-only port (fw_valid_put_if)", e)
                 call = ir.ExprCall(func=ir.ExprAttribute(value=ref, attr="put"),
                                    args=[self.expr(e.arguments[0])])
                 return [ir.StmtExpr(expr=ir.ExprAwait(value=call))]
@@ -1037,6 +1086,7 @@ class StaticMapper:
         if api not in apis:
             raise self.fail(f"port {pname!r} uses {api}; the static subset has channel "
                             f"ports only ({' / '.join(sorted(apis))})", m)
+        api_name = api
         nb = apis[api].polls
         flow = apis[api].flow
         api = "fw_get_if" if apis[api].direction == "get" else "fw_put_if"
@@ -1048,6 +1098,8 @@ class StaticMapper:
         self.port_dirs[pname] = "get" if api == "fw_get_if" else "put"
         if nb:
             self.port_nb.add(pname)
+        if apis[api_name].stalls:
+            self.port_stall.add(pname)
         dt = ir.DataTypeGetIF(element_type=et) if api == "fw_get_if" else \
             ir.DataTypePutIF(element_type=et)
         # The payload type as SV spells it from outside the class, for
@@ -1066,6 +1118,7 @@ class StaticMapper:
             self.port_flow[pname] = flow
         return ir.Field(name=pname, datatype=dt, kind=ir.FieldKind.Port, loc=self.loc(m),
                         pragmas={"sv_type": sv_type, **({"get_nb": True} if nb else {}),
+                                 **({"put_step": True} if pname in self.port_stall else {}),
                                  **({"fw_flow": flow} if flow != "ready_valid" else {})})
 
     def map_component(self, cls, spelling: Optional[str] = None,
@@ -1076,11 +1129,17 @@ class StaticMapper:
         ``param_values`` are this instance's ``m_params`` fields (an
         ``fw_component_param``), which the body reads as constants."""
         self.fields, self.port_dirs, self.port_nb = {}, {}, set()
-        self.port_flow = {}
+        self.port_stall, self.port_flow = set(), {}
         self.param_values = dict(param_values or {})
         self.cls_name, self.cls_spelling = cls.name, spelling or cls.name
         fields: List[ir.Field] = []
         self.port_arrays, self.unroll_vals = {}, {}
+        st = _atomic_state(cls)
+        if st is not None:
+            # fw_atomic_step's state: one packed struct, zero at reset.
+            dt = self.dtype(st.type, st, "the step state 's'", decl=True)
+            self.fields["s"] = 0
+            fields.append(ir.Field(name="s", datatype=dt, loc=self.loc(st)))
         for m in cls:
             if m.kind == ast.SymbolKind.ClassProperty:
                 n = self._port_array_len(m)
@@ -1110,9 +1169,12 @@ class StaticMapper:
                             f"process (run) or a cycle step (step), not both", e.args[0]) from None
         if run is None:
             raise self.fail(f"class {cls.name!r} has no run() task or step() function", cls)
+        if kind == "step" and _implements(cls, "fw_atomic_steppable"):
+            kind = "atomic"
+        self.behavior = kind
         self.locals, self.local_names, self.params = {}, set(), {}
         self.ret_var, self.in_function = None, None
-        if kind == "step":
+        if kind in ("step", "atomic"):
             # One step() is one activation: the body of an implicit forever.
             # Its locals are declared inside it, so they are temporaries.
             run_body = [ir.StmtWhile(test=_synth(ir.ExprConstant(value=True), "step"),
@@ -1120,7 +1182,8 @@ class StaticMapper:
         else:
             run_body = self.body(run.body)
         run_fn = ir.Function(name="run", body=run_body, is_async=True, loc=self.loc(run),
-                             metadata={"fw_step": True} if kind == "step" else {})
+                             metadata={"fw_step": True} if kind == "step" else
+                             {"fw_step": True, "fw_stall": True} if kind == "atomic" else {})
         while self._fn_queue:
             sub = self._fn_queue.pop(0)
             fn = self.map_function(sub)

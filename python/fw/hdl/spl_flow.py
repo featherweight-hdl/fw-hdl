@@ -248,7 +248,8 @@ def partition(files: Sequence[str], top: str, xls: Sequence[str],
             continue
         try:
             nat = librg.recognize(c.cls, "native")
-            hit = librg.recognize(c.cls, "xls") if nat is None else None
+            zs = librg.recognize(c.cls, "zuspec") if nat is None else None
+            hit = librg.recognize(c.cls, "xls") if nat is None and zs is None else None
         except (RecognitionError, librg.SubclassError) as e:
             raise sm.fail(f"child {c.name!r}: {e}", getattr(e, "node", None) or c.decl) from None
         if nat is not None:
@@ -258,6 +259,13 @@ def partition(files: Sequence[str], top: str, xls: Sequence[str],
                 except native.NativeError as e:
                     raise sm.fail(str(e), c.decl) from None
             engines[c.spelling] = {"engine": "native", "native": natives[c.spelling].to_json()}
+            continue
+        if zs is not None:
+            # Zuspec IR from the entry's factory: lowered like a mapped class.
+            if c.spelling not in blocks:
+                blocks[c.spelling] = zs.lowering.component(zs.params, c.spelling,
+                                                           dict(c.ports))
+            engines[c.spelling] = {"engine": "xls", "recognized": zs.entry.name}
             continue
         if hit is not None:
             if c.spelling not in blocks:
