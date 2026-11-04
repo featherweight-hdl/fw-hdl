@@ -143,8 +143,11 @@
       "properties": {
         "bind": {"enum": ["flops", "xls_fifo", "wrapper", "sram"]},
         "module": {"type": "string", "description": "bind: wrapper -- the FIFO module."},
-        "macro": {"type": "string", "description": "bind: sram -- the memory cell."},
-        "read_latency": {"type": "integer", "minimum": 1}
+        "macro": {"type": "string",
+                  "description": "bind: sram -- the RAM module, with fw_ram_1r1w_model's ports (default: that model)."},
+        "read_latency": {"type": "integer", "minimum": 1},
+        "files": {"type": "array", "items": {"type": "string"},
+                  "description": "The wrapper's or the RAM module's source files."}
       }
     }
   }

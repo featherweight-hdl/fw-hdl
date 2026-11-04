@@ -48,7 +48,7 @@ Targets:
 | `zuspec` | `ZuspecLowering(component)`: `component(params, name, ports)` returns a `DataTypeComponent` named `name`, whose port fields come from `ports` (the child's, by name) | Partition: the block, lowered like a class it mapped |
 | `xls` | `XlsLowering(text, ports)`: `text(params, name)` is the IR package; `ports(params)` lists the class's port names in the IR's order. For an existing XLS proc; it bypasses every check on Zuspec IR | Partition: the block's IR, and its ports for the predicted signature |
 | `native` | `NativeLowering(kind)` | Partition: fw-hdl emits the RTL (`regblock`) |
-| `elab` | `ChannelKind(kind)` or `PortApi(direction, flow, polls, stalls)` | the front end: which classes are channels and port APIs |
+| `elab` | `ChannelKind(kind, bindings)`, `PortApi(direction, flow, polls, stalls)` or `StorageKind(bindings, why)` | the front end: which classes are channels and port APIs; the storage bindings a channel or a table allows ({doc}`../methodology/storage`) |
 
 `lookup(name, params, target)` returns the entry with the checked parameters, or
 `None` when there is no entry. It raises `RecognitionError` for a parameter the

@@ -79,6 +79,8 @@ sv_build_units = [
     _r("src", "std", "fw_std_pkg.sv"),
     _r("src", "rtl", "fw_rv_fifo.sv"),
     _r("src", "rtl", "fw_valid_check.sv"),
+    _r("src", "rtl", "fw_sram_fifo.sv"),
+    _r("src", "rtl", "fw_ram_1r1w_model.sv"),
     _r("src", "std", "order", "fw_order_pkg.sv"),
     _r("src", "std", "rv", "fw_rv_macros.svh"),
     _r("src", "std", "rv", "fw_rv_initiator_xtor_if.sv"),

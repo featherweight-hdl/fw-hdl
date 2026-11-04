@@ -14,7 +14,12 @@ class                   target    lowering
 the other channels
 ``fw_get_if`` and the   elab      :class:`PortApi`: the port's direction and
 other port APIs                   flow control
+``fw_keyed_table`` and  elab      :class:`StorageKind`: the storage bindings
+the other tables                  it allows (flops only), and why
 ======================  ========  ===========================================
+
+A channel's :class:`ChannelKind` also lists the storage bindings it allows
+(knob ``storage:``, :mod:`fw.hdl.storage`).
 
 A library class written as a cycle step (``fw_credit_tx``, ``fw_arbiter``)
 has no entry: its step() is mapped like any other component's.
@@ -72,8 +77,18 @@ class NativeLowering:
 
 @dc.dataclass(frozen=True)
 class ChannelKind:
-    """A channel class: ``ready_valid``, ``valid`` or ``level``."""
+    """A channel class: ``ready_valid``, ``valid`` or ``level``, and the
+    storage bindings (knob ``storage:``) it allows; a level holds no storage."""
     kind: str
+    bindings: tuple = ()
+
+
+@dc.dataclass(frozen=True)
+class StorageKind:
+    """A class that holds storage in its own state: the bindings it allows,
+    and the reason it allows no others."""
+    bindings: tuple
+    why: str
 
 
 @dc.dataclass(frozen=True)
@@ -90,8 +105,10 @@ class PortApi:
 ENTRIES = [
     ("fw_reg_component", {"BLK": str, "W": (8, 16, 32, 64), "AW": range(1, 65)}, "native",
      NativeLowering("regblock")),
-    ("fw_channel", {"T": object, "DEPTH": int}, "elab", ChannelKind("ready_valid")),
-    ("fw_valid_channel", {"T": object, "DEPTH": int}, "elab", ChannelKind("valid")),
+    ("fw_channel", {"T": object, "DEPTH": int}, "elab",
+     ChannelKind("ready_valid", ("flops", "wrapper", "xls_fifo", "sram"))),
+    ("fw_valid_channel", {"T": object, "DEPTH": int}, "elab",
+     ChannelKind("valid", ("flops", "wrapper", "sram"))),
     ("fw_level_channel", {"T": object}, "elab", ChannelKind("level")),
     ("fw_get_if", {"T": object}, "elab", PortApi("get", "ready_valid")),
     ("fw_get_nb_if", {"T": object}, "elab", PortApi("get", "ready_valid", polls=True)),
@@ -100,6 +117,9 @@ ENTRIES = [
     ("fw_valid_put_if", {"T": object}, "elab", PortApi("put", "valid")),
     ("fw_level_if", {"T": object}, "elab", PortApi("get", "level")),
     ("fw_level_set_if", {"T": object}, "elab", PortApi("put", "level")),
+] + [
+    (name, {}, "elab", StorageKind(("flops",), "it reads every entry each cycle"))
+    for name in ("fw_keyed_table", "fw_token_pool", "fw_slot_reserve", "fw_dep_tracker")
 ]
 
 
@@ -122,6 +142,29 @@ def channel_kinds() -> Dict[str, str]:
     """Channel class name -> kind, from the registry."""
     return {e.name: e.lowering.kind for e in registry().externals("elab")
             if isinstance(e.lowering, ChannelKind)}
+
+
+def channel_bindings() -> Dict[str, tuple]:
+    """Channel kind -> the storage bindings it allows, from the registry."""
+    return {e.lowering.kind: e.lowering.bindings for e in registry().externals("elab")
+            if isinstance(e.lowering, ChannelKind)}
+
+
+def storage_kind(cls) -> Optional[StorageKind]:
+    """The :class:`StorageKind` of class *cls* (by its generic class or the
+    nearest base with an entry), or None."""
+    from pyslang import ast
+    kinds = {e.name: e.lowering for e in registry().externals("elab")
+             if isinstance(e.lowering, StorageKind)}
+    ct = cls
+    while ct is not None and ct.kind == ast.SymbolKind.ClassType:
+        g = getattr(ct, "genericClass", None)
+        name = g.name if g is not None else ct.name
+        if name in kinds:
+            return kinds[name]
+        b = ct.baseClass
+        ct = b.canonicalType if b is not None else None
+    return None
 
 
 def port_apis() -> Dict[str, PortApi]:

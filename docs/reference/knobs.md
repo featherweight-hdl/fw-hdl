@@ -39,7 +39,7 @@ Every merged value keeps the file and line it came from.
 | `xls.default` | block options | applied to every XLS block |
 | `xls.blocks.<class>` | block options | one block; wins over `default` |
 | `xls.chan_flop.<class>.<channel>` | `none`, `flop`, `skid`, `zerolatency` | the register on one channel of a proc block |
-| `storage.default`, `storage.<instance path>` | `{bind, module, macro, read_latency}` | storage binding: `flops`, `xls_fifo`, `wrapper` or `sram` |
+| `storage.default`, `storage.<instance path>` | `{bind, module, macro, read_latency, files}` | what holds a channel's values: `flops`, `xls_fifo`, `wrapper` or `sram` (see [Storage binding](../methodology/storage.md)); the path is below the top, such as `q` or `sub.q` |
 | `island.groups.<name>` | list of classes | blocks lowered as one multi-proc package (they must share one schedule) |
 | `island.exceptions` | list of `{channel, kind, reason}` | boundaries that are not registered both ways; `kind` is `same_cycle`, `fixed_timing`, `single_value`, `cdc` or `merged` |
 | `delay.scale` | number > 0 | delay-model pessimism: the scheduler is given `clock_period_ps * scale` |

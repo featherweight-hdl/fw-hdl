@@ -26,6 +26,9 @@ _SRC = Path(FW_LIB_FILES[0]).resolve().parent
 FIFO_SV = _SRC / "rtl" / "fw_rv_fifo.sv"
 VALID_CHECK_SV = _SRC / "rtl" / "fw_valid_check.sv"
 XLS_FIFO_SV = _SRC / "rtl" / "fw_xls_fifo_wrapper.sv"
+#: The channel RTL Integrate's output always lists, in compile order.
+RTL_LIB = [FIFO_SV, VALID_CHECK_SV, XLS_FIFO_SV, _SRC / "rtl" / "fw_sram_fifo.sv",
+           _SRC / "rtl" / "fw_ram_1r1w_model.sv"]
 
 
 def _sv_inputs(input: TaskDataInput):
@@ -198,6 +201,7 @@ async def Partition(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
     from zuspec.be.xls.printer import format_package
     from zuspec.be.xls.signature import CodegenOptions, predict_signature
 
+    from fw.hdl import storage
     from fw.hdl.spl_flow import module_name, partition
     p = input.params
     files, incdirs = _sv_inputs(input)
@@ -212,10 +216,18 @@ async def Partition(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
     try:
         part = partition(files, p.top, list(p.xls or []), FlowConfig(incdirs=incdirs), reporter,
                          extern=extern, groups=groups)
+        # Each channel's storage binding goes on the partition (Integrate
+        # and the groups' codegen read it there).
+        srep = storage.plan(part.shell, knobs.storage_section() if knobs is not None else None)
     except (FwHdlError, XlsFlowError) as e:
         return TaskDataResult(status=1, changed=True, output=[], markers=_markers(reporter, e))
     rundir = input.rundir
     os.makedirs(rundir, exist_ok=True)
+    with open(os.path.join(rundir, "storage.json"), "w") as f:
+        json.dump(srep, f, indent=2)
+        f.write("\n")
+    with open(os.path.join(rundir, "storage.txt"), "w") as f:
+        f.write(storage.format_report(srep))
     # Native children are emitted here; Integrate finds them as it finds extern
     # blocks, by the signature and files on their shell entry.
     from fw.hdl import native
@@ -233,7 +245,6 @@ async def Partition(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
             if c.get("engine") == "native":
                 c["native"].update(native_files[c["class"]])
     part.shell.save(os.path.join(rundir, "partition.json"))
-    from zuspec.be.xls.multi_proc import MULTI_PROC_FLAGS
     known = knobs.xls_blocks() + list(knobs.get("xls", "blocks", default={}) or {}) \
         if knobs is not None else []
     known_mods = {module_name(b) for b in known}
@@ -287,7 +298,7 @@ async def Partition(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
         # One schedule per package: the members' (the knob check makes them equal).
         opts = dict(knobs.codegen_module_options(next(iter(keys.values())))) \
             if knobs is not None else {}
-        opts["args"] = list(opts.get("args", [])) + MULTI_PROC_FLAGS
+        opts["args"] = list(opts.get("args", [])) + storage.group_flags(entry)
         cg_mods[module] = opts
     if markers:
         return TaskDataResult(status=1, changed=True, output=[], markers=markers)
@@ -296,7 +307,9 @@ async def Partition(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
                    files=["partition.json"]),
            FileSet(src=input.name, filetype="xlsIR", basedir=rundir, files=irs),
            FileSet(src=input.name, filetype="blockSignaturePrediction", basedir=rundir,
-                   files=preds)]
+                   files=preds),
+           FileSet(src=input.name, filetype="fwStorageReport", basedir=rundir,
+                   files=["storage.json", "storage.txt"])]
     if cg_mods:
         with open(os.path.join(rundir, "partition.codegen.json"), "w") as f:
             json.dump({"format": "xls.codegen-options", "modules": cg_mods}, f, indent=2)
@@ -381,7 +394,13 @@ async def Integrate(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
     # Everything a simulator or synthesis tool needs, in compile order: the
     # channel FIFO, the blocks, then the structural modules and the top.
     out = [FileSet(src=input.name, filetype="systemVerilogSource",
-                   basedir=str(FIFO_SV.parent), files=[FIFO_SV.name, VALID_CHECK_SV.name, XLS_FIFO_SV.name])]
+                   basedir=str(FIFO_SV.parent), files=[n.name for n in RTL_LIB])]
+    # A wrapper's or a RAM module's own files (knob storage: files:).
+    from fw.hdl import storage
+    for src in storage.files(shell):
+        out.append(FileSet(src=input.name, filetype="systemVerilogSource",
+                           basedir=os.path.dirname(os.path.abspath(src)),
+                           files=[os.path.basename(src)]))
     for src in dict.fromkeys(_child_sources(shell, sigs)):
         if src in written:
             continue

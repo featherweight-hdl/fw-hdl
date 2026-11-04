@@ -313,6 +313,17 @@ class Knobs:
             return o.get(f"flop_{side}_kind", "flop")
         return "none"
 
+    def storage_section(self) -> Dict[str, dict]:
+        """``storage:`` as written, with each entry's ``files`` resolved
+        against the knob file that names them (:mod:`fw.hdl.storage`)."""
+        out = {}
+        for key, e in (self.get("storage", default={}) or {}).items():
+            o = self.origin("storage", key)
+            base = Path(o.file).parent if o else Path(".")
+            out[key] = {**e, **({"files": [f if os.path.isabs(f) else str((base / f).resolve())
+                                           for f in e["files"]]} if e.get("files") else {})}
+        return out
+
     def storage(self, inst: str) -> dict:
         s = self.get("storage", default={}) or {}
         out = dict(s.get("default", {"bind": "flops"}))

@@ -9,7 +9,8 @@ The three steps, as plain functions (the dv-flow tasks wrap these):
 * :func:`xls_block` (B): one class -> XLS IR -> ``codegen_main`` -> a Verilog
   module plus its *actual* signature (checked against the prediction).
 * :func:`integrate` (C): a structural top built from the signatures alone
-  (Rule 1): one instance per child, an ``fw_rv_fifo`` per channel, and the top's
+  (Rule 1): one instance per child, a FIFO per channel (``fw_rv_fifo``, or
+  what the channel's storage binding names: :mod:`fw.hdl.storage`), and the top's
   own channels as ready/valid pins. It also returns the top's signature, so a
   composed top is itself a block.
 """
@@ -186,6 +187,11 @@ def _shell(st: Structure, engines: Optional[Dict[str, dict]] = None) -> Shell:
     for c in st.children.values():
         e = {"name": c.name, "class": c.spelling, "module": module_name(c.spelling),
              "engine": "xls", "alias": c.alias}
+        if c.structure is None:
+            # A class that holds storage in its own state (knob `storage:`).
+            sk = librg.storage_kind(c.cls)
+            if sk is not None:
+                e["holds"] = {"bindings": list(sk.bindings), "why": sk.why}
         if c.structure is not None:
             e["engine"] = "structural"
             e["shell"] = dc.asdict(_shell(c.structure, engines))
@@ -358,7 +364,8 @@ def _apply_groups(sh: Shell, groups: Dict[str, List[str]], names: Dict[str, List
             if chans[n].get("kind", "ready_valid") != "ready_valid":
                 raise XlsFlowError(f"island.groups.{g}: channel {n} is a "
                                    f"{chans[n]['kind']} channel; a group carries streams only")
-        internal = [{"name": n, "depth": chans[n]["depth"], "a": list(ends[n]["put"]),
+        internal = [{"name": n, "depth": chans[n]["depth"], "bits": chans[n]["bits"],
+                     "a": list(ends[n]["put"]),
                      "b": list(ends[n]["get"])} for n in sorted(inside)]
         external, binds = [], []
         for b in sh.binds:
@@ -403,11 +410,12 @@ class Block:
 
 def xls_group_block(part: Partition, name: str, stages: int = 1) -> Block:
     """A group's multi-proc package -> one module."""
-    from zuspec.be.xls.multi_proc import MULTI_PROC_FLAGS
     from zuspec.be.xls.signature import CodegenOptions, actual_signature, predict_signature
     from zuspec.be.xls.testing.xlstools import run_codegen
+    from . import storage
     opts = CodegenOptions(module_name=module_name(name))
-    res = run_codegen(part.group_text(name), opts, stages=stages, extra=MULTI_PROC_FLAGS)
+    res = run_codegen(part.group_text(name), opts, stages=stages,
+                      extra=storage.group_flags(part.groups[name]))
     sig = actual_signature(predict_signature(part.group_component(name), opts), res.signature,
                            sources=[f"{opts.module_name}.sv"])
     return Block(sig, res.verilog)
@@ -436,6 +444,36 @@ def _path_name(comp: ir.DataTypeComponent, e: ir.Expr) -> Tuple[str, Optional[st
     if isinstance(e, ir.ExprAttribute):
         return comp.fields[e.value.index].name, e.attr
     return comp.fields[e.index].name, None
+
+
+def _fifo(c: dict, clock: str, reset: str, instances: List[ir.ModuleInstance]
+          ) -> List[ir.Field]:
+    """The FIFO for channel *c*, by its storage binding (:mod:`fw.hdl.storage`):
+    ``fw_rv_fifo``, a wrapper module with its ports, or ``fw_sram_fifo`` with
+    its RAM beside it on nets ``<ch>_ram_*``. Returns the nets it adds."""
+    from . import storage
+    n, w, depth = c["name"], c["bits"], c["depth"]
+    s = c.get("storage") or {"bind": "flops"}
+    module = s["module"] if s["bind"] == "wrapper" else storage.FIFO_MODULES[s["bind"]]
+    conns = [("clk", clock), ("rst", reset),
+             ("in_data", f"{n}_in"), ("in_vld", f"{n}_in_vld"), ("in_rdy", f"{n}_in_rdy"),
+             ("out_data", f"{n}_out"), ("out_vld", f"{n}_out_vld"), ("out_rdy", f"{n}_out_rdy")]
+    fields: List[ir.Field] = []
+    if s["bind"] == "sram":
+        aw = max(1, (depth - 2).bit_length())          # $clog2(DEPTH - 1), at least 1
+        ram = [("wa", aw), ("we", 1), ("wd", w), ("ra", aw), ("re", 1), ("rd", w)]
+        fields = [ir.Field(name=f"{n}_ram_{p}", datatype=ir.DataTypeInt(bits=b, signed=False))
+                  for p, b in ram]
+        conns += [(f"ram_{p}", f"{n}_ram_{p}") for p, _ in ram]
+        instances.append(ir.ModuleInstance(
+            module=s["macro"], name=f"{n}_ram",
+            parameters={"WIDTH": str(w), "WORDS": str(depth - 1)},
+            connections=[ir.PortConnection(port="clk", signal=clock)]
+            + [ir.PortConnection(port=p, signal=f"{n}_ram_{p}") for p, _ in ram]))
+    instances.append(ir.ModuleInstance(
+        module=module, name=n, parameters={"WIDTH": str(w), "DEPTH": str(depth)},
+        connections=[ir.PortConnection(port=p, signal=sg) for p, sg in conns]))
+    return fields
 
 
 def integrate(shell: Shell, sigs: Dict[str, ir.BlockSignature],
@@ -511,13 +549,7 @@ def integrate(shell: Shell, sigs: Dict[str, ir.BlockSignature],
         # A polling consumer sees the same pins: its non-blocking receive is
         # still a ready/valid transfer, taken only when valid.
         nets[(n, "get_nb_ex")] = nets[(n, "get_ex")]
-        instances.append(ir.ModuleInstance(
-            module=FIFO_MODULE, name=n, parameters={"WIDTH": str(w), "DEPTH": str(c["depth"])},
-            connections=[ir.PortConnection(port=p, signal=s) for p, s in [
-                ("clk", clock), ("rst", reset),
-                ("in_data", f"{n}_in"), ("in_vld", f"{n}_in_vld"), ("in_rdy", f"{n}_in_rdy"),
-                ("out_data", f"{n}_out"), ("out_vld", f"{n}_out_vld"),
-                ("out_rdy", f"{n}_out_rdy")]]))
+        fields += _fifo(c, clock, reset, instances)
 
     # Children -> one instance each, wired by the binds; a port's kind must
     # be its end's.
@@ -567,9 +599,13 @@ def spl_to_rtl(files: Sequence[str], top: str, xls: Sequence[str], stages: int =
                config: Optional[FlowConfig] = None,
                reporter: Optional[ErrorReporter] = None,
                extern: Optional[Dict[str, dict]] = None,
-               groups: Optional[Dict[str, List[str]]] = None) -> RtlDesign:
-    """A -> B for each XLS class -> C, in one call."""
+               groups: Optional[Dict[str, List[str]]] = None,
+               storage: Optional[dict] = None) -> RtlDesign:
+    """A -> B for each XLS class -> C, in one call. *storage* is the knob
+    ``storage:`` (:mod:`fw.hdl.storage`)."""
+    from . import storage as _storage
     part = partition(files, top, xls, config, reporter, extern=extern, groups=groups)
+    _storage.plan(part.shell, storage)
     sigs: Dict[str, ir.BlockSignature] = {}
     out: Dict[str, str] = {}
     blocks = [xls_block(comp, stages=stages, text=part.texts.get(k))

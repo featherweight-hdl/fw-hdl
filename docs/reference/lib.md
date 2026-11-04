@@ -19,7 +19,7 @@ Any module that claims to implement a class can be cosimulated against that cont
 
 | Class | Source | Form | Lowering |
 |---|---|---|---|
-| `fw_channel` | `src/std/fw_channel.svh` | queue between components | `fw_rv_fifo`, or a FIFO inside a multi-proc block |
+| `fw_channel` | `src/std/fw_channel.svh` | queue between components | `fw_rv_fifo`, a FIFO inside a multi-proc block, or what the knob `storage:` binds |
 | `fw_credit_tx` | `src/std/credit/` | cycle step | its `step()`, mapped |
 | `fw_arbiter` | `src/std/arb/` | all-or-nothing step | its `step()`, mapped |
 | `fw_keyed_table` | `src/std/table/` | all-or-nothing step | its `step()`, mapped |
@@ -69,7 +69,9 @@ duplicated, and at most `DEPTH` values held.
 **Lowering.** Not a block. Between blocks, `fw.hdl.spl.Integrate` instantiates
 `fw_rv_fifo`. Inside a multi-proc block (knob `island.groups`), XLS instantiates
 `fw_xls_fifo_wrapper`, which is `fw_rv_fifo` under XLS's port names. Both have the same
-timing.
+timing. The knob `storage:` binds a channel instead to a supplied wrapper, to the FIFO
+XLS writes, or to `fw_sram_fifo` and a RAM; every binding keeps this timing
+({doc}`../methodology/storage`).
 
 **Tests.**
 - `tests/stdlib/fw_channel_unit_test.sv` (SVUnit), on the model: empty, one-cycle

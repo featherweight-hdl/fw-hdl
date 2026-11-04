@@ -355,7 +355,7 @@ def proc_testbench(pkg_name, cls: str, comp: ir.DataTypeComponent,
 def rtl_testbench(sig: ir.BlockSignature, inputs: Dict[str, Sequence[int]],
                   seed: int, throttle: int = 3, idle: int = 200,
                   max_cycles: int = 200000, after: Optional[Dict[str, str]] = None,
-                  settle: int = 8) -> str:
+                  settle: int = 8, cycles: bool = False) -> str:
     """A testbench for the RTL that XLS codegen produced, written from its
     signature alone.
 
@@ -371,7 +371,9 @@ def rtl_testbench(sig: ir.BlockSignature, inputs: Dict[str, Sequence[int]],
     **valid-only** output has no ready: every cycle with valid is a transfer.
 
     *after* maps an input to another: it is offered only ``settle`` cycles
-    after that one's last value is taken (configuration before data)."""
+    after that one's last value is taken (configuration before data).
+
+    *cycles*: each output line also ends with the cycle of its handshake."""
     after = after or {}
     from fw.hdl.spl_flow import channel_kind
     rst_on, rst_off = ("1'b0", "1'b1") if sig.reset_active_low else ("1'b1", "1'b0")
@@ -434,7 +436,8 @@ def rtl_testbench(sig: ir.BlockSignature, inputs: Dict[str, Sequence[int]],
                   f"if ({n}_i == {n}_n) {n}_at = cycle; end"]
         else:
             L += [f"      if ({n}_v && {n}_r) begin",
-                  f'        $display("O {n} %0d %0h", {n}_i, {n}_d);',
+                  (f'        $display("O {n} %0d %0h %0d", {n}_i, {n}_d, cycle);' if cycles
+                   else f'        $display("O {n} %0d %0h", {n}_i, {n}_d);'),
                   f"        {n}_i++; last = cycle;",
                   "      end"]
     L += ["      #5 clk = 0;"]

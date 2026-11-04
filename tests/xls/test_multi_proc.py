@@ -38,7 +38,7 @@ def test_group_partition():
     (g,) = p.shell.children
     assert (g["name"], g["engine"], g["module"]) == ("grp", "xls", "grp")
     assert [m["name"] for m in g["group"]["members"]] == ["a", "b"]
-    assert g["group"]["internal"] == [{"name": "ch", "depth": 1, "a": ["a", "out"],
+    assert g["group"]["internal"] == [{"name": "ch", "depth": 1, "bits": 8, "a": ["a", "out"],
                                        "b": ["b", "in"]}]
     assert [e["name"] for e in g["group"]["external"]] == ["a_in", "b_out"]
     assert p.shell.channels == []

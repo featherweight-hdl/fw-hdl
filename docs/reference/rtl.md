@@ -1,8 +1,8 @@
 # Modules and interfaces
 
 The signal-level side: the root module that starts the class tree, the transactor
-interfaces the bridges drive, and the ready/valid FIFO that `fw.hdl.spl.Integrate`
-puts on a channel with a depth.
+interfaces the bridges drive, and the ready/valid FIFOs that `fw.hdl.spl.Integrate`
+puts on a channel with a depth (in flops, or in a RAM).
 
 ```{eval-rst}
 .. sv:module:: fw_root #(parameter type Tbind = int) (input clock, input reset)
@@ -22,12 +22,17 @@ puts on a channel with a depth.
 .. autosvmodule:: fw_rv_fifo
 
 .. autosvmodule:: fw_valid_check
+
+.. autosvmodule:: fw_sram_fifo
+
+.. autosvmodule:: fw_ram_1r1w_model
 ```
 
 ## `fw_rv_fifo` behaviour (normative)
 
 The library's FIFO-bound classes rely on these points. A replacement FIFO (an XLS-internal
-FIFO, a supplied wrapper, or a memory macro behind a wrapper) must keep them:
+FIFO, a supplied wrapper, or `fw_sram_fifo`; see {doc}`../methodology/storage`) must keep
+them:
 
 | Property | `DEPTH >= 1` | `DEPTH == 0` |
 |---|---|---|

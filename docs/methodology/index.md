@@ -8,6 +8,7 @@ components
 synthesis
 knobs
 islands
+storage
 testing
 flows
 ```

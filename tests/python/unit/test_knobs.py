@@ -121,6 +121,15 @@ def test_storage_default(tmp_path):
     assert k.storage("other") == {"bind": "flops"}
 
 
+def test_storage_section_resolves_files(tmp_path):
+    k = load(write(tmp_path, "k3.yaml", COMMON.replace(
+        "  default: {bind: flops}", "  default: {bind: flops}\n  q: "
+        "{bind: wrapper, module: my_fifo, files: [rtl/my_fifo.sv]}")))
+    s = k.storage_section()
+    assert s["q"]["files"] == [str((tmp_path / "rtl" / "my_fifo.sv").resolve())]
+    assert s["default"] == {"bind": "flops"}
+
+
 def test_sv_package_compiles(tmp_path):
     from xls_harness import have_verilator, run_verilator  # tests/xls on sys.path below
     k = load(write(tmp_path, "k.yaml", COMMON))

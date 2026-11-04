@@ -1,8 +1,8 @@
 """The cosim specs in tests/stdlib/cosim/ (fw.hdl.verif.cosim): fw-hdl's own
 lowering of each class, and a supplied arbiter, against the class's contract.
 Some runs must fail: the supplied arbiter without its grant lock, a credit
-sender held to fewer credits than it was built with, FIFOs held to a DEPTH
-they do not keep, and a table, a token pool and a slot reserve held to less
+sender held to fewer credits than it was built with, FIFOs (in flops and in
+a RAM) held to a DEPTH they do not keep, and a table, a token pool and a slot reserve held to less
 than they have, and dependency trackers that never wait or never release."""
 import dataclasses as dc
 from pathlib import Path
@@ -29,7 +29,8 @@ def _run(tmp_path, spec, targets=None):
 
 
 @pytest.mark.parametrize("name", ["fw_arbiter", "fw_credit_tx", "fw_credit_tx_c4",
-                                  "fw_channel", "fw_keyed_table", "fw_token_pool",
+                                  "fw_channel", "fw_channel_sram", "fw_keyed_table",
+                                  "fw_token_pool",
                                   "fw_slot_reserve", "fw_dep_tracker"])
 def test_spec_passes(tmp_path, name):
     spec = cosim.load(SPECS / f"{name}.yaml")
@@ -65,6 +66,15 @@ def test_fifo_held_to_depth_2(tmp_path, depth, msg):
     spec = dc.replace(spec, targets=[dc.replace(t, params=dict(t.params, DEPTH=depth))])
     errs = [e for v in _run(tmp_path, spec).values() for e in v]
     assert errs and all(msg in e for e in errs), errs
+
+
+def test_sram_fifo_held_to_depth_4(tmp_path):
+    """The SRAM FIFO built 5 deep holds a fifth value."""
+    spec = cosim.load(SPECS / "fw_channel_sram.yaml")
+    t = next(t for t in spec.targets if t.name == "sram")
+    spec = dc.replace(spec, targets=[dc.replace(t, params=dict(t.params, DEPTH=5))])
+    errs = [e for v in _run(tmp_path, spec).values() for e in v]
+    assert errs and all("more than DEPTH=4" in e for e in errs), errs
 
 
 def test_table_held_to_7_slots(tmp_path):
