@@ -125,8 +125,9 @@ the class model agrees with the RTL cycle for cycle.
 Two consequences follow:
 * a queue that a step fills every cycle needs `DEPTH >= 2`: one entry for the value
   the consumer takes this cycle, one for the value arriving;
-* a wire (`DEPTH == 0`) cannot join two steps, because the consumer sees the value
-  one edge later.
+* a step cannot use a wire (`DEPTH == 0`). The RTL wire moves a value in the cycle it
+  is put, which the model cannot show, so the model stops with an error and
+  partition rejects the design.
 
 In XLS a step is one proc activation at II=1. Every receive is non-blocking, and
 effects on different channels are not ordered, because the cycle is atomic.

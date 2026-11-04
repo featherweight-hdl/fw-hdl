@@ -1,7 +1,7 @@
 # Library classes
 
 Building blocks in `fw_std_pkg` whose cycle behaviour is part of their definition:
-credit senders, arbiters, and (to come) tables, pools and queues. Each class states:
+queues, credit senders, arbiters, and (to come) tables and pools. Each class states:
 
 - what it **observes** in a cycle;
 - what it **consumes**;
@@ -18,8 +18,72 @@ cosimulated against that contract ([Cosimulation](#cosimulation)).
 
 | Class | Source | Form | Lowering |
 |---|---|---|---|
+| `fw_channel` | `src/std/fw_channel.svh` | queue between components | `fw_rv_fifo`, or a FIFO inside a multi-proc block |
 | `fw_credit_tx` | `src/std/credit/` | cycle step | its `step()`, mapped |
 | `fw_arbiter` | `src/std/arb/` | all-or-nothing step | its `step()`, mapped |
+
+## fw_channel
+
+The queue between two components: a ready/valid FIFO of `DEPTH` values, or a wire for
+`DEPTH` 0. It has no ports of its own. A producer's port connects to one of its put
+exports and a consumer's port to one of its get exports.
+
+```systemverilog
+fw_channel #(type T, int DEPTH = 1)
+```
+
+| Export | API | For |
+|---|---|---|
+| `put_ex` | `fw_put_if #(T)` | a process's blocking `put()` |
+| `put_step_ex` | `fw_put_step_if #(T)` | an all-or-nothing step's `put_or_stall()` |
+| `get_ex` | `fw_get_if #(T)` | a process's blocking `get()` |
+| `get_nb_ex` | `fw_get_nb_if #(T)` | a step's (or a polling process's) `try_get()` |
+
+**Per cycle**, between steps (`DEPTH >= 1`).
+
+| | |
+|---|---|
+| Observes | the values held at the start of the cycle. A put is accepted when fewer than `DEPTH` were held; a `try_get` sees the oldest of them |
+| Consumes | at most one put and one take a cycle |
+| Latency | one cycle: a value put in a cycle is offered from the next. There is no bypass |
+| Full | a put is refused even in a cycle that takes a value (no pass-through when full). So `DEPTH` 1 runs at half rate, and full rate needs `DEPTH` 2 |
+
+These are `fw_rv_fifo`'s rules ({doc}`rtl`). In process form, `put()` and `get()`
+block and the network is a Kahn process network: the values do not depend on timing
+or `DEPTH`. A rendezvous (`DEPTH` 0) holds one value, and its `put()` returns once the
+value is taken.
+
+A step may not use a `DEPTH` 0 channel. Its RTL is a wire, which moves a value in the
+cycle it is put, but steps at one edge do not see each other's puts. The class model
+stops with an error, and partition rejects the design at the channel's declaration.
+
+**Contract** (`src/std/fw_channel.yaml`): one stream, in order, nothing lost or
+duplicated, and at most `DEPTH` values held.
+
+**Lowering.** Not a block. Between blocks, `fw.hdl.spl.Integrate` instantiates
+`fw_rv_fifo`. Inside a multi-proc block (knob `island.groups`), XLS instantiates
+`fw_xls_fifo_wrapper`, which is `fw_rv_fifo` under XLS's port names. Both have the same
+timing.
+
+**Tests.**
+- `tests/stdlib/fw_channel_unit_test.sv` (SVUnit), on the model: empty, one-cycle
+  latency, rate by depth, back-pressure, a stalled step's put undone, and the process
+  form (a blocking put while full, a rendezvous). Order is checked throughout.
+- `tests/xls/lib/test_fw_channel.py`: two steps joined by the channel at `DEPTH` 1, 2
+  and 3, with the output back-pressured at random:
+  - a Python model of the rules above against the class model;
+  - the class model against the RTL (both blocks and `fw_rv_fifo`), cycle for cycle;
+  - at 2 stages, lossless and in order.
+
+  A step on a `DEPTH` 0 channel is rejected by partition and stops the model.
+- `tests/xls/test_rv_fifo.py`: `fw_rv_fifo` under random traffic, and Yosys reads
+  every `DEPTH`.
+- Cosim (`tests/stdlib/cosim/fw_channel.yaml`): `fw_rv_fifo` and
+  `fw_xls_fifo_wrapper` at `DEPTH` 2. Besides the contract, the driver checks that a
+  module holds at most `DEPTH` values and has no bypass. `fw_rv_fifo` built 3 deep,
+  or built as a wire, is expected to fail.
+
+The class reference is in {doc}`std` ({sv:class}`fw_std_pkg::fw_channel`).
 
 ## fw_credit_tx
 
@@ -225,6 +289,7 @@ ports are sources and which are sinks:
 |---|---|
 | `fw_arbiter` | `in[k]` are sources; `out` is a sink with a random ready |
 | `fw_credit_tx` | `in[v]` are sources; `out` is valid-only; the testbench is the receiver: for each value it is sent, it returns `CHECK` credits on `cr`, in order, a random 1 to *d* cycles later |
+| `fw_channel` | `put_ex` is a source; `get_ex` is a sink with a random ready. At most `DEPTH` values are held, and for `DEPTH` 1 or more none leaves in the cycle it came |
 
 Each seed sets the source rate, the sink rate and the receiver's delay *d*: busy and
 sparse sources, slow and fast sinks. So values arrive both before and behind a stalled

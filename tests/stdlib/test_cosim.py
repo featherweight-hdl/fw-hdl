@@ -1,7 +1,8 @@
 """The cosim specs in tests/stdlib/cosim/ (fw.hdl.verif.cosim): fw-hdl's own
 lowering of each class, and a supplied arbiter, against the class's contract.
-Two runs must fail: the supplied arbiter without its grant lock, and a
-credit sender held to fewer credits than it was built with."""
+Some runs must fail: the supplied arbiter without its grant lock, a credit
+sender held to fewer credits than it was built with, and FIFOs held to a
+DEPTH they do not keep."""
 import dataclasses as dc
 from pathlib import Path
 
@@ -26,7 +27,8 @@ def _run(tmp_path, spec, targets=None):
     return cosim.run(spec, tmp_path, SEEDS, targets, str(VERILATOR))
 
 
-@pytest.mark.parametrize("name", ["fw_arbiter", "fw_credit_tx", "fw_credit_tx_c4"])
+@pytest.mark.parametrize("name", ["fw_arbiter", "fw_credit_tx", "fw_credit_tx_c4",
+                                  "fw_channel"])
 def test_spec_passes(tmp_path, name):
     spec = cosim.load(SPECS / f"{name}.yaml")
     targets = [t.name for t in spec.targets if not t.name.endswith("_nolock")]
@@ -49,6 +51,18 @@ def test_overspend_is_caught(tmp_path):
     spec = dc.replace(spec, params=dict(spec.params, CREDITS=4))
     errs = [e for v in _run(tmp_path, spec).values() for e in v]
     assert errs and all("more than CREDITS=4" in e for e in errs), errs
+
+
+@pytest.mark.parametrize("depth, msg", [(3, "more than DEPTH=2"), (0, "(a bypass)")],
+                         ids=["deeper", "wire"])
+def test_fifo_held_to_depth_2(tmp_path, depth, msg):
+    """fw_rv_fifo built 3 deep holds a third value; built as a wire it
+    passes a value in the cycle it came."""
+    spec = cosim.load(SPECS / "fw_channel.yaml")
+    t = spec.targets[0]
+    spec = dc.replace(spec, targets=[dc.replace(t, params=dict(t.params, DEPTH=depth))])
+    errs = [e for v in _run(tmp_path, spec).values() for e in v]
+    assert errs and all(msg in e for e in errs), errs
 
 
 def test_unmapped_port_is_named():

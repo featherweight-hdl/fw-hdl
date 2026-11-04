@@ -104,8 +104,23 @@ endclass
 //   * DEPTH >= 1 -- a FIFO: put() blocks while DEPTH values are waiting.
 //   * DEPTH == 0 -- a rendezvous: put() returns once a get() has taken the
 //     value, so a producer never runs ahead of its consumer.
-// A synthesis flow maps the same DEPTH onto RTL: a ready/valid wire for 0, a
-// ready/valid FIFO otherwise.
+// A synthesis flow maps the same DEPTH onto RTL: a ready/valid wire for 0,
+// fw_rv_fifo otherwise.
+//
+// Per cycle, between steps (DEPTH >= 1), the model keeps fw_rv_fifo's timing
+// exactly:
+//   Observes  the values held at the start of the cycle. A put is accepted
+//             when fewer than DEPTH were held; a step's try_get sees the
+//             oldest of them.
+//   Consumes  at most one put and one take a cycle, each on its own side.
+//   Latency   one cycle: a value put in a cycle is offered from the next
+//             (no bypass).
+//   Full      a put is refused even in a cycle that takes a value (no
+//             pass-through when full), so DEPTH 1 runs at half rate and full
+//             rate needs DEPTH 2.
+// A step may not use a DEPTH 0 channel. Its RTL is a wire, which moves a
+// value in the cycle it is put, and steps at one edge do not see each
+// other's puts; the model stops with an error, and so does partition.
 class fw_channel #(type T = int, int DEPTH = 1) extends fw_component;
     fw_channel_put_ex #(T, DEPTH) put_ex;
     fw_channel_put_step_ex #(T, DEPTH) put_step_ex;
@@ -154,6 +169,8 @@ class fw_channel #(type T = int, int DEPTH = 1) extends fw_component;
     endtask
 
     function bit ch_try_get(inout T t);
+        if (DEPTH == 0 && fw_step_ctx::active)
+            step_on_wire();
         if (m_q.size() == 0 || fw_step_ctx::hidden(m_t[0]))
             return 1'b0;
         if (fw_step_ctx::atomic)
@@ -171,6 +188,8 @@ class fw_channel #(type T = int, int DEPTH = 1) extends fw_component;
     function void ch_put_or_stall(input T t);
         int held = m_q.size();
         fw_step_ctx::check_atomic(get_full_name());
+        if (DEPTH == 0)
+            step_on_wire();
         if (m_edge_t == $realtime)
             held += m_edge_take - m_edge_put;
         if (held >= ((DEPTH == 0) ? 1 : DEPTH)) begin
@@ -182,6 +201,11 @@ class fw_channel #(type T = int, int DEPTH = 1) extends fw_component;
         m_n_put++;
         edge_count(1, 0);
         log_undo(1'b0, t, $realtime);
+    endfunction
+
+    local function void step_on_wire();
+        $fatal(1, "%s: a step cannot use a DEPTH 0 channel (a wire); use DEPTH 1 or more",
+               get_full_name());
     endfunction
 
     local function void edge_count(int nput, int ntake);

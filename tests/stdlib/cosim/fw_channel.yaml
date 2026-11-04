@@ -1,0 +1,22 @@
+# Cosim of fw_channel (python -m fw.hdl.verif.cosim): any FIFO behind a
+# signal map, against the class's contract (src/std/fw_channel.yaml) and its
+# rules (at most DEPTH held, no bypass).
+class: fw_channel
+params: {W: 8, DEPTH: 2}
+targets:
+  # The RTL Integrate puts on a channel between blocks.
+  - name: own
+    module: fw_rv_fifo
+    files: [../../../src/rtl/fw_rv_fifo.sv]
+    params: {WIDTH: 8, DEPTH: 2}
+    ports:
+      put_ex: {data: in_data, valid: in_vld, ready: in_rdy}
+      get_ex: {data: out_data, valid: out_vld, ready: out_rdy}
+  # The FIFO a multi-proc block instantiates, with XLS's names.
+  - name: own_group
+    module: fw_xls_fifo_wrapper
+    files: [../../../src/rtl/fw_rv_fifo.sv, ../../../src/rtl/fw_xls_fifo_wrapper.sv]
+    params: {Width: 8, Depth: 2}
+    ports:
+      put_ex: {data: push_data, valid: push_valid, ready: push_ready}
+      get_ex: {data: pop_data, valid: pop_valid, ready: pop_ready}

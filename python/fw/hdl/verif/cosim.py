@@ -35,7 +35,7 @@ run checks:
   data hold until the value is taken;
 - the class's per-cycle rules a module must keep whatever its timing (for
   example, credit returns are never stalled);
-- the contract (``src/std/<area>/<class>.yaml``): order, conservation, and
+- the contract (``<class>.yaml`` under ``src/std``): order, conservation, and
   that every value offered leaves.
 
 Timing is free: a module may take more or fewer cycles than the class model,
@@ -137,7 +137,40 @@ class CreditTxDriver(Driver):
         return out
 
 
-DRIVERS: Dict[str, type] = {d.cls: d for d in (ArbiterDriver, CreditTxDriver)}
+class ChannelDriver(Driver):
+    """fw_channel: ``put_ex`` is a source and ``get_ex`` a stalling sink. A
+    module never holds more than ``DEPTH`` values (none for 0, a wire), and
+    for ``DEPTH`` 1 or more a value never leaves in the cycle it came (no
+    bypass)."""
+    cls = "fw_channel"
+
+    def ports(self):
+        w = self.p["W"]
+        return [Port("put_ex", w, "source"), Port("get_ex", w, "sink")]
+
+    def extra_checks(self, trace):
+        depth, out = self.p["DEPTH"], []
+        ins, outs = trace.get("put_ex", []), trace.get("get_ex", [])
+        delta: Dict[int, int] = {}
+        for c, _ in ins:
+            delta[c] = delta.get(c, 0) + 1
+        for c, _ in outs:
+            delta[c] = delta.get(c, 0) - 1
+        n = 0
+        for c in sorted(delta):
+            n += delta[c]
+            if n > depth:
+                out.append(f"cycle {c}: {n} values held, more than DEPTH={depth}")
+                break
+        if depth > 0:
+            same = next(((ci, v) for (ci, v), (co, _) in zip(ins, outs) if co <= ci), None)
+            if same is not None:
+                out.append(f"cycle {same[0]}: value {same[1]:x} left in the cycle it came "
+                           f"(a bypass)")
+        return out
+
+
+DRIVERS: Dict[str, type] = {d.cls: d for d in (ArbiterDriver, CreditTxDriver, ChannelDriver)}
 
 
 # --- specs -----------------------------------------------------------------------
@@ -170,7 +203,7 @@ def load(path) -> Spec:
     if cls not in DRIVERS:
         raise ValueError(f"{path}: no cosim driver for class {cls!r} (have {sorted(DRIVERS)})")
     cpath = d.get("contract")
-    cpath = (path.parent / cpath) if cpath else next((_SRC / "std").glob(f"*/{cls}.yaml"))
+    cpath = (path.parent / cpath) if cpath else next((_SRC / "std").glob(f"**/{cls}.yaml"))
     targets = []
     for t in d["targets"]:
         rst = t.get("reset", {})

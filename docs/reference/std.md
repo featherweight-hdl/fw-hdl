@@ -49,6 +49,8 @@ the channels that join two ports, and the put transactor. The three channel kind
 
 .. autosvclass:: fw_std_pkg::fw_channel_put_ex
 
+.. autosvclass:: fw_std_pkg::fw_channel_put_step_ex
+
 .. autosvclass:: fw_std_pkg::fw_channel_get_ex
 
 .. autosvclass:: fw_std_pkg::fw_channel_get_nb_ex

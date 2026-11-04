@@ -1,0 +1,15 @@
+# The fw_channel contract: what every implementation of the class keeps,
+# whatever its timing and DEPTH. Checked on the class model and RTL in
+# tests/xls/lib/test_fw_channel.py and on the class model in tests/stdlib.
+class: fw_channel
+points:
+  in: "put_ex: a value accepted"
+  out: "get_ex: a value taken"
+# fw.hdl.verif.canon.Rule.from_dict / fw_order_rule
+order:
+  per_key: false         # one stream: values leave in the order they came
+conservation:
+  # Every value accepted is taken exactly once; at most DEPTH are held
+  # (one for DEPTH 0, a rendezvous).
+  lossless: true
+  held_max: DEPTH

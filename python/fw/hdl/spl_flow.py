@@ -28,7 +28,7 @@ from . import native
 from .lib import registry as librg
 from .config import FlowConfig
 from .emit.be_sv import emit_sv
-from .errors import ErrorReporter
+from .errors import Diagnostic, ErrorReporter, FwHdlError, Severity
 from .fe.static_mapper import StaticMapper
 from .fe.structure import Structure, StructureMapper
 from .xls_flow import XlsFlowError, _find_class, _parse
@@ -283,6 +283,7 @@ def partition(files: Sequence[str], top: str, xls: Sequence[str],
         if c.spelling not in blocks:
             blocks[c.spelling] = StaticMapper(config, reporter, parser.source_manager) \
                 .map_component(c.cls, spelling=c.spelling, param_values=c.param_values)
+    _check_step_wires(st, blocks, reporter)
     shell = _shell(st, engines)
     names = {c.spelling: _names(c) for c in leaves}
     found: Dict[str, dict] = {}
@@ -297,6 +298,34 @@ def partition(files: Sequence[str], top: str, xls: Sequence[str],
             raise XlsFlowError(f"island.groups {g}: {bad} are library classes the registry "
                                f"lowers; they cannot join a multi-proc group yet")
     return Partition(st, blocks, shell, found, names, natives, texts)
+
+
+def _check_step_wires(st: Structure, blocks: Dict[str, ir.DataTypeComponent],
+                      reporter: ErrorReporter) -> None:
+    """A step may not be an end of a DEPTH 0 channel. Its RTL is a wire, so
+    a value would move in the cycle it is put; the class model cannot show
+    that, since steps at one edge do not see each other's puts."""
+    comp = st.component
+    chans = {f.name: f for f in comp.fields
+             if isinstance(f.datatype, ir.DataTypeChannel) and f.datatype.depth == 0}
+    for b in comp.bind_map:
+        (child, port), (name, end) = _path_name(comp, b.lhs), _path_name(comp, b.rhs)
+        c = st.children.get(child)
+        blk = blocks.get(c.spelling) if c is not None and c.structure is None else None
+        if name not in chans or end is None or blk is None:
+            continue
+        if any(p.metadata.get("fw_step") for p in getattr(blk, "proc_processes", None) or []):
+            loc = chans[name].loc
+            d = Diagnostic(Severity.ERROR,
+                           f"channel {name!r} has DEPTH 0 (a wire), and {child}.{port} is a "
+                           f"step's port; a step needs a channel of DEPTH 1 or more",
+                           file=loc.file if loc else None, line=loc.line if loc else None,
+                           column=loc.pos if loc else None)
+            reporter.diagnostics.append(d)
+            raise FwHdlError(d)
+    for c in st.children.values():
+        if c.structure is not None:
+            _check_step_wires(c.structure, blocks, reporter)
 
 
 def _apply_groups(sh: Shell, groups: Dict[str, List[str]], names: Dict[str, List[str]],
