@@ -1,0 +1,15 @@
+# The fw_slot_reserve contract: what every implementation of the class
+# keeps, whatever its timing. Checked on the class model and RTL in
+# tests/xls/lib/test_token_pool.py and on RTL in tests/stdlib/cosim.
+class: fw_slot_reserve
+points:
+  in: "rsv: {k, value} taken"
+  out: "gnt: {k, value} granted"
+  rel: "rel: k slots released"
+order:
+  per_key: false         # reservations are granted in the order they came
+conservation:
+  # Every request taken is granted exactly once, with its k and value; the
+  # slots granted and not yet released, at the end of every cycle.
+  lossless: true
+  reserved_max: N

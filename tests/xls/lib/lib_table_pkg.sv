@@ -14,7 +14,7 @@ package lib_table_pkg;
     typedef fw_keyed_table #(bit [3:0], bit [7:0], 8)  tbl_8;
 
     // About the completion router's entry (12-bit key, 48-bit value), for
-    // qor_keyed_table.py.
+    // qor_lib.py.
     typedef fw_keyed_table #(bit [11:0], bit [47:0], 16)  tbl_q16;
     typedef fw_keyed_table #(bit [11:0], bit [47:0], 64)  tbl_q64;
     typedef fw_keyed_table #(bit [11:0], bit [47:0], 256) tbl_q256;

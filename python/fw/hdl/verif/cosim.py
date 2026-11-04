@@ -299,8 +299,80 @@ class TableDriver(Driver):
         return out
 
 
+class TokenPoolDriver(Driver):
+    """fw_token_pool: ``req`` is a source; ``tok`` ({token, value}) is
+    valid-only; the testbench is the owner and puts each token back on
+    ``rel`` 1 to *d* cycles after it is granted. ``rel`` is never stalled, a
+    token is below ``N``, and none is granted while held (one put back in
+    the cycle it is granted may be granted again in that cycle)."""
+    cls = "fw_token_pool"
+
+    def ports(self):
+        n, w = self.p["N"], self.p["W"]
+        tb, m = _ib(n), (1 << w) - 1
+        return [Port("req", w, "source"),
+                Port("rel", tb, "loop", loop=("tok", w, 1), always_ready=True),
+                Port("tok", tb + w, "sink", data=lambda v: v & m)]
+
+    def extra_checks(self, trace):
+        n, w = self.p["N"], self.p["W"]
+        ev = sorted([(c, 0, t) for c, t in trace.get("rel", [])] +
+                    [(c, 1, v >> w) for c, v in trace.get("tok", [])])
+        held, out = set(), []
+        for c, grant, t in ev:
+            if not grant:
+                held.discard(t)
+            elif t >= n:
+                out.append(f"cycle {c}: token {t} granted, but there are N={n}")
+            elif t in held:
+                out.append(f"cycle {c}: token {t} granted while held")
+            else:
+                held.add(t)
+        return out
+
+
+class SlotReserveDriver(Driver):
+    """fw_slot_reserve: ``rsv`` ({k, value}, k from 1 to ``K``) is a
+    source; ``gnt`` is valid-only; the testbench releases each reservation's
+    k slots on ``rel`` 1 to *d* cycles after it is granted. ``rel`` is never
+    stalled, and the slots granted and not yet released never exceed
+    ``N``."""
+    cls = "fw_slot_reserve"
+
+    def _w(self):
+        return self.p["N"], self.p["K"], self.p["W"], (self.p["K"]).bit_length()
+
+    def ports(self):
+        n, k, w, kb = self._w()
+        return [Port("rsv", kb + w, "source"),
+                Port("rel", kb, "loop", loop=("gnt", w, 1), always_ready=True),
+                Port("gnt", kb + w, "sink")]
+
+    def stimulus(self, seed):
+        n, k, w, kb = self._w()
+        rng = random.Random(seed)
+        return {"rsv": [(rng.randint(1, k) << w) | rng.randrange(1 << w)
+                        for _ in range(rng.randint(20, 40))]}
+
+    def extra_checks(self, trace):
+        n, k, w, kb = self._w()
+        delta: Dict[int, int] = {}
+        for c, v in trace.get("gnt", []):
+            delta[c] = delta.get(c, 0) + (v >> w)
+        for c, r in trace.get("rel", []):
+            delta[c] = delta.get(c, 0) - r
+        out, used = [], 0
+        for c in sorted(delta):
+            used += delta[c]
+            if used > n:
+                out.append(f"cycle {c}: {used} slots reserved, more than N={n}")
+                break
+        return out
+
+
 DRIVERS: Dict[str, type] = {d.cls: d for d in (ArbiterDriver, CreditTxDriver, ChannelDriver,
-                                               TableDriver)}
+                                               TableDriver, TokenPoolDriver,
+                                               SlotReserveDriver)}
 
 
 # --- specs -----------------------------------------------------------------------

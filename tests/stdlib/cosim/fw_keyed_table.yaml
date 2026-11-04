@@ -13,8 +13,7 @@ targets:
       lkp_rsp: {data: lkp_rsp, valid: lkp_rsp_vld, ready: lkp_rsp_rdy}
       wr:      {data: wr, valid: wr_vld, ready: wr_rdy}
       rm:      {data: rm, valid: rm_vld, ready: rm_rdy}
-  # Two stages: XLS may take requests offered a cycle apart in one
-  # activation, so only the contract holds.
+  # Two stages: the same per-cycle behaviour, a cycle later.
   - name: own_s2
     fallback: {files: [cosim_pkg.sv], top: tbl8_top, xls: [fw_keyed_table], stages: 2}
     ports: *own

@@ -2,7 +2,8 @@
 lowering of each class, and a supplied arbiter, against the class's contract.
 Some runs must fail: the supplied arbiter without its grant lock, a credit
 sender held to fewer credits than it was built with, FIFOs held to a DEPTH
-they do not keep, and a table held to fewer slots than it has."""
+they do not keep, and a table, a token pool and a slot reserve held to less
+than they have."""
 import dataclasses as dc
 from pathlib import Path
 
@@ -28,7 +29,8 @@ def _run(tmp_path, spec, targets=None):
 
 
 @pytest.mark.parametrize("name", ["fw_arbiter", "fw_credit_tx", "fw_credit_tx_c4",
-                                  "fw_channel", "fw_keyed_table"])
+                                  "fw_channel", "fw_keyed_table", "fw_token_pool",
+                                  "fw_slot_reserve"])
 def test_spec_passes(tmp_path, name):
     spec = cosim.load(SPECS / f"{name}.yaml")
     targets = [t.name for t in spec.targets if not t.name.endswith("_nolock")]
@@ -73,6 +75,18 @@ def test_table_held_to_7_slots(tmp_path):
     errs = [e for v in _run(tmp_path, spec, ["own"]).values() for e in v]
     assert errs and all("no order of the requests gives the responses" in e
                         for e in errs), errs
+
+
+@pytest.mark.parametrize("name, n, msg", [("fw_token_pool", 3, "granted, but there are N=3"),
+                                         ("fw_slot_reserve", 5, "more than N=5")],
+                         ids=["pool", "reserve"])
+def test_pool_held_to_less(tmp_path, name, n, msg):
+    """A token pool built with 4 tokens, held to 3, grants the fourth; a
+    slot reserve built with 6 slots, held to 5, reserves the sixth."""
+    spec = cosim.load(SPECS / f"{name}.yaml")
+    spec = dc.replace(spec, params=dict(spec.params, N=n))
+    errs = [e for v in _run(tmp_path, spec, ["own"]).values() for e in v]
+    assert errs and all(msg in e for e in errs), errs
 
 
 def test_unmapped_port_is_named():

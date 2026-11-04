@@ -44,5 +44,7 @@ package fw_std_pkg;
     `include "credit/fw_credit_tx.svh" // credit-gated sender, valid-only out
     `include "arb/fw_arbiter.svh"      // N-input arbiter, {index, value} out
     `include "table/fw_keyed_table.svh" // keyed table: install, lookup, write, remove
+    `include "pool/fw_token_pool.svh"   // lowest free token; put back
+    `include "pool/fw_slot_reserve.svh" // reserve k slots, free on release
 
 endpackage

@@ -1,7 +1,8 @@
 # Library classes
 
 Building blocks in `fw_std_pkg` whose cycle behaviour is part of their definition:
-queues, credit senders, arbiters, keyed tables, and (to come) pools. Each class states:
+queues, credit senders, arbiters, keyed tables, token pools and slot reservations. Each
+class states:
 
 - what it **observes** in a cycle;
 - what it **consumes**;
@@ -13,8 +14,8 @@ checked against it cycle for cycle. A class whose output can be back-pressured i
 all-or-nothing step ({doc}`../methodology/components`): a cycle whose output is not
 ready stalls, and changes nothing. Each class also has a **contract** (a YAML file next
 to its source): the order and conservation rules any implementation must keep, whatever
-its timing ({doc}`contracts`), or, for a table, the sequential table it must behave as. Any module that claims to implement a class can be
-cosimulated against that contract ([Cosimulation](#cosimulation)).
+its timing ({doc}`contracts`), or, for a table, the sequential table it must behave as.
+Any module that claims to implement a class can be cosimulated against that contract ([Cosimulation](#cosimulation)).
 
 | Class | Source | Form | Lowering |
 |---|---|---|---|
@@ -22,6 +23,8 @@ cosimulated against that contract ([Cosimulation](#cosimulation)).
 | `fw_credit_tx` | `src/std/credit/` | cycle step | its `step()`, mapped |
 | `fw_arbiter` | `src/std/arb/` | all-or-nothing step | its `step()`, mapped |
 | `fw_keyed_table` | `src/std/table/` | all-or-nothing step | its `step()`, mapped |
+| `fw_token_pool` | `src/std/pool/` | cycle step | its `step()`, mapped |
+| `fw_slot_reserve` | `src/std/pool/` | cycle step | its `step()`, mapped |
 
 ## fw_channel
 
@@ -285,7 +288,7 @@ order.
 II=1. In a pipeline, all of a step's receives are kept in one stage, so an activation
 takes one cycle's requests ({doc}`../methodology/synthesis`). The critical path at one
 stage, from XLS's schedule with the asap7 delay model (12-bit keys, 48-bit values;
-`tests/xls/lib/qor_keyed_table.py`):
+`python tests/xls/lib/qor_lib.py table`):
 
 | `N` | State bits | Critical path |
 |---|---|---|
@@ -310,6 +313,146 @@ estimates, before synthesis.
 
 ```{eval-rst}
 .. autosvclass:: fw_std_pkg::fw_keyed_table
+   :members:
+```
+
+## fw_token_pool
+
+`N` tokens, 0 to `N - 1`, each held by at most one owner. A request takes the lowest
+free token, and the owner puts it back when done.
+
+```systemverilog
+fw_token_pool #(int N = 16, type T = bit)
+```
+
+| Port | API | Carries |
+|---|---|---|
+| `req` | `fw_get_nb_if #(T)` | a value to tag; taken only while a token is free |
+| `tok` | `fw_valid_put_if #(bit [TB+W-1:0])` | `{token, value}`: the token granted, with the request's value |
+| `rel` | `fw_get_nb_if #(bit [TB-1:0])` | a token put back; always taken |
+
+`TB` is `$clog2(N)`, and 1 when `N` is 1; `W` is `$bits(T)`. `T` is the value a
+request carries through. With it, the pool can sit in a stream and tag each request.
+A bare allocator uses `T = bit` and ignores the value.
+
+**Per cycle.**
+
+| | |
+|---|---|
+| Observes | the free tokens at the start of the cycle |
+| Consumes | at most one request and one release |
+| Grant | the lowest free token, in the cycle the request is taken. With none free, `req` is not ready, so an exhausted pool back-pressures the requester |
+| Release | the token is free from the next cycle, so it is never granted in the cycle it comes back |
+| Misuse | putting back a token that is free does nothing |
+| Same-cycle valid | never decides a grant. `req` is ready while a token is free and `rel` always, both functions of registered state |
+
+**Why the grant is valid-only.** A release must never wait behind a grant. If it
+could, a design could deadlock:
+- the request path stops taking tokens because downstream is full;
+- downstream waits for responses;
+- a response completes by putting its token back, and that release waits on the pool.
+
+In XLS, a send that blocks stalls the whole activation, its receives included. So a
+grant that could be back-pressured would also hold up releases. The pool never
+stalls, and a requester that asked must take its token. `fw_credit_tx` has the same
+shape for the same reason: its credit returns never wait.
+
+**Class model.** A cycle step whose state is one bit per token, all free at reset.
+The lowest free token is found with a prefix OR in log2(`N`) steps.
+
+**Contract** (`src/std/pool/fw_token_pool.yaml`):
+- every request taken is granted exactly once, in order, with its value;
+- a token is below `N`;
+- a token is granted only while no one holds it.
+
+**Lowering.** `step()` is mapped (no registry entry). The critical path at one stage,
+from XLS's schedule with the asap7 delay model (32-bit value;
+`python tests/xls/lib/qor_lib.py pool`):
+
+| `N` | State bits | Critical path |
+|---|---|---|
+| 64 | 64 | 268 ps |
+| 256 | 256 | 353 ps |
+
+**Tests.**
+- `tests/stdlib/fw_token_pool_unit_test.sv` (SVUnit), on the model, with
+  `fw_lifetime` checking that no token is granted while held:
+  - lowest first, then exhausted;
+  - a released token granted again from the next cycle;
+  - the lowest free token reused;
+  - putting back a free token.
+- `tests/xls/lib/test_token_pool.py`, at `N` = 1, 4, 5 and 16:
+  - a Python model of the rules above against the class model. The model also plays
+    the owner, putting tokens back at random, and now and then one that is free;
+  - the class model against the RTL, cycle for cycle, at 1 and 2 stages.
+- Cosim (`tests/stdlib/cosim/fw_token_pool.yaml`): fw-hdl's own RTL at 1 and 2 stages.
+  The same RTL held to 3 of its 4 tokens is expected to fail.
+
+```{eval-rst}
+.. autosvclass:: fw_std_pkg::fw_token_pool
+   :members:
+```
+
+## fw_slot_reserve
+
+Admission against `N` slots. A request reserves k of them, and a release frees them.
+It counts slots and does not name them, so it suits storage that is a queue, where a
+request needs space rather than a slot number.
+
+```systemverilog
+fw_slot_reserve #(int N = 16, int K = 4, type T = bit)
+```
+
+| Port | API | Carries |
+|---|---|---|
+| `rsv` | `fw_get_nb_if #(bit [KB+W-1:0])` | `{k, value}`: reserve k slots |
+| `gnt` | `fw_valid_put_if #(bit [KB+W-1:0])` | `{k, value}`: the reservation made |
+| `rel` | `fw_get_nb_if #(bit [KB-1:0])` | k: free k slots; always taken |
+
+k is 1 to `K`, and `K` <= `N`. `KB` is `$clog2(K + 1)`, and `W` is `$bits(T)`, the value
+carried through as in `fw_token_pool`.
+
+A step cannot look at a request without taking it, so the class holds one request.
+`rsv` is ready while the hold is empty, or while the held request is granted this
+cycle.
+
+**Per cycle.**
+
+| | |
+|---|---|
+| Observes | the free count and the hold at the start of the cycle |
+| Consumes | at most one request and one release |
+| Grant | in order. The held request is granted once k slots are free. A request taken with the hold empty is granted in the same cycle if k slots are free, and is held otherwise |
+| Order | while a request is held, `rsv` is not ready. So the requests behind it wait even if they are smaller, and a full reserve back-pressures the requester |
+| Release | its slots are free from the next cycle |
+| Misuse | a release of more slots than are reserved frees them all, and no more |
+| Same-cycle valid | never decides a grant. `rsv`'s ready is a function of registered state, and `rel` is always ready |
+
+The grant is valid-only for the same reason as `fw_token_pool`'s.
+
+**Class model.** A cycle step: the count of reserved slots and a one-request hold,
+with everything free at reset.
+
+**Contract** (`src/std/pool/fw_slot_reserve.yaml`):
+- every request taken is granted exactly once, in order, with its k and value;
+- the slots granted and not yet released never exceed `N`.
+
+**Lowering.** `step()` is mapped (no registry entry).
+
+**Tests.**
+- `tests/stdlib/fw_token_pool_unit_test.sv` (SVUnit), on the model:
+  - a grant in the cycle a request is taken, a request held, and a grant once a release
+    frees its slots;
+  - admission in order;
+  - an over-release.
+- `tests/xls/lib/test_token_pool.py`, at (`N`, `K`) = (4, 4), (6, 3) and (8, 4):
+  - a Python model against the class model, with releases at random, some too large;
+  - the class model against the RTL, cycle for cycle, at 1 and 2 stages.
+- Cosim (`tests/stdlib/cosim/fw_slot_reserve.yaml`): fw-hdl's own RTL at 1 and 2
+  stages. The same RTL held to 5 of its 6 slots is expected to fail.
+
+```{eval-rst}
+.. autosvclass:: fw_std_pkg::fw_slot_reserve
    :members:
 ```
 
@@ -376,6 +519,8 @@ ports are sources and which are sinks:
 | `fw_credit_tx` | `in[v]` are sources; `out` is valid-only; the testbench is the receiver: for each value it is sent, it returns `CHECK` credits on `cr`, in order, a random 1 to *d* cycles later |
 | `fw_channel` | `put_ex` is a source; `get_ex` is a sink with a random ready. At most `DEPTH` values are held, and for `DEPTH` 1 or more none leaves in the cycle it came |
 | `fw_keyed_table` | `ins`, `lkp`, `wr` and `rm` are sources, with keys from a few more than `N` and slots from the whole slot range; `ins_rsp` and `lkp_rsp` are sinks with a random ready. The run passes if some order of the requests, as the contract allows, gives every response seen |
+| `fw_token_pool` | `req` is a source; `tok` is valid-only; the testbench is the owner and puts each token back on `rel`, in order, a random 1 to *d* cycles after it is granted. `rel` is never stalled. A token is below `N`, and none is granted while held |
+| `fw_slot_reserve` | `rsv` is a source, with k from 1 to `K`; `gnt` is valid-only; the testbench releases each reservation's k slots on `rel`, in order, a random 1 to *d* cycles after it is granted. `rel` is never stalled, and no more than `N` slots are reserved at the end of any cycle |
 
 Each seed sets the source rate, the sink rate and the receiver's delay *d*: busy and
 sparse sources, slow and fast sinks. So values arrive both before and behind a stalled

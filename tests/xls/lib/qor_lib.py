@@ -1,10 +1,16 @@
-"""QoR probe for fw_keyed_table (not a test): the unstaged step at 16, 64 and
-256 slots, 12-bit keys and 48-bit values, lowered by XLS at one stage with
-the asap7 delay model. Prints, per size: the state bits, the critical path
-and the source line that dominates it, and the fewest stages that meet each
-of a few clock periods.
+"""QoR probe for library classes lowered as mapped steps (not a test), with
+XLS at one stage and the asap7 delay model:
 
-    python tests/xls/lib/qor_keyed_table.py [N ...]   # logs in build/qor_keyed_table/
+* table: fw_keyed_table at 16, 64 and 256 slots, 12-bit keys and 48-bit
+  values (lib_table_pkg's tbl_q<N>);
+* pool: fw_token_pool at 64 and 256 tokens with a 32-bit value
+  (lib_pool_pkg's pool_q<N>).
+
+Prints, per size: the state bits, the critical path and the source line
+that dominates it, and the fewest stages that meet each of a few clock
+periods.
+
+    python tests/xls/lib/qor_lib.py table|pool [N ...]   # logs in build/qor_<kind>/
 """
 import subprocess
 import sys
@@ -21,12 +27,16 @@ from zuspec.be.xls.lower_proc import codegen_flags, lower_component      # noqa:
 from zuspec.be.xls.printer import format_package                         # noqa: E402
 from zuspec.be.xls.testing.xlstools import codegen_main, opt_main        # noqa: E402
 
-PKG = str(HERE / "lib_table_pkg.sv")
+# kind: (package file, typedef prefix, default sizes)
+KINDS = {"table": ("lib_table_pkg.sv", "tbl_q", [16, 64, 256]),
+         "pool": ("lib_pool_pkg.sv", "pool_q", [64, 256])}
 PERIODS = (1000, 667, 500)
 
 
-def probe(n: int, out: Path) -> dict:
-    comp = sv_to_component([PKG], f"tbl_q{n}")
+def probe(kind: str, n: int, out: Path) -> dict:
+    pkg_file, prefix, _ = KINDS[kind]
+    cls = f"{prefix}{n}"
+    comp = sv_to_component([str(HERE / pkg_file)], cls)
     pkg = lower_component(comp)
     d = out / f"n{n}"
     d.mkdir(parents=True, exist_ok=True)
@@ -46,7 +56,7 @@ def probe(n: int, out: Path) -> dict:
         return r.returncode == 0
 
     codegen("s1", ["--pipeline_stages=1"])
-    ppa = block_ppa(f"tbl_q{n}", (d / "opt.ir").read_text(), (d / "s1.sched").read_text())
+    ppa = block_ppa(cls, (d / "opt.ir").read_text(), (d / "s1.sched").read_text())
     meets = {}
     for p in PERIODS:
         ok = codegen(f"p{p}", [f"--clock_period_ps={p}"])
@@ -58,13 +68,16 @@ def probe(n: int, out: Path) -> dict:
 
 
 def main(argv):
-    sizes = [int(a) for a in argv] or [16, 64, 256]
-    out = REPO / "build" / "qor_keyed_table"
+    if not argv or argv[0] not in KINDS:
+        sys.exit(f"usage: qor_lib.py {'|'.join(KINDS)} [N ...]")
+    kind = argv[0]
+    sizes = [int(a) for a in argv[1:]] or KINDS[kind][2]
+    out = REPO / "build" / f"qor_{kind}"
     print("| N | state bits | 1-stage crit (ps) | dominant line | "
           + " | ".join(f"stages @ {p} ps" for p in PERIODS) + " | secs |")
     print("|---|---|---|---|" + "---|" * len(PERIODS) + "---|")
     for n in sizes:
-        r = probe(n, out)
+        r = probe(kind, n, out)
         cells = " | ".join(str(r["meets"][p]) if r["meets"][p] else "fails" for p in PERIODS)
         print(f"| {n} | {r['state']} | {r['crit']} | {r['src']} ({r['src_ps']} ps) | "
               f"{cells} | {r['secs']} |", flush=True)

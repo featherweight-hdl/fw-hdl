@@ -1,0 +1,16 @@
+# The fw_token_pool contract: what every implementation of the class keeps,
+# whatever its timing. Checked on the class model and RTL in
+# tests/xls/lib/test_token_pool.py and on RTL in tests/stdlib/cosim.
+class: fw_token_pool
+points:
+  in: "req: a value taken"
+  out: "tok: {token, value} granted"
+  rel: "rel: a token put back"
+order:
+  per_key: false         # requests are granted in the order they came
+conservation:
+  # Every request taken is granted exactly once, with its value. A token is
+  # below N and is granted only while no one holds it (fw_lifetime: granted
+  # allocates it, put back frees it), so at most N are held.
+  lossless: true
+  held_max: N

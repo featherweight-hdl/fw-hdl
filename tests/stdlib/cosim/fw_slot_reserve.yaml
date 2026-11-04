@@ -1,0 +1,17 @@
+# Cosim of fw_slot_reserve (python -m fw.hdl.verif.cosim): any module behind
+# a signal map, against the class's contract
+# (src/std/pool/fw_slot_reserve.yaml). The testbench releases each
+# reservation 1 to d cycles after it is granted.
+class: fw_slot_reserve
+params: {N: 6, K: 3, W: 4}
+targets:
+  # fw-hdl's own lowering: the class's step(), mapped.
+  - name: own
+    fallback: {files: [cosim_pkg.sv], top: rsv6_top, xls: [fw_slot_reserve], stages: 1}
+    ports: &own
+      rsv: {data: rsv, valid: rsv_vld, ready: rsv_rdy}
+      gnt: {data: gnt, valid: gnt_vld}
+      rel: {data: rel, valid: rel_vld, ready: rel_rdy}
+  - name: own_s2
+    fallback: {files: [cosim_pkg.sv], top: rsv6_top, xls: [fw_slot_reserve], stages: 2}
+    ports: *own

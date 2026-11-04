@@ -109,4 +109,48 @@ package cosim_pkg;
             t.rm.connect(rm);
         endfunction
     endclass
+
+    // fw_token_pool: 4 tokens, a 4-bit value carried through.
+    class pool4_top extends fw_component;
+        fw_port #(fw_get_nb_if #(bit [3:0]))    req;
+        fw_port #(fw_valid_put_if #(bit [5:0])) tok;
+        fw_port #(fw_get_nb_if #(bit [1:0]))    rel;
+        fw_token_pool #(4, bit [3:0]) p;
+        function new(string name, fw_component parent);
+            super.new(name, parent);
+        endfunction
+        function void build();
+            req = new("req", this);
+            tok = new("tok", this);
+            rel = new("rel", this);
+            p = new("p", this);
+        endfunction
+        function void connect();
+            p.req.connect(req);
+            p.tok.connect(tok);
+            p.rel.connect(rel);
+        endfunction
+    endclass
+
+    // fw_slot_reserve: 6 slots, up to 3 a request, a 4-bit value carried.
+    class rsv6_top extends fw_component;
+        fw_port #(fw_get_nb_if #(bit [5:0]))    rsv;
+        fw_port #(fw_valid_put_if #(bit [5:0])) gnt;
+        fw_port #(fw_get_nb_if #(bit [1:0]))    rel;
+        fw_slot_reserve #(6, 3, bit [3:0]) r;
+        function new(string name, fw_component parent);
+            super.new(name, parent);
+        endfunction
+        function void build();
+            rsv = new("rsv", this);
+            gnt = new("gnt", this);
+            rel = new("rel", this);
+            r = new("r", this);
+        endfunction
+        function void connect();
+            r.rsv.connect(rsv);
+            r.gnt.connect(gnt);
+            r.rel.connect(rel);
+        endfunction
+    endclass
 endpackage

@@ -1,0 +1,17 @@
+# Cosim of fw_token_pool (python -m fw.hdl.verif.cosim): any module behind a
+# signal map, against the class's contract (src/std/pool/fw_token_pool.yaml).
+# The testbench is the owner: it puts each token back 1 to d cycles after it
+# is granted.
+class: fw_token_pool
+params: {N: 4, W: 4}
+targets:
+  # fw-hdl's own lowering: the class's step(), mapped.
+  - name: own
+    fallback: {files: [cosim_pkg.sv], top: pool4_top, xls: [fw_token_pool], stages: 1}
+    ports: &own
+      req: {data: req, valid: req_vld, ready: req_rdy}
+      tok: {data: tok, valid: tok_vld}
+      rel: {data: rel, valid: rel_vld, ready: rel_rdy}
+  - name: own_s2
+    fallback: {files: [cosim_pkg.sv], top: pool4_top, xls: [fw_token_pool], stages: 2}
+    ports: *own
