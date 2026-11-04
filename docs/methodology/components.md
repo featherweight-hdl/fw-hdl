@@ -144,13 +144,21 @@ A step whose output is a stream, which the receiver may back-pressure, extends
 
 - if every `put_or_stall` found its output ready at the start of the cycle, the step
   commits, as an ordinary step does;
-- otherwise the step has no effect: no state changes, nothing is taken from an input,
-  and nothing is put or set. The next edge runs it again from the same state.
+- otherwise the step stalls: no state changes, nothing is taken from an input, and
+  no valid put or level set happens. The next edge runs it again from the same state.
+
+A `put_or_stall` whose output was ready is the exception: its value has gone, and a
+stall does not take it back. Until the step commits, that output is *sent*, and a
+`put_or_stall` to it does nothing. So each output takes at most one value per commit.
+A step with one stalling output never sends early; a step with several (a table's
+two responses, say) sends each as soon as its output is ready, and commits once all
+have gone.
 
 `put_or_stall` returns nothing, so the step cannot branch on whether its output is
 ready, and it cannot tell a stalled cycle from one that did not happen. This is how
-XLS runs a proc activation whose send blocks, so the class model and the RTL agree
-cycle for cycle under any back-pressure.
+XLS runs a proc activation whose sends block: a ready send transfers and is marked
+done, and the activation completes once every send has. So the class model and the
+RTL agree cycle for cycle under any back-pressure.
 
 The runtime puts the state back after a stall, so all of it lives in one packed
 struct, `s`, the base class's type parameter. `s` is zero at reset, in the model and
@@ -172,7 +180,9 @@ all-or-nothing step and its consumer carries one value every other cycle; use
 The library channels undo their own effects after a stall. A class that implements
 a port API itself, such as a test's source, and changes state in `try_get`, `put`
 or `set` must record an {sv:class}`fw_hdl_pkg::fw_step_undo` with
-`fw_step_ctx::record()` while `fw_step_ctx::atomic` is set.
+`fw_step_ctx::record()` while `fw_step_ctx::atomic` is set. One that implements
+`put_or_stall` keeps an {sv:class}`fw_hdl_pkg::fw_step_sent`: it does nothing while
+that is sent, and calls `fw_step_ctx::sent()` when it takes a value.
 
 `put_or_stall` in an ordinary step is an error, at the call's line in the front end
 and when it runs in the model.

@@ -1,0 +1,18 @@
+# The fw_keyed_table contract: what every implementation of the class keeps,
+# whatever its timing. Checked on the class model and RTL in
+# tests/xls/lib/test_keyed_table.py and on RTL in tests/stdlib/cosim.
+class: fw_keyed_table
+points:
+  ins: "install {key, value}; ins_rsp answers {ok, full, slot}, in order"
+  lkp: "look up key; lkp_rsp answers {hit, slot, value}, in order"
+  wr: "write {slot, value} to a live slot"
+  rm: "free slot"
+# fw.hdl.verif.cosim.TableDriver: the responses are those of a sequential
+# table (unique live keys, install into the lowest free slot, refused when
+# the key is live or no slot is free; write and remove of a free slot do
+# nothing), with each request taking effect at one point between its
+# acceptance and its response, or, with no response (wr, rm), within WINDOW
+# cycles of its acceptance. Requests on one port take effect in order.
+linearizable:
+  responses: {ins: ins_rsp, lkp: lkp_rsp}
+  window: WINDOW

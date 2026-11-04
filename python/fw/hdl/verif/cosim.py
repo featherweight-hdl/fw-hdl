@@ -36,7 +36,8 @@ run checks:
 - the class's per-cycle rules a module must keep whatever its timing (for
   example, credit returns are never stalled);
 - the contract (``<class>.yaml`` under ``src/std``): order, conservation, and
-  that every value offered leaves.
+  that every value offered leaves; or, for a class whose outputs are not its
+  inputs passed on (``fw_keyed_table``), the driver's own check.
 
 Timing is free: a module may take more or fewer cycles than the class model,
 so nothing is compared cycle for cycle.
@@ -48,6 +49,7 @@ import os
 import random
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -78,12 +80,19 @@ class Port:
 class Driver:
     """What a class's environment is, for its cosim testbench."""
     cls = ""
+    #: Each value taken leaves once, as the contract's order rule says. A
+    #: class whose outputs are not its inputs passed on (a table) checks its
+    #: contract in extra_checks instead.
+    streams = True
 
     def __init__(self, params: Dict):
         self.p = params
 
     def ports(self) -> List[Port]:
         raise NotImplementedError
+
+    def stimulus(self, seed: int) -> Dict[str, List[int]]:
+        return stimulus(self.ports(), seed)
 
     def extra_checks(self, trace: Dict[str, List[Tuple[int, int]]]) -> List[str]:
         return []
@@ -170,7 +179,128 @@ class ChannelDriver(Driver):
         return out
 
 
-DRIVERS: Dict[str, type] = {d.cls: d for d in (ArbiterDriver, CreditTxDriver, ChannelDriver)}
+class TableDriver(Driver):
+    """fw_keyed_table: ``ins``, ``lkp``, ``wr`` and ``rm`` are sources (keys
+    from a few more than ``N``, so that installs find duplicates and a full
+    table; slots from the whole slot range, so that some name a free slot);
+    ``ins_rsp`` and ``lkp_rsp`` are stalling sinks.
+
+    The contract is a sequential table. Each request takes effect at one
+    point between the cycle it is taken and the cycle of its response (in
+    either order), or for ``wr`` and ``rm`` (no response) up to ``WINDOW``
+    cycles after it is taken; requests on one port take effect in order. The run passes if some
+    such order of the requests gives every response seen."""
+    cls = "fw_keyed_table"
+    streams = False
+
+    def _w(self):
+        return self.p["K"], self.p["V"], self.p["N"], _ib(self.p["N"])
+
+    def ports(self):
+        k, v, n, sb = self._w()
+        return [Port("ins", k + v, "source"), Port("lkp", k, "source"),
+                Port("wr", sb + v, "source"), Port("rm", sb, "source"),
+                Port("ins_rsp", sb + 2, "sink"), Port("lkp_rsp", sb + v + 1, "sink")]
+
+    def stimulus(self, seed):
+        k, v, n, sb = self._w()
+        rng = random.Random(seed)
+        nk = min(1 << k, n + 3)
+        gen = {"ins": lambda: (rng.randrange(nk) << v) | rng.randrange(1 << v),
+               "lkp": lambda: rng.randrange(nk),
+               "wr": lambda: (rng.randrange(1 << sb) << v) | rng.randrange(1 << v),
+               "rm": lambda: rng.randrange(1 << sb)}
+        return {p: [f() for _ in range(rng.randint(20, 40))] for p, f in gen.items()}
+
+    def _apply(self, slots, port, x):
+        """One request on the table *slots*: (the slots after, the response
+        or None)."""
+        k, v, n, sb = self._w()
+        vm = (1 << v) - 1
+        if port == "lkp":
+            hit = next((i for i, e in enumerate(slots) if e and e[0] == x), None)
+            if hit is None:
+                return slots, 0
+            return slots, (1 << (sb + v)) | (hit << v) | slots[hit][1]
+        if port == "ins":
+            key, val = x >> v, x & vm
+            if any(e and e[0] == key for e in slots):
+                return slots, 0
+            free = next((i for i, e in enumerate(slots) if e is None), None)
+            if free is None:
+                return slots, 1 << sb
+            return slots[:free] + ((key, val),) + slots[free + 1:], (1 << (sb + 1)) | free
+        i = x >> v if port == "wr" else x
+        if i >= n or slots[i] is None:
+            return slots, None
+        e = (slots[i][0], x & vm) if port == "wr" else None
+        return slots[:i] + (e,) + slots[i + 1:], None
+
+    def extra_checks(self, trace):
+        win = self.p.get("WINDOW", 2)
+        rsp = {"ins": "ins_rsp", "lkp": "lkp_rsp"}
+        out = []
+        for q, r in rsp.items():
+            if len(trace.get(r, [])) != len(trace.get(q, [])):
+                out.append(f"{len(trace.get(q, []))} {q} taken, "
+                           f"{len(trace.get(r, []))} {r} sent")
+        if out:
+            return out
+        # Per port, in order: (earliest effect, latest effect, request,
+        # response). A response may come before its request is taken: an
+        # all-or-nothing step sends it while another output stalls the step.
+        ops = {}
+        for q in ("lkp", "ins", "wr", "rm"):
+            ops[q] = []
+            for i, (c, x) in enumerate(trace.get(q, [])):
+                if q in rsp:
+                    rc, want = trace[rsp[q]][i]
+                    ops[q].append((min(c, rc), max(c, rc), x, want))
+                else:
+                    ops[q].append((c, c + win, x, None))
+        names = list(ops)
+        total = sum(len(o) for o in ops.values())
+        seen = set()
+        best = [(-1, "")]
+
+        def step(pos, slots):
+            done = sum(pos)
+            if done == total:
+                return True
+            if (pos, slots) in seen:
+                return False
+            seen.add((pos, slots))
+            heads = [(q, ops[q][j]) for q, j in zip(names, pos) if j < len(ops[q])]
+            due = min(op[1] for _, op in heads)
+            for qi, q in enumerate(names):
+                j = pos[qi]
+                if j >= len(ops[q]) or ops[q][j][0] > due:
+                    continue
+                c, _, x, want = ops[q][j]
+                nxt, got = self._apply(slots, q, x)
+                if want is not None and got != want:
+                    if done > best[0][0]:
+                        best[0] = (done, f"cycle {c}: {q} {x:x} answered {want:x}, "
+                                         f"expected {got:x}")
+                    continue
+                if step(pos[:qi] + (j + 1,) + pos[qi + 1:], nxt):
+                    return True
+            return False
+
+        lim = sys.getrecursionlimit()
+        sys.setrecursionlimit(max(lim, 4 * total + 100))
+        try:
+            ok = step((0,) * len(names), (None,) * self.p["N"])
+        finally:
+            sys.setrecursionlimit(lim)
+        if not ok:
+            out.append("no order of the requests gives the responses seen; "
+                       f"the furthest gets to {best[0][1] or 'the first request'}")
+        return out
+
+
+DRIVERS: Dict[str, type] = {d.cls: d for d in (ArbiterDriver, CreditTxDriver, ChannelDriver,
+                                               TableDriver)}
 
 
 # --- specs -----------------------------------------------------------------------
@@ -381,6 +511,8 @@ def check_run(drv: Driver, contract: Dict, stim: Dict[str, List[int]],
         if p.role == "source" and len(trace.get(p.name, [])) != len(stim[p.name]):
             errs.append(f"{p.name}: {len(trace.get(p.name, []))} of {len(stim[p.name])}"
                         " values taken")
+    if not drv.streams:
+        return errs + drv.extra_checks(trace)
     ev, ids = [], {}
     for p in ports:
         if p.role == "loop":
@@ -421,7 +553,7 @@ def run(spec: Spec, workdir, seeds: Sequence[int] = (1, 2, 3),
         if t.fallback:
             t = _fallback(t, tw / "rtl")
         for seed in seeds:
-            stim = stimulus(ports, seed)
+            stim = drv.stimulus(seed)
             d = tw / f"seed{seed}"
             d.mkdir(parents=True, exist_ok=True)
             (d / "cosim_tb.sv").write_text(testbench(t, ports, stim, seed, *rates(seed)))

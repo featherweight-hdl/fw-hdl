@@ -78,4 +78,35 @@ package cosim_pkg;
             tx.out.connect(out);
         endfunction
     endclass
+
+    // fw_keyed_table: 8 slots, 4-bit keys, 8-bit values.
+    class tbl8_top extends fw_component;
+        fw_port #(fw_get_nb_if #(bit [11:0]))   ins;
+        fw_port #(fw_put_step_if #(bit [4:0]))  ins_rsp;
+        fw_port #(fw_get_nb_if #(bit [3:0]))    lkp;
+        fw_port #(fw_put_step_if #(bit [11:0])) lkp_rsp;
+        fw_port #(fw_get_nb_if #(bit [10:0]))   wr;
+        fw_port #(fw_get_nb_if #(bit [2:0]))    rm;
+        fw_keyed_table #(bit [3:0], bit [7:0], 8) t;
+        function new(string name, fw_component parent);
+            super.new(name, parent);
+        endfunction
+        function void build();
+            ins = new("ins", this);
+            ins_rsp = new("ins_rsp", this);
+            lkp = new("lkp", this);
+            lkp_rsp = new("lkp_rsp", this);
+            wr = new("wr", this);
+            rm = new("rm", this);
+            t = new("t", this);
+        endfunction
+        function void connect();
+            t.ins.connect(ins);
+            t.ins_rsp.connect(ins_rsp);
+            t.lkp.connect(lkp);
+            t.lkp_rsp.connect(lkp_rsp);
+            t.wr.connect(wr);
+            t.rm.connect(rm);
+        endfunction
+    endclass
 endpackage

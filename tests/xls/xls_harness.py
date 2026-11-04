@@ -30,7 +30,7 @@ import zuspec.ir.core as ir
 from fw.hdl.xls_flow import sv_to_component, sv_to_functions
 from zuspec.be.xls import xir
 from zuspec.be.xls.lower_fn import lower_functions
-from zuspec.be.xls.lower_proc import lower_component
+from zuspec.be.xls.lower_proc import codegen_flags, lower_component
 from zuspec.be.xls.printer import format_package
 from zuspec.be.xls.testing.interp import Interpreter, run_proc
 from zuspec.be.xls.testing.parser import parse_package
@@ -293,9 +293,12 @@ def proc_testbench(pkg_name, cls: str, comp: ir.DataTypeComponent,
               "      q.push_back(t);",
               f"    end{kw.split()[0]}"]
         if flow[name] == "step":        # always ready: never stalls the step
-            L += [f"    virtual function void put_or_stall(input {t} t);",
+            L += ["    fw_step_sent sent = new;",
+                  f"    virtual function void put_or_stall(input {t} t);",
+                  "      if (sent.sent) return;",
                   f'      $display("O {name} %0d %0h", q.size(), t);',
                   "      q.push_back(t);",
+                  "      fw_step_ctx::sent(sent);",
                   "    endfunction"]
         L += ["  endclass"]
     L += ["  class xh_top extends fw_component;", f"    {cls} dut;"]
@@ -566,8 +569,8 @@ def step_testbench(pkg_name: str, cls: str, comp: ir.DataTypeComponent,
     10n + 5, so a source knows the cycle from $time and never races the steps.
     A stream source offers each value from its cycle until try_get takes it;
     each valid put, and each put_or_stall in a cycle its output is ready
-    (*stalls*), prints ``C <port> <cycle> <hex>``. That print assumes one
-    stalling output: it is not undone when another output stalls the step."""
+    (*stalls*), prints ``C <port> <cycle> <hex>``. A put_or_stall that
+    went is not undone when another output stalls the step (fw_steppable)."""
     stalls = stalls or {}
     L = ['`include "fw_std_macros.svh"', "module xh_step_tb;",
          "  import fw_hdl_pkg::*;", "  import fw_std_pkg::*;", f"  import {pkg_name}::*;",
@@ -615,13 +618,18 @@ def step_testbench(pkg_name: str, cls: str, comp: ir.DataTypeComponent,
                   "    endfunction", "  endclass"]
         else:
             st = ", ".join(str(c) for c in sorted(set(stalls.get(name, [])))) or "-1"
+            # Once a value goes, the output takes no more from the step
+            # until it commits, though another output stalls it.
             L += [f"  class xh_snk_{name} implements fw_put_step_if #({t});",
                   f"    int stall[$] = '{{{st}}};",
+                  "    fw_step_sent sent = new;",
                   f"    virtual task put(input {t} t);", "    endtask",
                   f"    virtual function void put_or_stall(input {t} t);",
+                  "      if (sent.sent) return;",
                   "      foreach (stall[i]) if (stall[i] == now()) begin",
                   "        fw_step_ctx::stall(); return;", "      end",
                   f'      $display("C {name} %0d %0h", now(), t);',
+                  "      fw_step_ctx::sent(sent);",
                   "    endfunction", "  endclass"]
     api = {(True, "level"): "fw_level_if", (True, "ready_valid"): "fw_get_nb_if",
            (False, "level"): "fw_level_set_if", (False, "valid"): "fw_valid_put_if",
@@ -738,7 +746,8 @@ def check_step(sv_files: Sequence[str], pkg_name: str, cls: str, schedule: Sched
     if codegen_main() is None or opt_main() is None:
         return model
     for stages, flags in ((st, fl) for st in rtl_stages for fl in rtl_flags):
-        res = run_codegen(format_package(pkg), CodegenOptions(), stages=stages, extra=flags)
+        res = run_codegen(format_package(pkg), CodegenOptions(), stages=stages,
+                          extra=[*codegen_flags(comp, pkg), *flags])
         d = workdir / f"xls_s{stages}{''.join(f.split('=')[0].replace('-', '_') for f in flags)}"
         d.mkdir(parents=True, exist_ok=True)
         (d / "xls_rtl.sv").write_text(res.verilog)

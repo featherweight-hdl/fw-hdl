@@ -1,8 +1,8 @@
 """The cosim specs in tests/stdlib/cosim/ (fw.hdl.verif.cosim): fw-hdl's own
 lowering of each class, and a supplied arbiter, against the class's contract.
 Some runs must fail: the supplied arbiter without its grant lock, a credit
-sender held to fewer credits than it was built with, and FIFOs held to a
-DEPTH they do not keep."""
+sender held to fewer credits than it was built with, FIFOs held to a DEPTH
+they do not keep, and a table held to fewer slots than it has."""
 import dataclasses as dc
 from pathlib import Path
 
@@ -28,7 +28,7 @@ def _run(tmp_path, spec, targets=None):
 
 
 @pytest.mark.parametrize("name", ["fw_arbiter", "fw_credit_tx", "fw_credit_tx_c4",
-                                  "fw_channel"])
+                                  "fw_channel", "fw_keyed_table"])
 def test_spec_passes(tmp_path, name):
     spec = cosim.load(SPECS / f"{name}.yaml")
     targets = [t.name for t in spec.targets if not t.name.endswith("_nolock")]
@@ -63,6 +63,16 @@ def test_fifo_held_to_depth_2(tmp_path, depth, msg):
     spec = dc.replace(spec, targets=[dc.replace(t, params=dict(t.params, DEPTH=depth))])
     errs = [e for v in _run(tmp_path, spec).values() for e in v]
     assert errs and all(msg in e for e in errs), errs
+
+
+def test_table_held_to_7_slots(tmp_path):
+    """fw_keyed_table built with 8 slots, held to 7: once 7 are live, an
+    install that should be refused as full takes the eighth."""
+    spec = cosim.load(SPECS / "fw_keyed_table.yaml")
+    spec = dc.replace(spec, params=dict(spec.params, N=7))
+    errs = [e for v in _run(tmp_path, spec, ["own"]).values() for e in v]
+    assert errs and all("no order of the requests gives the responses" in e
+                        for e in errs), errs
 
 
 def test_unmapped_port_is_named():

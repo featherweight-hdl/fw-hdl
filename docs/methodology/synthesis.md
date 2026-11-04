@@ -81,7 +81,8 @@ same way, with its `step()` body as the activation:
 | one call of `step()` | one activation, at II=1 |
 | `if (in.t.try_get(x)) ...`, or `if (a && in.t.try_get(x)) ...` with no `else` | a non-blocking receive into a temporary, predicated on `a` in the second form |
 | `out.t.put(v)` on an `fw_valid_put_if` port | a send that the design never back-pressures (Integrate ties its ready and asserts it is not needed) |
-| `out.t.put_or_stall(v)` on an `fw_put_step_if` port, in an `fw_atomic_step` | a send predicated on its `if`s, which blocks: when out is not ready, the whole activation stalls, with no state update and no receive |
+| `out.t.put_or_stall(v)` on an `fw_put_step_if` port, in an `fw_atomic_step` | a send predicated on its `if`s, which blocks: when out is not ready, the whole activation stalls, with no state update and no receive. Another send that was ready has transferred, and does not repeat |
+| the step's receives, in a pipeline | one stage: codegen gets an `--io_constraints` that keeps every streaming receive in the first one's stage, so an activation takes the requests of one cycle |
 | the state `s` of an `fw_atomic_step` | one state element, zero at reset |
 | statement order | none across channels: the cycle is atomic, and a receive token-ordered after a send cannot be scheduled at II=1. Operations on one channel keep the rules above |
 

@@ -1,7 +1,7 @@
 # Library classes
 
 Building blocks in `fw_std_pkg` whose cycle behaviour is part of their definition:
-queues, credit senders, arbiters, and (to come) tables and pools. Each class states:
+queues, credit senders, arbiters, keyed tables, and (to come) pools. Each class states:
 
 - what it **observes** in a cycle;
 - what it **consumes**;
@@ -11,9 +11,9 @@ queues, credit senders, arbiters, and (to come) tables and pools. Each class sta
 The class model is a cycle step that implements exactly that, and the RTL is
 checked against it cycle for cycle. A class whose output can be back-pressured is an
 all-or-nothing step ({doc}`../methodology/components`): a cycle whose output is not
-ready has no effect. Each class also has a **contract** (a YAML file next to its
-source): the order and conservation rules any implementation must keep, whatever its
-timing ({doc}`contracts`). Any module that claims to implement a class can be
+ready stalls, and changes nothing. Each class also has a **contract** (a YAML file next
+to its source): the order and conservation rules any implementation must keep, whatever
+its timing ({doc}`contracts`), or, for a table, the sequential table it must behave as. Any module that claims to implement a class can be
 cosimulated against that contract ([Cosimulation](#cosimulation)).
 
 | Class | Source | Form | Lowering |
@@ -21,6 +21,7 @@ cosimulated against that contract ([Cosimulation](#cosimulation)).
 | `fw_channel` | `src/std/fw_channel.svh` | queue between components | `fw_rv_fifo`, or a FIFO inside a multi-proc block |
 | `fw_credit_tx` | `src/std/credit/` | cycle step | its `step()`, mapped |
 | `fw_arbiter` | `src/std/arb/` | all-or-nothing step | its `step()`, mapped |
+| `fw_keyed_table` | `src/std/table/` | all-or-nothing step | its `step()`, mapped |
 
 ## fw_channel
 
@@ -67,7 +68,7 @@ timing.
 
 **Tests.**
 - `tests/stdlib/fw_channel_unit_test.sv` (SVUnit), on the model: empty, one-cycle
-  latency, rate by depth, back-pressure, a stalled step's put undone, and the process
+  latency, rate by depth, back-pressure, a stalled step's put kept, and the process
   form (a blocking put while full, a rendezvous). Order is checked throughout.
 - `tests/xls/lib/test_fw_channel.py`: two steps joined by the channel at `DEPTH` 1, 2
   and 3, with the output back-pressured at random:
@@ -229,6 +230,89 @@ so a stalled `out` stalls the activation. `N` may be 1.
    :members:
 ```
 
+## fw_keyed_table
+
+A table of up to `N` entries, each a unique key and a value: install, look up, write
+and remove. Install and lookup answer with a slot; write and remove name one, so only
+install and lookup match keys.
+
+```systemverilog
+fw_keyed_table #(type K, type V, int N = 16)
+```
+
+| Port | API | Carries |
+|---|---|---|
+| `ins` | `fw_get_nb_if #(bit [KW+VW-1:0])` | `{key, value}` to install |
+| `ins_rsp` | `fw_put_step_if #(bit [SB+1:0])` | `{ok, full, slot}` |
+| `lkp` | `fw_get_nb_if #(K)` | the key to look up |
+| `lkp_rsp` | `fw_put_step_if #(bit [SB+VW:0])` | `{hit, slot, value}` |
+| `wr` | `fw_get_nb_if #(bit [SB+VW-1:0])` | `{slot, value}`: write a live slot's value |
+| `rm` | `fw_get_nb_if #(bit [SB-1:0])` | the slot to free |
+
+`KW` and `VW` are `$bits(K)` and `$bits(V)`; `SB` is `$clog2(N)`, and 1 when `N` is 1.
+Each port takes at most one request a cycle, so a cycle can do one of each.
+
+**Per cycle.**
+
+| | |
+|---|---|
+| Observes | the table at the start of the cycle. Every request sees that state and never another request's effect from the same cycle, so a cycle is lookup, install, write, remove done in that order |
+| Install | refused if the key is live (`ok = 0, full = 0`), else if no slot is free (`ok = 0, full = 1`); else takes the lowest free slot. A refusal is a response, not back-pressure. `slot` is 0 when refused |
+| Lookup | `hit`, and the matching slot and value; on a miss, slot and value are 0 |
+| Misuse | a write or remove naming a slot that was free at the start of the cycle does nothing |
+| Back-pressure | stalls the whole table: nothing is taken and nothing changes until both responses have gone. A response whose output is ready goes at once, and only once |
+
+What follows from those rules:
+- A lookup gets the value from before a same-cycle write, and misses a key installed
+  in the same cycle.
+- A slot removed in a cycle is free from the next one.
+- A slow lookup consumer also holds up installs. When the two paths must not wait on
+  each other, put an `fw_channel` (`DEPTH` 2) on each response.
+
+**Class model.** `step()` is an all-or-nothing step with two stalling outputs, so the
+model is cycle-exact under any back-pressure. Its state is one packed struct, zero
+(empty) at reset. Every match is a mask over the slots, and the lowest free slot is
+found with a prefix OR in log2(`N`) steps. Each slot's next state is chosen from those
+masks, so the cycle's logic stays shallow as `N` grows.
+
+**Contract** (`src/std/table/fw_keyed_table.yaml`): the responses are those of a
+sequential table. Each request takes effect at one point between the cycle it is
+taken and the cycle of its response (either may come first), or, for a write or
+remove, within `WINDOW` cycles of being taken. Requests on one port take effect in
+order.
+
+**Lowering.** `step()` is mapped (no registry entry). One activation per cycle, at
+II=1. In a pipeline, all of a step's receives are kept in one stage, so an activation
+takes one cycle's requests ({doc}`../methodology/synthesis`). The critical path at one
+stage, from XLS's schedule with the asap7 delay model (12-bit keys, 48-bit values;
+`tests/xls/lib/qor_keyed_table.py`):
+
+| `N` | State bits | Critical path |
+|---|---|---|
+| 16 | 976 | 423 ps |
+| 64 | 3904 | 455 ps |
+| 256 | 15616 | 502 ps |
+
+Each size meets a 500 ps clock in one stage on that model. These are schedule
+estimates, before synthesis.
+
+**Tests.**
+- `tests/stdlib/fw_keyed_table_unit_test.sv` (SVUnit), on the model: install then
+  lookup, duplicate and full, lowest free slot reused, all four requests in one edge,
+  a response sent once while the other stalls, and misuse.
+- `tests/xls/lib/test_keyed_table.py`: a Python model of the rules above against the
+  class model, and the class model against the RTL cycle for cycle, with both
+  responses back-pressured at random (`N` = 1, 4, 5, 16), and at 2 stages with the
+  responses always ready.
+- Cosim (`tests/stdlib/cosim/fw_keyed_table.yaml`): fw-hdl's own RTL at 1 and 2
+  stages against the contract. The same RTL held to 7 of its 8 slots is expected to
+  fail.
+
+```{eval-rst}
+.. autosvclass:: fw_std_pkg::fw_keyed_table
+   :members:
+```
+
 ## Cosimulation
 
 `fw.hdl.verif.cosim` runs any module that claims to implement a library class against
@@ -241,7 +325,8 @@ class model, so nothing is compared cycle for cycle. Each run checks:
   `fw_credit_tx` never stalls a credit return and never has more than `CREDITS`
   credits outstanding;
 - **the contract**: order (`canon.check` with the class's rule), and every value
-  offered is taken and leaves exactly once.
+  offered is taken and leaves exactly once. For a table, whose outputs are answers
+  rather than its inputs passed on, the driver checks the sequential table instead.
 
 A spec is a YAML file: the class, its parameters, and one or more targets. A target
 maps each of the class's ports to a module's signals:
@@ -290,6 +375,7 @@ ports are sources and which are sinks:
 | `fw_arbiter` | `in[k]` are sources; `out` is a sink with a random ready |
 | `fw_credit_tx` | `in[v]` are sources; `out` is valid-only; the testbench is the receiver: for each value it is sent, it returns `CHECK` credits on `cr`, in order, a random 1 to *d* cycles later |
 | `fw_channel` | `put_ex` is a source; `get_ex` is a sink with a random ready. At most `DEPTH` values are held, and for `DEPTH` 1 or more none leaves in the cycle it came |
+| `fw_keyed_table` | `ins`, `lkp`, `wr` and `rm` are sources, with keys from a few more than `N` and slots from the whole slot range; `ins_rsp` and `lkp_rsp` are sinks with a random ready. The run passes if some order of the requests, as the contract allows, gives every response seen |
 
 Each seed sets the source rate, the sink rate and the receiver's delay *d*: busy and
 sparse sources, slow and fast sinks. So values arrive both before and behind a stalled

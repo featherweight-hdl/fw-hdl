@@ -250,21 +250,29 @@ module fw_channel_unit_test;
         `FAIL_UNLESS_EQUAL(most2, 2)
     `SVTEST_END
 
-    // A step that puts on ch and then stalls on `side`: its put on ch is
-    // undone, and the value stays with the source.
-    `SVTEST(stalled_put_is_undone)
+    // A step that puts on ch and then stalls on `side`: its take is undone,
+    // so the value stays with the source, but its put on ch went and is
+    // kept. The retries put nothing more on ch; once side has space the
+    // step commits, putting the value on side only.
+    `SVTEST(stalled_step_keeps_its_put)
         T x;
         u_d2.root.p.tee = 1;
         u_d2.root.side.ch_put(8'hee);         // side full
         u_d2.root.s.offer(8'h01);
         edges(3);
-        `FAIL_UNLESS_EQUAL(u_d2.root.ch.size(), 0)
+        `FAIL_UNLESS_EQUAL(u_d2.root.ch.size(), 1)
         `FAIL_UNLESS_EQUAL(u_d2.root.s.q.size(), 1)
         `FAIL_UNLESS_EQUAL(u_d2.root.s.q[0], 8'h01)
         void'(u_d2.root.side.ch_try_get(x));  // side has space again
         edges(1);
         `FAIL_UNLESS_EQUAL(u_d2.root.ch.size(), 1)
         `FAIL_UNLESS_EQUAL(u_d2.root.side.size(), 1)
+        `FAIL_UNLESS_EQUAL(u_d2.root.s.q.size(), 0)
+        u_d2.root.p.tee = 0;                  // committed: ch takes again
+        u_d2.root.s.offer(8'h02);
+        edges(2);
+        `FAIL_UNLESS_EQUAL(u_d2.root.ch.size(), 2)
+        `FAIL_UNLESS_EQUAL(u_d2.root.s.q.size(), 0)
     `SVTEST_END
 
     // Process form: a FIFO put blocks while DEPTH values wait; a rendezvous

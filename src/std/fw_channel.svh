@@ -34,15 +34,14 @@ class fw_channel_put_step_ex #(type T = int, int DEPTH = 1)
     endfunction
 endclass
 
-// Undoes one take or put of a step that stalled.
+// Undoes one take of a step that stalled.
 class fw_channel_undo #(type T = int, int DEPTH = 1) extends fw_step_undo;
     fw_channel #(T, DEPTH) ch;
-    bit      take;
     T        v;
     realtime t;
 
     virtual function void undo();
-        ch.ch_undo(take, v, t);
+        ch.ch_undo(v, t);
     endfunction
 endclass
 
@@ -98,7 +97,9 @@ endclass
 // An all-or-nothing step (fw_atomic_step) puts through put_step_ex
 // (fw_put_step_if): put_or_stall stalls the step unless the channel had space
 // at the start of the edge, counting neither values steps put during the edge
-// nor values steps took during it. A rendezvous holds one value there.
+// nor values steps took during it. A value put is kept even if another output
+// stalls the step, and the channel takes no more from that step until it
+// commits (fw_steppable).
 //
 // DEPTH is how many values the channel holds:
 //   * DEPTH >= 1 -- a FIFO: put() blocks while DEPTH values are waiting.
@@ -140,6 +141,8 @@ class fw_channel #(type T = int, int DEPTH = 1) extends fw_component;
     local realtime     m_edge_t = -1;
     local int          m_edge_put;
     local int          m_edge_take;
+    // put_step_ex took a value from a step that has not committed yet.
+    local fw_step_sent m_sent = new;
 
     function new(string name, fw_component parent);
         super.new(name, parent);
@@ -174,7 +177,7 @@ class fw_channel #(type T = int, int DEPTH = 1) extends fw_component;
         if (m_q.size() == 0 || fw_step_ctx::hidden(m_t[0]))
             return 1'b0;
         if (fw_step_ctx::atomic)
-            log_undo(1'b1, m_q[0], m_t[0]);
+            log_undo(m_q[0], m_t[0]);
         t = m_q.pop_front();
         void'(m_t.pop_front());
         m_n_get++;
@@ -184,12 +187,15 @@ class fw_channel #(type T = int, int DEPTH = 1) extends fw_component;
     endfunction
 
     // From an all-or-nothing step: put t if there was space at the start of
-    // the edge, else stall the step.
+    // the edge, else stall the step. Nothing if this step's value already
+    // went, at an edge where it stalled.
     function void ch_put_or_stall(input T t);
         int held = m_q.size();
         fw_step_ctx::check_atomic(get_full_name());
         if (DEPTH == 0)
             step_on_wire();
+        if (m_sent.sent)
+            return;
         if (m_edge_t == $realtime)
             held += m_edge_take - m_edge_put;
         if (held >= ((DEPTH == 0) ? 1 : DEPTH)) begin
@@ -200,7 +206,7 @@ class fw_channel #(type T = int, int DEPTH = 1) extends fw_component;
         m_t.push_back($realtime);
         m_n_put++;
         edge_count(1, 0);
-        log_undo(1'b0, t, $realtime);
+        fw_step_ctx::sent(m_sent);
     endfunction
 
     local function void step_on_wire();
@@ -218,29 +224,21 @@ class fw_channel #(type T = int, int DEPTH = 1) extends fw_component;
         m_edge_take += ntake;
     endfunction
 
-    local function void log_undo(bit take, T v, realtime t);
+    local function void log_undo(T v, realtime t);
         fw_channel_undo #(T, DEPTH) u = new;
         u.ch = this;
-        u.take = take;
         u.v = v;
         u.t = t;
         fw_step_ctx::record(u);
     endfunction
 
-    // Undo a step's take (put the value back at the head) or put (drop the
-    // newest value).
-    function void ch_undo(bit take, T v, realtime t);
-        if (take) begin
-            m_q.push_front(v);
-            m_t.push_front(t);
-            m_n_get--;
-            m_edge_take--;
-        end else begin
-            void'(m_q.pop_back());
-            void'(m_t.pop_back());
-            m_n_put--;
-            m_edge_put--;
-        end
+    // Undo a step's take: put the value back at the head. (A step's put is
+    // never undone; see ch_put_or_stall.)
+    function void ch_undo(T v, realtime t);
+        m_q.push_front(v);
+        m_t.push_front(t);
+        m_n_get--;
+        m_edge_take--;
     endfunction
 
     // How many values are waiting (for tests and debug).

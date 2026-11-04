@@ -353,7 +353,7 @@ class fw_component implements fw_elaboratable;
                     clock.t.tick(1);
                     if (a != null)
                         a.step_save();
-                    fw_step_ctx::begin_step(a != null);
+                    fw_step_ctx::begin_step(a);
                     s.step();
                     if (!fw_step_ctx::end_step())
                         a.step_restore();

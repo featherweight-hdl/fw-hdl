@@ -43,5 +43,6 @@ package fw_std_pkg;
     // Library classes the registry recognizes (fw.hdl.lib): the bodies are models.
     `include "credit/fw_credit_tx.svh" // credit-gated sender, valid-only out
     `include "arb/fw_arbiter.svh"      // N-input arbiter, {index, value} out
+    `include "table/fw_keyed_table.svh" // keyed table: install, lookup, write, remove
 
 endpackage

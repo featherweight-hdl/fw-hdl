@@ -417,12 +417,16 @@ def xls_block(comp: ir.DataTypeComponent, stages: int = 1,
               opts=None, text: Optional[str] = None) -> Block:
     """XLS IR -> ``opt_main`` -> ``codegen_main`` for one class. *text* is the
     IR when the registry lowers the class (``Partition.texts``)."""
-    from zuspec.be.xls.lower_proc import lower_component
+    from zuspec.be.xls.lower_proc import codegen_flags, lower_component
     from zuspec.be.xls.printer import format_package
     from zuspec.be.xls.signature import CodegenOptions, actual_signature, predict_signature
     from zuspec.be.xls.testing.xlstools import run_codegen
     opts = opts or CodegenOptions(module_name=module_name(comp.name))
-    res = run_codegen(text or format_package(lower_component(comp)), opts, stages=stages)
+    extra: List[str] = []
+    if text is None:
+        pkg = lower_component(comp)
+        text, extra = format_package(pkg), codegen_flags(comp, pkg)
+    res = run_codegen(text, opts, stages=stages, extra=extra)
     sig = actual_signature(predict_signature(comp, opts), res.signature,
                            sources=[f"{opts.module_name}.sv"])
     return Block(sig, res.verilog)

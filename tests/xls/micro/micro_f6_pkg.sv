@@ -176,4 +176,32 @@ package micro_f6_pkg;
                 out.t.put_or_stall(x);
         endfunction
     endclass
+
+    // Two stalling outputs: each value to both, tagged with how many values
+    // went before. A value goes to each output as soon as that output is
+    // ready, once; the take and the count commit when both have it.
+    typedef struct packed { bit [7:0] n; } f6_tee_state_t;
+    class f6_tee2 extends fw_atomic_step #(f6_tee_state_t);
+        fw_port #(fw_get_nb_if #(bit [7:0]))    in;
+        fw_port #(fw_put_step_if #(bit [15:0])) a;
+        fw_port #(fw_put_step_if #(bit [15:0])) b;
+
+        function new(string name, fw_component parent);
+            super.new(name, parent);
+        endfunction
+        function void build();
+            in = new("in", this);
+            a = new("a", this);
+            b = new("b", this);
+        endfunction
+
+        virtual function void step();
+            bit [7:0] x;
+            if (in.t.try_get(x)) begin
+                a.t.put_or_stall({s.n, x});
+                b.t.put_or_stall({s.n, x});
+                s.n = s.n + 8'd1;
+            end
+        endfunction
+    endclass
 endpackage

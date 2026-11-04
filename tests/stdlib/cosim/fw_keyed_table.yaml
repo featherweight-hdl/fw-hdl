@@ -1,0 +1,20 @@
+# Cosim of fw_keyed_table (python -m fw.hdl.verif.cosim): any module behind a
+# signal map, against the class's contract (src/std/table/fw_keyed_table.yaml).
+class: fw_keyed_table
+params: {K: 4, V: 8, N: 8, WINDOW: 2}
+targets:
+  # fw-hdl's own lowering, one stage: cycle for cycle the class model.
+  - name: own
+    fallback: {files: [cosim_pkg.sv], top: tbl8_top, xls: [fw_keyed_table], stages: 1}
+    ports: &own
+      ins:     {data: ins, valid: ins_vld, ready: ins_rdy}
+      ins_rsp: {data: ins_rsp, valid: ins_rsp_vld, ready: ins_rsp_rdy}
+      lkp:     {data: lkp, valid: lkp_vld, ready: lkp_rdy}
+      lkp_rsp: {data: lkp_rsp, valid: lkp_rsp_vld, ready: lkp_rsp_rdy}
+      wr:      {data: wr, valid: wr_vld, ready: wr_rdy}
+      rm:      {data: rm, valid: rm_vld, ready: rm_rdy}
+  # Two stages: XLS may take requests offered a cycle apart in one
+  # activation, so only the contract holds.
+  - name: own_s2
+    fallback: {files: [cosim_pkg.sv], top: tbl8_top, xls: [fw_keyed_table], stages: 2}
+    ports: *own

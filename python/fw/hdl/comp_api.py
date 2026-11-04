@@ -180,13 +180,19 @@ def model_harness_sv(api: CompApiSet) -> str:
                       "            wait (n_taken >= seq);",
                       "        endtask"]
                 if p.step:
-                    o += [f"        virtual function void put_or_stall(input {p.type} t);",
+                    # Once a value goes, no more from the step until it
+                    # commits (fw_steppable).
+                    o += ["        fw_step_sent sent = new;",
+                          f"        virtual function void put_or_stall(input {p.type} t);",
+                          "            if (sent.sent)",
+                          "                return;",
                           "            if (n_put > n_taken) begin",
                           "                fw_step_ctx::stall();",
                           "                return;",
                           "            end",
                           "            q.push_back(t);",
                           "            n_put++;",
+                          "            fw_step_ctx::sent(sent);",
                           "        endfunction"]
                 o += ["    endclass"]
         o += [f"    class {cid}_model implements {api.pkg}::{cid}_api;"]

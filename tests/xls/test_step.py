@@ -119,6 +119,48 @@ def test_rr_stall_cycle_exact(tmp_path, stalls):
         sorted(v for s in RR_IN.values() for _, v in s)
 
 
+def tee2_ref(sched, cycles, stalls):
+    """Each value to a and b, tagged with the count before it. An output
+    that is ready takes the value, once; the cycle commits (takes the input,
+    counts) only when both have it."""
+    pend, n, sent, out = list(sched["in"]), 0, set(), {"a": [], "b": []}
+    for cyc in range(cycles):
+        if not pend or pend[0][0] > cyc:
+            continue
+        v = (n << 8) | pend[0][1]
+        for o in ("a", "b"):
+            if o not in sent and cyc not in stalls[o]:
+                out[o].append((cyc, v))
+                sent.add(o)
+        if sent == {"a", "b"}:
+            pend.pop(0)
+            n, sent = n + 1, set()
+    return out
+
+
+TEE_IN = {"in": [(c, 0x40 + c) for c in range(0, 24, 2)] + [(c, 0x80 + c) for c in range(3, 9)]}
+TEE_IN["in"].sort()
+TEE_STALLS = {"a": [2, 3, 4, 9, 10, 15], "b": [0, 1, 4, 5, 6, 11, 15, 16, 17, 18]}
+
+
+def test_tee2_ref_sends_once():
+    """a is ready in cycle 0 and b is not: the value goes to a in cycle 0
+    and to b in cycle 2, and the next value is taken in cycle 3."""
+    got = tee2_ref({"in": [(0, 1), (0, 2)]}, 6, {"a": [], "b": [0, 1]})
+    assert got == {"a": [(0, 0x001), (3, 0x102)], "b": [(2, 0x001), (3, 0x102)]}
+
+
+@needs_sim
+def test_tee2_cycle_exact(tmp_path):
+    """Two stalling outputs, back-pressured independently: model and RTL
+    cycle for cycle, and both match the reference. XLS sends to an output
+    that is ready and marks it done, as the model does."""
+    got = check_step([PKG], "micro_f6_pkg", "f6_tee2", TEE_IN, 40, tmp_path,
+                     stalls=TEE_STALLS)
+    assert got == tee2_ref(TEE_IN, 40, TEE_STALLS)
+    assert [v & 0xFF for _, v in got["a"]] == [v for _, v in TEE_IN["in"]]
+
+
 def test_atomic_step_lowers_to_one_blocking_send():
     """put_or_stall is the proc's one send, which blocks (a stall stalls the
     activation); every receive stays non-blocking and unordered."""
@@ -128,6 +170,17 @@ def test_atomic_step_lowers_to_one_blocking_send():
     assert all(t.startswith("after_all") for t in recvs), recvs
     sends = re.findall(r"= send\(([^)]*)\)", txt)
     assert len(sends) == 1 and "predicate=" in sends[0] and "channel=out" in sends[0]
+
+
+def test_step_receives_share_a_stage():
+    """A step is one cycle, so codegen keeps its streaming receives in one
+    stage; a process (run()) leaves XLS free to spread them."""
+    from zuspec.be.xls.lower_proc import codegen_flags, lower_component
+    comp = sv_to_component([PKG], "f6_rr")
+    assert codegen_flags(comp, lower_component(comp)) == [
+        "--io_constraints=" + ",".join(f"in0:recv:in{k}:recv:0:0" for k in (1, 2, 3))]
+    proc = sv_to_component([str(HERE / "micro" / "micro_proc_pkg.sv")], "p_pred")
+    assert codegen_flags(proc, lower_component(proc)) == []
 
 
 def test_put_or_stall_needs_an_atomic_step():
