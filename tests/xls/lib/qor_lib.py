@@ -6,13 +6,15 @@ XLS at one stage and the asap7 delay model:
 * pool: fw_token_pool at 64 and 256 tokens with a 32-bit value
   (lib_pool_pkg's pool_q<N>);
 * dep: fw_dep_tracker with N producer tags and N dependent tags, at 32 and
-  64 (lib_dep_pkg's dep_q<N>).
+  64 (lib_dep_pkg's dep_q<N>);
+* match: fw_match_set's first() over N 16-bit slots, at 16 and 64
+  (lib_match_pkg's q<N>_first, a function top: no state).
 
 Prints, per size: the state bits, the critical path and the source line
 that dominates it, and the fewest stages that meet each of a few clock
 periods.
 
-    python tests/xls/lib/qor_lib.py table|pool|dep [N ...]   # logs in build/qor_<kind>/
+    python tests/xls/lib/qor_lib.py table|pool|dep|match [N ...]   # logs in build/qor_<kind>/
 """
 import subprocess
 import sys
@@ -24,7 +26,7 @@ REPO = HERE.parents[2]
 sys.path[:0] = [str(HERE.parent)]
 
 from fw.hdl.ppa import block_ppa                                         # noqa: E402
-from fw.hdl.xls_flow import sv_to_component                              # noqa: E402
+from fw.hdl.xls_flow import sv_function_package, sv_to_component         # noqa: E402
 from zuspec.be.xls.lower_proc import codegen_flags, lower_component      # noqa: E402
 from zuspec.be.xls.printer import format_package                         # noqa: E402
 from zuspec.be.xls.testing.xlstools import codegen_main, opt_main        # noqa: E402
@@ -32,15 +34,21 @@ from zuspec.be.xls.testing.xlstools import codegen_main, opt_main        # noqa:
 # kind: (package file, typedef prefix, default sizes)
 KINDS = {"table": ("lib_table_pkg.sv", "tbl_q", [16, 64, 256]),
          "pool": ("lib_pool_pkg.sv", "pool_q", [64, 256]),
-         "dep": ("lib_dep_pkg.sv", "dep_q", [32, 64])}
+         "dep": ("lib_dep_pkg.sv", "dep_q", [32, 64]),
+         "match": ("lib_match_pkg.sv", "q", [16, 64])}
+FUNCTIONS = {"match": "_first"}     # kind: suffix of the function top
 PERIODS = (1000, 667, 500)
 
 
 def probe(kind: str, n: int, out: Path) -> dict:
     pkg_file, prefix, _ = KINDS[kind]
-    cls = f"{prefix}{n}"
-    comp = sv_to_component([str(HERE / pkg_file)], cls)
-    pkg = lower_component(comp)
+    cls = f"{prefix}{n}" + FUNCTIONS.get(kind, "")
+    if kind in FUNCTIONS:
+        pkg, cg = sv_function_package([str(HERE / pkg_file)], cls, cls), []
+    else:
+        comp = sv_to_component([str(HERE / pkg_file)], cls)
+        pkg = lower_component(comp)
+        cg = codegen_flags(comp, pkg)
     d = out / f"n{n}"
     d.mkdir(parents=True, exist_ok=True)
     (d / "in.ir").write_text(format_package(pkg))
@@ -48,7 +56,7 @@ def probe(kind: str, n: int, out: Path) -> dict:
     with open(d / "opt.ir", "w") as fp, open(d / "opt.log", "w") as lg:
         subprocess.run([opt_main(), str(d / "in.ir")], stdout=fp, stderr=lg, check=True)
     flags = ["--generator=pipeline", "--delay_model=asap7", "--reset=rst",
-             "--use_system_verilog=true", *codegen_flags(comp, pkg)]
+             "--use_system_verilog=true", *cg]
 
     def codegen(tag, extra):
         with open(d / f"{tag}.log", "w") as lg:

@@ -47,5 +47,6 @@ package fw_std_pkg;
     `include "pool/fw_token_pool.svh"   // lowest free token; put back
     `include "pool/fw_slot_reserve.svh" // reserve k slots, free on release
     `include "dep/fw_dep_tracker.svh"   // dependents wait for the youngest older producer
+    `include "match/fw_match_set.svh"   // equality over the valid slots of a set (functions)
 
 endpackage

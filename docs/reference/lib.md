@@ -2,7 +2,7 @@
 
 Building blocks in `fw_std_pkg` whose cycle behaviour is part of their definition:
 queues, credit senders, arbiters, keyed tables, token pools, slot reservations and
-dependency trackers. Each class states:
+dependency trackers; and set matches, which are functions for a class's own step. Each class states:
 
 - what it **observes** in a cycle;
 - what it **consumes**;
@@ -26,6 +26,7 @@ Any module that claims to implement a class can be cosimulated against that cont
 | `fw_token_pool` | `src/std/pool/` | cycle step | its `step()`, mapped |
 | `fw_slot_reserve` | `src/std/pool/` | cycle step | its `step()`, mapped |
 | `fw_dep_tracker` | `src/std/dep/` | cycle step | its `step()`, mapped |
+| `fw_match_set` | `src/std/match/` | static functions | an IR function the caller's step invokes |
 
 ## fw_channel
 
@@ -542,6 +543,70 @@ asap7 delay model (`python tests/xls/lib/qor_lib.py dep`):
 
 ```{eval-rst}
 .. autosvclass:: fw_std_pkg::fw_dep_tracker
+   :members:
+```
+
+## fw_match_set
+
+Is a value one of a set: equality over the valid slots, for example a filter of
+allowed requester IDs or a port-number match.
+
+```systemverilog
+fw_match_set #(int K = 8, type T = bit [15:0])
+static function bit [K-1:0]  hits (T [K-1:0] keys, bit [K-1:0] valid, T q);
+static function bit          any  (T [K-1:0] keys, bit [K-1:0] valid, T q);
+static function bit [IB-1:0] first(T [K-1:0] keys, bit [K-1:0] valid, T q);
+```
+
+| Function | Returns |
+|---|---|
+| `hits` | bit i is set when slot i is valid and holds `q` |
+| `any` | `q` is in the set (the OR of `hits`) |
+| `first` | the lowest slot that hits; 0 when none does, so read it with `any` |
+
+`IB` is `$clog2(K)` (1 when `K` is 1). An invalid slot never hits, whatever it holds,
+and a value held by several slots hits each of them.
+
+**Why functions, not a component.** The caller already owns the set, in its own state
+or read from a table. The functions are called in the caller's `step()`, so the match
+adds no cycle and no channel. A component would need the whole set as a port each
+cycle, or would own the set and need ports to change it, which is `fw_keyed_table`.
+
+```systemverilog
+// in a step: m_keys and m_valid are the step's state
+if (in.t.try_get(x))
+    out.t.put({fw_match_set#(4, bit [7:0])::any(m_keys, m_valid, x),
+               fw_match_set#(4, bit [7:0])::first(m_keys, m_valid, x), x});
+```
+
+**Lowering.** The functions are pure, so each specialization is one IR function, which
+the caller's proc invokes. `first` isolates the lowest hit with an OR over doubling
+shifts (log `K` deep), then forms its index as an OR of indices. A loop that selects
+from slot to slot would be `K` deep: 1.6 ns at 16 slots. The delay of `first` at one
+stage, from XLS's schedule with the asap7 delay model
+(`python tests/xls/lib/qor_lib.py match`):
+
+| `K`, 16-bit `T` | Critical path |
+|---|---|
+| 16 | 346 ps |
+| 64 | 424 ps |
+
+**No contract or cosim.** A function has no cycles and no order. Its rule is its
+definition, and the tests check it against a Python model. The step that calls it is
+the unit that has a contract and can be cosimulated.
+
+**Tests.**
+- `tests/stdlib/fw_match_set_unit_test.sv` (SVUnit): an empty set, a hit in each slot,
+  a value held only by an invalid slot, a value held by several slots, and one slot.
+- `tests/xls/lib/test_match_set.py`:
+  - each function at fixed sizes: Verilator, the interpreter and XLS agree, and all
+    match a Python model. Every argument is tried at 3 slots of 2 bits and at 1 slot;
+    random sets with repeated and invalid members at 5 slots of 16 bits;
+  - a filter step that calls `any` and `first`: they are invoked functions in its proc,
+    and the class model and the RTL agree cycle for cycle at 1 and 2 stages.
+
+```{eval-rst}
+.. autosvclass:: fw_std_pkg::fw_match_set
    :members:
 ```
 
