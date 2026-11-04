@@ -70,11 +70,14 @@ def _sv_hex(v: int, w: int) -> str:
 class Port:
     name: str             # the class's port, as in the spec ("in[0]")
     width: int
-    role: str             # "source" | "sink" | "loop"
+    role: str             # "source" | "sink" | "loop" | "level" (an output)
     key: Callable[[int], int] = lambda v: 0      # contract key of a value
     data: Callable[[int], int] = lambda v: v     # contract data of a value
     loop: Optional[Tuple[str, int, int]] = None  # (from port, value shift, count)
     always_ready: bool = False                   # a class rule: never stalled
+    #: A loop answers only the values for which this SV condition holds;
+    #: ``{d}`` is the value (empty: every value).
+    loop_when: str = ""
 
 
 class Driver:
@@ -370,9 +373,101 @@ class SlotReserveDriver(Driver):
         return out
 
 
+class DepTrackerDriver(Driver):
+    """fw_dep_tracker: ``ent`` ({kind, tag}) is a source, producers with
+    tags in turn and dependents with random tags; the testbench is the
+    completer and retires each producer on ``ret``, in order, 1 to *d*
+    cycles after it entered. ``ent`` and ``ret`` are never stalled. ``ok`` is
+    a level, checked against the contract with ``WINDOW`` cycles of latency:
+    a dependent's bit is 0 from ``WINDOW`` cycles after it enters until the
+    youngest producer live at its entry retires, and 1 again within
+    ``WINDOW`` cycles of that retire (or of its entry, if none was live)."""
+    cls = "fw_dep_tracker"
+    streams = False
+
+    def _w(self):
+        n, m = self.p["N"], self.p["M"]
+        return n, m, _ib(n), max(_ib(n), _ib(m))
+
+    def ports(self):
+        n, m, pb, ib = self._w()
+        return [Port("ent", ib + 1, "source", always_ready=True),
+                Port("ret", pb, "loop", loop=("ent", 0, 1), always_ready=True,
+                     loop_when=f"!{{d}}[{ib}]"),
+                Port("ok", m, "level")]
+
+    def stimulus(self, seed):
+        n, m, pb, ib = self._w()
+        rng = random.Random(seed)
+        vals, t = [], 0
+        for _ in range(rng.randint(30, 60)):
+            if rng.random() < 0.5:
+                vals.append(t)
+                t = (t + 1) % n
+            else:
+                vals.append((1 << ib) | rng.randrange(m))
+        return {"ent": vals}
+
+    def extra_checks(self, trace):
+        n, m, pb, ib = self._w()
+        win = self.p.get("WINDOW", 4)
+        ent, ret = dict(trace.get("ent", [])), dict(trace.get("ret", []))
+        oks = trace.get("ok", [])
+        end = max([c for c, _ in oks] + list(ent) + list(ret) + [0]) + win + 1
+
+        def ok_at(t, d):
+            v = 0
+            for c, x in oks:
+                if c > t:
+                    break
+                v = x
+            return (v >> d) & 1
+
+        # Replay: each dependent entry's (cycle, tag, its producer's retire
+        # cycle or None if it waits on none, whether that retire was seen).
+        live, entries, pending = [], [], {}
+        for cyc in range(end):
+            top = live[-1] if live else None
+            r = ret.get(cyc)
+            if r is not None and r in live:
+                live.remove(r)
+                for e in pending.pop(r, []):
+                    e[2] = cyc
+            e = ent.get(cyc)
+            if e is not None and not e >> ib & 1:
+                t = e & ((1 << pb) - 1)
+                if t not in live:
+                    live.append(t)
+            elif e is not None:
+                rec = [cyc, e & ((1 << ib) - 1), None, top]
+                entries.append(rec)
+                if top is not None:
+                    if r is not None and r == top:
+                        rec[2] = cyc
+                    else:
+                        pending.setdefault(top, []).append(rec)
+        out = []
+        for i, (c, d, rc, p) in enumerate(entries):
+            nxt = next((e[0] for e in entries[i + 1:] if e[1] == d), end)
+            if p is not None:
+                stop = min(rc if rc is not None else end, nxt)
+                bad = next((t for t in range(c + win + 1, stop + 1) if ok_at(t, d)), None)
+                if bad is not None:
+                    out.append(f"cycle {bad}: dependent {d} shown released, but producer "
+                               f"{p} (youngest at its entry, cycle {c}) has not retired")
+                    continue
+            free = c if p is None else rc
+            if free is not None and free + win < nxt and free + win < end \
+                    and not ok_at(free + win, d):
+                out.append(f"cycle {free + win}: dependent {d} still waiting, {win} cycles "
+                           f"after " + (f"producer {p} retired" if p is not None
+                                        else "it entered with no producer live"))
+        return out
+
+
 DRIVERS: Dict[str, type] = {d.cls: d for d in (ArbiterDriver, CreditTxDriver, ChannelDriver,
                                                TableDriver, TokenPoolDriver,
-                                               SlotReserveDriver)}
+                                               SlotReserveDriver, DepTrackerDriver)}
 
 
 # --- specs -----------------------------------------------------------------------
@@ -451,7 +546,8 @@ def testbench(t: Target, ports: Sequence[Port], stim: Dict[str, List[int]], seed
     """A testbench for *t*. An idle source offers its next value on
     ``src_pct`` percent of cycles; a sink with a ready is ready on
     ``sink_pct`` percent; a loop source answers 1 to ``delay`` cycles
-    after the value it answers. Each
+    after the value it answers; a level output is printed each time it
+    changes, from 0. Each
     cycle the testbench drives, waits 1, checks and samples the handshakes,
     then raises the clock; it applies the handshakes' effects 1 after the
     edge. It prints ``T <port> <cycle> <hex>`` per handshake, ``E <cycle>
@@ -466,6 +562,12 @@ def testbench(t: Target, ports: Sequence[Port], stim: Dict[str, List[int]], seed
         n, w, m = _id(p.name), p.width, t.ports.get(p.name)
         if m is None:
             raise ValueError(f"target {t.name}: port {p.name} is not mapped")
+        if p.role == "level":
+            L += [f"  logic [{w - 1}:0] {n}_d, {n}_last = 0;"]
+            conns.append(f".{m['data']}({n}_d)")
+            sample += [f"    if ({n}_d != {n}_last) begin"
+                       f' $display("T {p.name} %0d %0h", cycle, {n}_d); {n}_last = {n}_d; end']
+            continue
         rdy = "ready" in m
         # The testbench drives a source's data and valid and a sink's ready.
         if p.role == "sink":
@@ -494,7 +596,8 @@ def testbench(t: Target, ports: Sequence[Port], stim: Dict[str, List[int]], seed
             s = _id(src)
             # The receiver answers each value it is sent, 1 to delay cycles
             # later, in order.
-            sample += [f"    if ({s}_t) for (int j = 0; j < {count}; j++) begin",
+            when = f" && ({p.loop_when.format(d=f'{s}_d')})" if p.loop_when else ""
+            sample += [f"    if ({s}_t{when}) for (int j = 0; j < {count}; j++) begin",
                        f"      {n}_nx = cycle + 1 + $urandom % {delay};",
                        f"      {n}_tl = ({n}_tl > {n}_nx) ? {n}_tl : {n}_nx;",
                        f"      {n}_at[{n}_wr] = {n}_tl; {n}_q[{n}_wr] = {w}'({s}_d >> {shift});"

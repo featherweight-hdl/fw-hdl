@@ -1,0 +1,16 @@
+# The fw_dep_tracker contract: what every implementation of the class
+# keeps, whatever its timing. Checked on the class model and RTL in
+# tests/xls/lib/test_dep_tracker.py and on RTL in tests/stdlib/cosim (with
+# WINDOW cycles of latency for ok to follow an entry or a retire).
+class: fw_dep_tracker
+points:
+  ent: "ent: a producer {0, tag} or a dependent {1, tag} enters"
+  ret: "ret: a producer's tag retires"
+  ok: "ok: bit d, dependent d is not waiting (a level)"
+# fw_order_pkg::fw_dep_check: a dependent depends on the live producer with
+# the highest entry order when it enters, or on none, and is released when
+# that producer retires (sticky).
+dependency:
+  youngest_live_producer: true
+  sticky: true
+  window: WINDOW

@@ -1,8 +1,8 @@
 # Library classes
 
 Building blocks in `fw_std_pkg` whose cycle behaviour is part of their definition:
-queues, credit senders, arbiters, keyed tables, token pools and slot reservations. Each
-class states:
+queues, credit senders, arbiters, keyed tables, token pools, slot reservations and
+dependency trackers. Each class states:
 
 - what it **observes** in a cycle;
 - what it **consumes**;
@@ -25,6 +25,7 @@ Any module that claims to implement a class can be cosimulated against that cont
 | `fw_keyed_table` | `src/std/table/` | all-or-nothing step | its `step()`, mapped |
 | `fw_token_pool` | `src/std/pool/` | cycle step | its `step()`, mapped |
 | `fw_slot_reserve` | `src/std/pool/` | cycle step | its `step()`, mapped |
+| `fw_dep_tracker` | `src/std/dep/` | cycle step | its `step()`, mapped |
 
 ## fw_channel
 
@@ -456,6 +457,94 @@ with everything free at reset.
    :members:
 ```
 
+## fw_dep_tracker
+
+Dependents that wait for the youngest older producer, for example a strict read that
+waits for the youngest posted write still outstanding when the read arrives.
+Producers retire in any order.
+
+```systemverilog
+fw_dep_tracker #(int N = 32, int M = 32)
+```
+
+| Port | API | Carries |
+|---|---|---|
+| `ent` | `fw_get_nb_if #(bit [IB:0])` | `{kind, tag}`, one a cycle in the source's order: kind 0 is a producer with tag 0 to `N - 1`, kind 1 a dependent with tag 0 to `M - 1` |
+| `ret` | `fw_get_nb_if #(bit [PB-1:0])` | a producer's tag: it retires |
+| `ok` | `fw_level_set_if #(bit [M-1:0])` | bit d is set while dependent d is not waiting |
+
+`PB` is `$clog2(N)` and `IB` is the wider of `PB` and `$clog2(M)` (each 1 when its
+count is 1).
+
+The user's own tags name producers and dependents, for example tags from
+`fw_token_pool`. A retire names its producer with the tag its completion carries.
+
+**Why one entry port.** Producers and dependents come from one source in program
+order, and one port keeps that order exactly. Two ports would need a rule for a
+producer and a dependent in the same cycle, and the rule could disagree with the
+source's order.
+
+**Why `ok` is a level.** Several dependents can be released in one cycle, and a
+bitmap shows all of them. A level is never back-pressured, so the tracker never
+stalls, and a retire never waits. The user checks the bit of the dependent at its head.
+A dependent needs no "leave" message, because its next entry overwrites its slot.
+
+**Per cycle.**
+
+| | |
+|---|---|
+| Observes | the live producers, their order and the waiting dependents at the start of the cycle |
+| Consumes | at most one entry and one retire. Both ports are always ready |
+| Dependent | waits on the youngest live producer and on that one only. With none live, it does not wait |
+| Retire | releases every dependent waiting on that producer, even if an older producer is still live (sticky). That includes a dependent that entered in the same cycle and recorded it |
+| `ok` | the state at the start of the next cycle, so a dependent is released the cycle after its producer's retire is taken |
+| Misuse | retiring a producer that is not live, or entering one that is, does nothing |
+| Same-cycle valid | never decides anything |
+
+**Class model.** A cycle step. The live producers form a list in entry order: each has
+a link to the producer that entered before it, and `top` is the youngest. A retire
+unlinks its producer, and a later producer's link is moved past it by one compare per
+slot. So the order is exact however long a producer stays live, unlike sequence
+numbers, which wrap. Every update is a mask over the slots. At reset nothing is live
+and no dependent waits.
+
+**Contract** (`src/std/dep/fw_dep_tracker.yaml`): `fw_order_pkg::fw_dep_check`'s rule.
+A dependent depends on the live producer with the highest entry order when it
+enters, or on none, and is released when that producer retires. Cosim allows
+`WINDOW` cycles for `ok` to follow an entry or a retire.
+
+**Lowering.** `step()` is mapped (no registry entry). `ok` is a level: one more
+register in the RTL. The critical path at one stage, from XLS's schedule with the
+asap7 delay model (`python tests/xls/lib/qor_lib.py dep`):
+
+| `N` = `M` | State bits | Critical path |
+|---|---|---|
+| 32 | 422 | 412 ps |
+| 64 | 967 | 433 ps |
+
+**Tests.**
+- `tests/stdlib/fw_dep_tracker_unit_test.sv` (SVUnit), on the model, with
+  `fw_dep_check` bound:
+  - no producer, no wait;
+  - youngest and sticky;
+  - a retire in the same edge as the entry;
+  - a retire from the middle of the list;
+  - a producer live through 60 others;
+  - misuse.
+- `tests/xls/lib/test_dep_tracker.py`, at (`N`, `M`) = (1, 2), (4, 4), (5, 3) and (8, 6):
+  - a Python model of the rules above against the class model. The stimulus has
+    out-of-order retires, long-lived producers and misuse;
+  - the class model against the RTL, cycle for cycle (`ok` as a trace of its changes),
+    at 1 and 2 stages.
+- Cosim (`tests/stdlib/cosim/fw_dep_tracker.yaml`): fw-hdl's own RTL at 1 and 2 stages.
+  A tracker that never makes a dependent wait, and one that never releases, are
+  expected to fail.
+
+```{eval-rst}
+.. autosvclass:: fw_std_pkg::fw_dep_tracker
+   :members:
+```
+
 ## Cosimulation
 
 `fw.hdl.verif.cosim` runs any module that claims to implement a library class against
@@ -491,7 +580,7 @@ targets:
       out:   {data: gnt_data, valid: gnt_valid, ready: gnt_ready}
 ```
 
-- A port with no `ready` is valid-only.
+- A port with no `ready` is valid-only, and one with only `data` is a level.
 - The payload has the class's layout. For example, `out` of `fw_arbiter` is
   `{index, value}`.
 - In place of `module` and `files`, a target can be fw-hdl's own lowering of a
@@ -521,6 +610,7 @@ ports are sources and which are sinks:
 | `fw_keyed_table` | `ins`, `lkp`, `wr` and `rm` are sources, with keys from a few more than `N` and slots from the whole slot range; `ins_rsp` and `lkp_rsp` are sinks with a random ready. The run passes if some order of the requests, as the contract allows, gives every response seen |
 | `fw_token_pool` | `req` is a source; `tok` is valid-only; the testbench is the owner and puts each token back on `rel`, in order, a random 1 to *d* cycles after it is granted. `rel` is never stalled. A token is below `N`, and none is granted while held |
 | `fw_slot_reserve` | `rsv` is a source, with k from 1 to `K`; `gnt` is valid-only; the testbench releases each reservation's k slots on `rel`, in order, a random 1 to *d* cycles after it is granted. `rel` is never stalled, and no more than `N` slots are reserved at the end of any cycle |
+| `fw_dep_tracker` | `ent` is a source: producers with tags in turn, dependents with random tags. The testbench is the completer and retires each producer on `ret`, in order, a random 1 to *d* cycles after it entered. Neither port is stalled. `ok` is a level, read as a trace of its changes. A dependent's bit must be 0 from `WINDOW` cycles after it enters until its producer retires, and 1 again within `WINDOW` cycles of that retire |
 
 Each seed sets the source rate, the sink rate and the receiver's delay *d*: busy and
 sparse sources, slow and fast sinks. So values arrive both before and behind a stalled

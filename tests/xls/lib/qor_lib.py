@@ -4,13 +4,15 @@ XLS at one stage and the asap7 delay model:
 * table: fw_keyed_table at 16, 64 and 256 slots, 12-bit keys and 48-bit
   values (lib_table_pkg's tbl_q<N>);
 * pool: fw_token_pool at 64 and 256 tokens with a 32-bit value
-  (lib_pool_pkg's pool_q<N>).
+  (lib_pool_pkg's pool_q<N>);
+* dep: fw_dep_tracker with N producer tags and N dependent tags, at 32 and
+  64 (lib_dep_pkg's dep_q<N>).
 
 Prints, per size: the state bits, the critical path and the source line
 that dominates it, and the fewest stages that meet each of a few clock
 periods.
 
-    python tests/xls/lib/qor_lib.py table|pool [N ...]   # logs in build/qor_<kind>/
+    python tests/xls/lib/qor_lib.py table|pool|dep [N ...]   # logs in build/qor_<kind>/
 """
 import subprocess
 import sys
@@ -29,7 +31,8 @@ from zuspec.be.xls.testing.xlstools import codegen_main, opt_main        # noqa:
 
 # kind: (package file, typedef prefix, default sizes)
 KINDS = {"table": ("lib_table_pkg.sv", "tbl_q", [16, 64, 256]),
-         "pool": ("lib_pool_pkg.sv", "pool_q", [64, 256])}
+         "pool": ("lib_pool_pkg.sv", "pool_q", [64, 256]),
+         "dep": ("lib_dep_pkg.sv", "dep_q", [32, 64])}
 PERIODS = (1000, 667, 500)
 
 

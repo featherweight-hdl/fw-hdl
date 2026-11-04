@@ -3,7 +3,7 @@ lowering of each class, and a supplied arbiter, against the class's contract.
 Some runs must fail: the supplied arbiter without its grant lock, a credit
 sender held to fewer credits than it was built with, FIFOs held to a DEPTH
 they do not keep, and a table, a token pool and a slot reserve held to less
-than they have."""
+than they have, and dependency trackers that never wait or never release."""
 import dataclasses as dc
 from pathlib import Path
 
@@ -30,10 +30,10 @@ def _run(tmp_path, spec, targets=None):
 
 @pytest.mark.parametrize("name", ["fw_arbiter", "fw_credit_tx", "fw_credit_tx_c4",
                                   "fw_channel", "fw_keyed_table", "fw_token_pool",
-                                  "fw_slot_reserve"])
+                                  "fw_slot_reserve", "fw_dep_tracker"])
 def test_spec_passes(tmp_path, name):
     spec = cosim.load(SPECS / f"{name}.yaml")
-    targets = [t.name for t in spec.targets if not t.name.endswith("_nolock")]
+    targets = [t.name for t in spec.targets if not (t.name.endswith("_nolock") or t.name.startswith("bad_"))]
     res = _run(tmp_path, spec, targets)
     assert len(res) == len(targets) * len(SEEDS)
     assert {k: v for k, v in res.items() if v} == {}
@@ -86,6 +86,14 @@ def test_pool_held_to_less(tmp_path, name, n, msg):
     spec = cosim.load(SPECS / f"{name}.yaml")
     spec = dc.replace(spec, params=dict(spec.params, N=n))
     errs = [e for v in _run(tmp_path, spec, ["own"]).values() for e in v]
+    assert errs and all(msg in e for e in errs), errs
+
+
+@pytest.mark.parametrize("target, msg", [("bad_nowait", "has not retired"),
+                                         ("bad_noreleases", "still waiting")])
+def test_dep_tracker_faults_are_caught(tmp_path, target, msg):
+    spec = cosim.load(SPECS / "fw_dep_tracker.yaml")
+    errs = [e for v in _run(tmp_path, spec, [target]).values() for e in v]
     assert errs and all(msg in e for e in errs), errs
 
 

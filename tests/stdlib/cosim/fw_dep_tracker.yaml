@@ -1,0 +1,29 @@
+# Cosim of fw_dep_tracker (python -m fw.hdl.verif.cosim): any module behind a
+# signal map, against the class's contract (src/std/dep/fw_dep_tracker.yaml).
+# The testbench retires each producer, in order, 1 to d cycles after it
+# entered.
+class: fw_dep_tracker
+params: {N: 4, M: 4, WINDOW: 4}
+targets:
+  # fw-hdl's own lowering: the class's step(), mapped.
+  - name: own
+    fallback: {files: [cosim_pkg.sv], top: dep4_top, xls: [fw_dep_tracker], stages: 1}
+    ports: &own
+      ent: {data: ent, valid: ent_vld, ready: ent_rdy}
+      ret: {data: ret, valid: ret_vld, ready: ret_rdy}
+      ok:  {data: ok}
+  - name: own_s2
+    fallback: {files: [cosim_pkg.sv], top: dep4_top, xls: [fw_dep_tracker], stages: 2}
+    ports: *own
+  # Wrong on purpose: never waits, and never releases. Expected to fail
+  # (tests/stdlib/test_cosim.py).
+  - name: bad_nowait
+    module: dep_bad
+    files: [dep_bad.sv]
+    params: {MODE: 0}
+    ports: *own
+  - name: bad_noreleases
+    module: dep_bad
+    files: [dep_bad.sv]
+    params: {MODE: 1}
+    ports: *own

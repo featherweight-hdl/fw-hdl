@@ -153,4 +153,26 @@ package cosim_pkg;
             r.rel.connect(rel);
         endfunction
     endclass
+
+    // fw_dep_tracker: 4 producer tags, 4 dependent tags.
+    class dep4_top extends fw_component;
+        fw_port #(fw_get_nb_if #(bit [2:0]))    ent;
+        fw_port #(fw_get_nb_if #(bit [1:0]))    ret;
+        fw_port #(fw_level_set_if #(bit [3:0])) ok;
+        fw_dep_tracker #(4, 4) t;
+        function new(string name, fw_component parent);
+            super.new(name, parent);
+        endfunction
+        function void build();
+            ent = new("ent", this);
+            ret = new("ret", this);
+            ok = new("ok", this);
+            t = new("t", this);
+        endfunction
+        function void connect();
+            t.ent.connect(ent);
+            t.ret.connect(ret);
+            t.ok.connect(ok);
+        endfunction
+    endclass
 endpackage

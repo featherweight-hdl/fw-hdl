@@ -607,10 +607,13 @@ def step_testbench(pkg_name: str, cls: str, comp: ir.DataTypeComponent,
                   "        fw_step_ctx::record(u);", "      end",
                   "      t = q.pop_front(); void'(at.pop_front());",
                   "      return 1'b1;", "    endfunction", "  endclass"]
-        elif flow == "level":
+        elif flow == "level":           # each change, from 0 at reset
             L += [f"  class xh_snk_{name} implements fw_level_set_if #({t});",
-                  f"    virtual function void set(input {t} t);", "    endfunction",
-                  "  endclass"]
+                  f"    {t} last;",
+                  f"    virtual function void set(input {t} t);",
+                  "      if (t == last) return;",
+                  f'      $display("C {name} %0d %0h", now(), t);',
+                  "      last = t;", "    endfunction", "  endclass"]
         elif flow == "valid":
             L += [f"  class xh_snk_{name} implements fw_valid_put_if #({t});",
                   f"    virtual function void put(input {t} t);",
@@ -680,19 +683,25 @@ def rtl_step_testbench(sig: ir.BlockSignature, schedule: Schedule, cycles: int,
     body_drive, body_edge, body_fall = [], [], []
     for ch in sig.channels:
         w, n = ch.payload.bits, ch.name
+        # The class's name for the channel: the IR escapes a keyword (ret_).
+        sv = n[:-1] if n.endswith("_") and n[:-1] in xir.IR_KEYWORDS else n
         kind = channel_kind(ch)
         L += [f"  logic [{w - 1}:0] {n}_d = 0;", f"  logic {n}_v = 0, {n}_r;"]
         conns += [f".{ch.ports[r]}({n}_{r[0]})" for r in ("data", "valid", "ready")
                   if r in ch.ports]
         if ch.direction == "out":
-            st = sorted(set(stalls.get(n, [])))
+            st = sorted(set(stalls.get(sv, [])))
             L += [f"  bit {n}_st [{cycles + 1}];",
                   "  initial begin"] + [f"    {n}_st[{c}] = 1;" for c in st if c <= cycles] + \
                  ["  end", f"  assign {n}_r = !(cycle <= {cycles} && {n}_st[cycle]);"]
             if kind != "level":
-                body_edge += [f"      if ({n}_v && {n}_r) $display(\"C {n} %0d %0h\", cycle, {n}_d);"]
+                body_edge += [f"      if ({n}_v && {n}_r) $display(\"C {sv} %0d %0h\", cycle, {n}_d);"]
+            else:                       # each change, from 0 at reset
+                L += [f"  logic [{w - 1}:0] {n}_last = 0;"]
+                body_edge += [f"      if ({n}_d != {n}_last) begin"
+                              f" $display(\"C {sv} %0d %0h\", cycle, {n}_d); {n}_last = {n}_d; end"]
             continue
-        sched = list(schedule.get(n, []))
+        sched = list(schedule.get(sv, []))
         L += [f"  int {n}_at [{max(len(sched), 1)}];",
               f"  logic [{w - 1}:0] {n}_q [{max(len(sched), 1)}];",
               f"  int {n}_n = {len(sched)}, {n}_i = 0;",
@@ -736,7 +745,9 @@ def check_step(sv_files: Sequence[str], pkg_name: str, cls: str, schedule: Sched
     outputs (an all-or-nothing step's), in model and RTL alike. At k stages each RTL output
     may come a fixed 0 to k - 1 cycles later (the stage XLS schedules its
     send in), plus one per flopped side named in *rtl_flags* (codegen
-    flags, one set per RTL build); nothing else may differ."""
+    flags, one set per RTL build), plus one for a level output (a register);
+    nothing else may differ. A level output's trace is its changes, after
+    the first (out of reset)."""
     comp = sv_to_component(sv_files, cls)
     pkg = lower_component(comp)
     workdir.mkdir(parents=True, exist_ok=True)
@@ -753,17 +764,26 @@ def check_step(sv_files: Sequence[str], pkg_name: str, cls: str, schedule: Sched
         (d / "xls_rtl.sv").write_text(res.verilog)
         (d / "xh_rtl_step_tb.sv").write_text(rtl_step_testbench(res.signature, schedule,
                                                                  cycles + stages, stalls))
+        from fw.hdl.spl_flow import channel_kind
+        levels = {c.name[:-1] if c.name.endswith("_") and c.name[:-1] in xir.IR_KEYWORDS
+                  else c.name for c in res.signature.channels if channel_kind(c) == "level"}
         rtl = _trace(run_verilator([d / "xls_rtl.sv", d / "xh_rtl_step_tb.sv"],
                                    "xh_rtl_step_tb", d / "rtl", with_lib=False,
                                    extra=["--assert", "+define+ASSERT_ON"]))
         for name in set(model) | set(rtl):
             m, r = model.get(name, []), rtl.get(name, [])
+            # A level's first change, from 0 to the value it takes out of
+            # reset, comes when the register leaves reset, whatever the
+            # depth: compare the changes after it.
+            if name in levels and m and r and m[0][1] == r[0][1]:
+                m, r = m[1:], r[1:]
             # The output's pipeline delay: the stage its send is scheduled in.
             lag = r[0][0] - m[0][0] if m and r else 0
             r = [(c, v) for c, v in r if c < cycles + lag]      # the model's window
             want = [(c + lag, v) for c, v in m]
-            # Each flopped side (--flop_inputs/--flop_outputs=true) may add a cycle.
-            most = stages - 1 + sum(f.endswith("=true") for f in flags)
+            # Each flopped side (--flop_inputs/--flop_outputs=true) may add a
+            # cycle, and a level output is a register (one more).
+            most = stages - 1 + sum(f.endswith("=true") for f in flags) + (name in levels)
             assert 0 <= lag <= most and r == want, \
                 f"{cls}.{name} ({stages} stage(s) {list(flags)}): rtl={r} model+{lag}={want}"
     return model

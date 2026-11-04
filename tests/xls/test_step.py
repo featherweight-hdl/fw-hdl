@@ -181,6 +181,9 @@ def test_step_receives_share_a_stage():
         "--io_constraints=" + ",".join(f"in0:recv:in{k}:recv:0:0" for k in (1, 2, 3))]
     proc = sv_to_component([str(HERE / "micro" / "micro_proc_pkg.sv")], "p_pred")
     assert codegen_flags(proc, lower_component(proc)) == []
+    # Channels are named as the IR names them: `ret` is a keyword (ret_).
+    dep = sv_to_component([str(HERE / "lib" / "lib_dep_pkg.sv")], "dep_4_4")
+    assert codegen_flags(dep, lower_component(dep)) == ["--io_constraints=ent:recv:ret_:recv:0:0"]
 
 
 def test_put_or_stall_needs_an_atomic_step():
