@@ -26,6 +26,8 @@ package fw_hdl_pkg;
     `include "fw_steppable.svh"
     // Deferred-binding wrappers and the clock-domain API must precede
     // fw_component, which now holds an fw_port #(fw_clock_domain_if) `clock`.
+    `include "fw_endpoint.svh"
+    `include "fw_facts.svh"             // characterization facts a component declares
     `include "fw_if_base.svh"
     `include "fw_clock_domain_if.svh"
     `include "fw_export.svh"
@@ -37,6 +39,7 @@ package fw_hdl_pkg;
     `include "fw_component.svh"
     `include "fw_atomic_step.svh"       // a cycle step that stalls as a whole on back-pressure
     `include "fw_component_param.svh"
+    `include "fw_extern.svh"            // wrapped IP: a Verilog module behind a class
     `include "fw_component_root.svh"
     `include "fw_component_root_param.svh"
     // Bidirectional link pair: an fw_port and an fw_export bound as one,

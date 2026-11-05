@@ -51,15 +51,18 @@ def yosys() -> Optional[str]:
 
 
 def comb_deps(files: Sequence[str], module: str, outputs: Sequence[str],
-              inputs: Sequence[str]) -> Dict[str, Set[str]]:
+              inputs: Sequence[str],
+              params: Optional[Dict[str, str]] = None) -> Dict[str, Set[str]]:
     """For each output port of *module*: the input ports it depends on
-    combinationally (through no flop)."""
+    combinationally (through no flop). *params*: parameter values (as
+    Verilog) the module is elaborated with."""
     ys = yosys()
     if ys is None:
         raise BoundaryError("yosys not found")
     with tempfile.TemporaryDirectory() as d:
-        script = [f"read_verilog -sv {' '.join(files)}", f"hierarchy -top {module}",
-                  "proc", "flatten", "opt_clean"]
+        script = [f"read_verilog -sv {' '.join(files)}"]
+        script += [f"chparam -set {k} {v} {module}" for k, v in (params or {}).items()]
+        script += [f"hierarchy -top {module}", "proc", "flatten", "opt_clean"]
         for i, o in enumerate(outputs):
             script.append(f"tee -q -o {d}/o{i}.txt select -list {module}/o:{o} "
                           f"%ci*:-{_FLOPS}")
@@ -85,8 +88,10 @@ class BlockPorts:
         return not self.deps.get(pin)
 
 
-def block_ports(sig, files: Sequence[str]) -> BlockPorts:
-    """From a BlockSignature and the block's Verilog."""
+def block_ports(sig, files: Sequence[str],
+                params: Optional[Dict[str, str]] = None) -> BlockPorts:
+    """From a BlockSignature and the block's Verilog (elaborated with
+    *params*, a wrapped module's parameter values)."""
     chans, outs, ins = {}, [], []
     for c in sig.channels:
         p = dict(c.ports)
@@ -98,7 +103,7 @@ def block_ports(sig, files: Sequence[str]) -> BlockPorts:
         else:
             ins += [p[k] for k in ("data", "valid") if p.get(k)]
             outs += [p["ready"]] if p.get("ready") else []
-    return BlockPorts(sig.name, chans, comb_deps(files, sig.name, outs, ins))
+    return BlockPorts(sig.name, chans, comb_deps(files, sig.name, outs, ins, params))
 
 
 def check(shell, blocks: Dict[str, BlockPorts], exceptions: Iterable[dict] = (),

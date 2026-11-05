@@ -28,7 +28,7 @@ VALID_CHECK_SV = _SRC / "rtl" / "fw_valid_check.sv"
 XLS_FIFO_SV = _SRC / "rtl" / "fw_xls_fifo_wrapper.sv"
 #: The channel RTL Integrate's output always lists, in compile order.
 RTL_LIB = [FIFO_SV, VALID_CHECK_SV, XLS_FIFO_SV, _SRC / "rtl" / "fw_sram_fifo.sv",
-           _SRC / "rtl" / "fw_ram_1r1w_model.sv"]
+           _SRC / "rtl" / "fw_ram_1r1w_model.sv", _SRC / "rtl" / "fw_ram_1rw_model.sv"]
 
 
 def _sv_inputs(input: TaskDataInput):
@@ -126,6 +126,25 @@ def _by_module(input: TaskDataInput, filetype: str) -> dict:
     return out
 
 
+def _write_facts(part, rundir: str) -> None:
+    """One results bundle per block with declared facts, under ``facts/<module>``:
+    the block's anchors and an overlay of provenance ``declared``."""
+    from zuspec.ir.core.results import write_bundle
+    from fw.hdl import facts
+    from fw.hdl.spl_flow import _leaves
+    ports = {c.spelling: c.ports for c in _leaves(part.structure)}
+    done = set()
+    for sh in part.shell.walk():
+        for c in sh.children:
+            if not c.get("facts") or c["module"] in done:
+                continue
+            done.add(c["module"])
+            ov, anchors = facts.overlay(c["module"], ports[c["class"]],
+                                        [facts.BlockFact(f["kind"], f["value"])
+                                         for f in c["facts"]], source=c["class"])
+            write_bundle(os.path.join(rundir, "facts", c["module"]), anchors, [ov])
+
+
 async def ReportLatency(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
     from fw.hdl import latency
     from fw.hdl.spl_flow import Shell
@@ -213,9 +232,11 @@ async def Partition(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
         knobs = from_resolved(kfiles[0])
     extern = knobs.extern_blocks() if knobs is not None else {}
     groups = knobs.groups() if knobs is not None else {}
+    filesets = knobs.filesets() if knobs is not None else {}
+    facts_files = knobs.facts_files() if knobs is not None else []
     try:
         part = partition(files, p.top, list(p.xls or []), FlowConfig(incdirs=incdirs), reporter,
-                         extern=extern, groups=groups)
+                         extern=extern, groups=groups, filesets=filesets, facts=facts_files)
         # Each channel's storage binding goes on the partition (Integrate
         # and the groups' codegen read it there).
         srep = storage.plan(part.shell, knobs.storage_section() if knobs is not None else None)
@@ -279,6 +300,11 @@ async def Partition(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
         # (a specialization, a parameter object), gets its options here.
         if knobs is not None and module not in known_mods and key != spelling:
             cg_mods[module] = knobs.codegen_module_options(key)
+        # A block with a memory member needs its RAM timing kept in codegen.
+        if spelling not in part.texts and any(f.pragmas.get("fw_mem") for f in comp.fields):
+            from zuspec.be.xls.lower_proc import codegen_flags
+            opts = cg_mods.setdefault(module, {})
+            opts["args"] = list(opts.get("args", [])) + codegen_flags(comp, pkg)
     for g, entry in part.groups.items():
         module = module_name(g)
         keys = {m["name"]: part.knob_key(m["class"], known) for m in entry["members"]}
@@ -303,6 +329,7 @@ async def Partition(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
     if markers:
         return TaskDataResult(status=1, changed=True, output=[], markers=markers)
     part.shell.save(os.path.join(rundir, "partition.json"))
+    _write_facts(part, rundir)
     out = [FileSet(src=input.name, filetype="splPartition", basedir=rundir,
                    files=["partition.json"]),
            FileSet(src=input.name, filetype="xlsIR", basedir=rundir, files=irs),
@@ -338,8 +365,12 @@ def _boundary_markers(input: TaskDataInput, shell, sigs) -> List[TaskMarker]:
         from fw.hdl.knobs import from_resolved
         exceptions = from_resolved(kfiles[0]).exceptions()
     try:
-        blocks = {c["name"]: B.block_ports(sigs[c["module"]], list(sigs[c["module"]].sources))
-                  for c in shell.children if sigs[c["module"]].sources}
+        blocks = {}
+        for c in shell.children:
+            sig = sigs[c.get("sig", c["module"])]
+            if sig.sources:
+                params = (c.get("extern") or {}).get("params")
+                blocks[c["name"]] = B.block_ports(sig, list(sig.sources), params)
         found = B.check(shell, blocks, exceptions, require_registered=sev_reg != "off")
     except B.BoundaryError as e:
         return [TaskMarker(msg=f"boundary check: {e}", severity=SeverityE.Warning)]
@@ -425,7 +456,7 @@ def _child_sources(shell, sigs) -> List[str]:
     for c in shell.children:
         if c.get("engine") == "structural":
             out += _child_sources(shell.nested(c), sigs)
-        out += [s for s in sigs[c["module"]].sources if s not in out]
+        out += [s for s in sigs[c.get("sig", c["module"])].sources if s not in out]
     return list(dict.fromkeys(out))
 
 

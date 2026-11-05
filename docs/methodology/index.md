@@ -9,6 +9,7 @@ synthesis
 knobs
 islands
 storage
+ip-reuse
 testing
 flows
 ```

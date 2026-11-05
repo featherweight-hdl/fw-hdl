@@ -34,7 +34,9 @@ Every merged value keeps the file and line it came from.
 | `design.top` | class | the structural top |
 | `design.xls` | list of classes | the children lowered through XLS |
 | `design.files`, `design.incdirs`, `design.model_top` | | sources, include dirs, class-model testbench top |
-| `design.extern.<class>` | `{signature, module, files}` | a child supplied as RTL with its block signature |
+| `design.extern.<class>` | `{signature, module, files}` | a child supplied as RTL with a hand-written block signature; a class that implements `fw_extern_impl` derives its own instead (see [Wrapped IP](extern.md)) |
+| `design.filesets.<name>` | list of files | sources a wrapper's `extern_fileset()` may name (see [Wrapped IP](extern.md)); paths relative to the knob file |
+| `design.facts` | list of files | sidecar files of characterization facts (`fw-hdl.facts`, see [Characterization facts](facts.md)); paths relative to the knob file |
 | `rtl.<NAME>` | int, bool or string | a localparam of `<top>_knobs_pkg` (for example, a channel depth the source reads) |
 | `xls.default` | block options | applied to every XLS block |
 | `xls.blocks.<class>` | block options | one block; wins over `default` |

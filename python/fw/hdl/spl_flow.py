@@ -192,6 +192,10 @@ def _shell(st: Structure, engines: Optional[Dict[str, dict]] = None) -> Shell:
             sk = librg.storage_kind(c.cls)
             if sk is not None:
                 e["holds"] = {"bindings": list(sk.bindings), "why": sk.why}
+            # Its memory members: each a RAM beside its block (Integrate).
+            mems = librg.memories(c.cls)
+            if mems:
+                e["mems"] = mems
         if c.structure is not None:
             e["engine"] = "structural"
             e["shell"] = dc.asdict(_shell(c.structure, engines))
@@ -221,13 +225,20 @@ def partition(files: Sequence[str], top: str, xls: Sequence[str],
               config: Optional[FlowConfig] = None,
               reporter: Optional[ErrorReporter] = None,
               extern: Optional[Dict[str, dict]] = None,
-              groups: Optional[Dict[str, List[str]]] = None) -> Partition:
+              groups: Optional[Dict[str, List[str]]] = None,
+              filesets: Optional[Dict[str, List[str]]] = None,
+              facts: Sequence[str] = ()) -> Partition:
     """Read *top*'s tree. Every leaf child is either in *xls* (a class XLS
-    implements) or in *extern* (class -> ``{signature, module, files}``: RTL
-    supplied with the design); a child with children is structural and
+    implements), a wrapper (a class implementing ``fw_extern_impl``: a
+    Verilog module behind the class, :mod:`fw.hdl.extern`), or in *extern*
+    (class -> ``{signature, module, files}``: RTL supplied with the design,
+    knob ``design.extern``); a child with children is structural and
     partitioned the same way, recursively. *groups* (knob ``island.groups``:
     name -> classes) makes the XLS children of those classes in one shell one
-    multi-proc block."""
+    multi-proc block. *filesets* (knob ``design.filesets``) names the file
+    lists a wrapper's ``extern_fileset()`` may give. *facts* (knob
+    ``design.facts``) are sidecar files of characterization facts; with a
+    leaf's own ``facts()`` they go on its shell entry (:mod:`fw.hdl.facts`)."""
     config = config or FlowConfig()
     reporter = reporter or ErrorReporter()
     extern = dict(extern or {})
@@ -245,10 +256,24 @@ def partition(files: Sequence[str], top: str, xls: Sequence[str],
     engines: Dict[str, dict] = {}
     natives: Dict[str, object] = {}
     texts: Dict[str, str] = {}
+    wrapped: Dict[str, dict] = {}
     for c in leaves:
-        # An extern assignment wins (RTL supplied for a library class, say);
-        # then the registry; then the static subset.
+        # A wrapper's own map, or an extern assignment, wins (RTL supplied for
+        # a library class, say); then the registry; then the static subset.
         ext = next((extern[n] for n in _names(c) if n in extern), None)
+        rec = getattr(c.node, "extern", None) if c.node is not None else None
+        if rec is not None:
+            if ext is not None:
+                raise sm.fail(f"child {c.name!r} ({c.spelling}) implements fw_extern_impl and "
+                              f"is also assigned by knob design.extern; keep one", c.decl)
+            entry = _wrapped(sm, c, rec, filesets)
+            prev = wrapped.setdefault(c.spelling, entry)
+            if prev["extern"]["record"] != entry["extern"]["record"]:
+                raise sm.fail(f"child {c.name!r}: extern_map() gives a different map than "
+                              f"another {c.spelling} instance; a map may depend only on the "
+                              f"class and its parameter object", rec.site or c.decl)
+            engines[c.spelling] = prev
+            continue
         if ext is not None:
             engines[c.spelling] = {"engine": "extern", "extern": dict(ext)}
             continue
@@ -290,6 +315,7 @@ def partition(files: Sequence[str], top: str, xls: Sequence[str],
             blocks[c.spelling] = StaticMapper(config, reporter, parser.source_manager) \
                 .map_component(c.cls, spelling=c.spelling, param_values=c.param_values)
     _check_step_wires(st, blocks, reporter)
+    _leaf_facts(sm, leaves, engines, facts)
     shell = _shell(st, engines)
     names = {c.spelling: _names(c) for c in leaves}
     found: Dict[str, dict] = {}
@@ -304,6 +330,57 @@ def partition(files: Sequence[str], top: str, xls: Sequence[str],
             raise XlsFlowError(f"island.groups {g}: {bad} are library classes the registry "
                                f"lowers; they cannot join a multi-proc group yet")
     return Partition(st, blocks, shell, found, names, natives, texts)
+
+
+def _leaf_facts(sm: StructureMapper, leaves, engines: Dict[str, dict],
+                files: Sequence[str]) -> None:
+    """Each leaf's declared facts (its ``facts()``, then sidecar files naming
+    any of its spellings) on its engine entry, as ``facts``."""
+    from . import facts as _facts
+    side: List[Tuple[str, list]] = []
+    for path in files:
+        try:
+            side += _facts.load_sidecar(path)
+        except _facts.FactsError as e:
+            raise XlsFlowError(str(e)) from None
+    used = set()
+    for c in leaves:
+        names = _names(c)
+        declared = list(getattr(c.node, "facts", None) or [])
+        for cls, fs in side:
+            if cls in names:
+                declared += fs
+                used.add(cls)
+        if not declared or c.spelling in engines and "facts" in engines[c.spelling]:
+            continue
+        try:
+            entry = _facts.for_block(declared, list(c.ports))
+        except _facts.FactsError as e:
+            if isinstance(e.site, str):
+                raise XlsFlowError(f"{e.site}: {c.spelling}: {e}") from None
+            raise sm.fail(f"child {c.name!r}: {e}", e.site or c.decl) from None
+        engines.setdefault(c.spelling, {"engine": "xls"})["facts"] = entry
+    unused = sorted({cls for cls, _ in side} - used)
+    if unused:
+        raise XlsFlowError(f"design.facts: {unused} name no leaf child")
+
+
+def _wrapped(sm: StructureMapper, c, rec, filesets) -> dict:
+    """The shell entry of a wrapper child: its record, checked against the
+    module's header with the record's parameters, and the derived signature."""
+    from . import extern as _ext
+    try:
+        decl = sm.loc(c.cls)
+        srcs = _ext.files(rec, decl.file if decl else None, filesets)
+        hdr = _ext.header(rec, srcs)
+        _ext.check(rec, hdr, c.ports)
+        sig = _ext.signature(rec, c.ports, srcs)
+    except _ext.ExternError as e:
+        raise sm.fail(str(e), e.site or c.decl) from None
+    return {"engine": "extern", "realization": "wrapped", "sig": module_name(c.spelling),
+            "extern": {"module": rec.module, "files": srcs, "record": rec.to_json(),
+                       "signature_json": ir.signature_to_json(sig),
+                       **_ext.instance_extras(rec, hdr)}}
 
 
 def _check_step_wires(st: Structure, blocks: Dict[str, ir.DataTypeComponent],
@@ -446,6 +523,31 @@ def _path_name(comp: ir.DataTypeComponent, e: ir.Expr) -> Tuple[str, Optional[st
     return comp.fields[e.index].name, None
 
 
+def _mem_ram(child: str, m: dict, clock: str, instances: List[ir.ModuleInstance]
+             ) -> Tuple[Dict[str, Dict[str, str]], List[ir.Field]]:
+    """The RAM of memory member *m* of *child*, by its storage binding
+    (:mod:`fw.hdl.storage`; ``fw_ram_1rw_model`` unless bound), on nets
+    ``<child>_<mem>_req*`` and ``<child>_<mem>_rd``. Returns the block's
+    port roles per memory port name, and the nets it adds. The request is
+    ``{we, a, wd}``, valid-only: the RAM is never busy."""
+    n, w, aw = f"{child}_{m['name']}", m["bits"], m["addr_bits"]
+    module = (m.get("storage") or {}).get("module", "fw_ram_1rw_model")
+    u = lambda b: ir.DataTypeInt(bits=b, signed=False)  # noqa: E731
+    fields = [ir.Field(name=f"{n}_req", datatype=u(1 + aw + w)),
+              ir.Field(name=f"{n}_req_vld", datatype=u(1)),
+              ir.Field(name=f"{n}_rd", datatype=u(w))]
+    instances.append(ir.ModuleInstance(
+        module=module, name=f"{n}_ram",
+        parameters={"WIDTH": str(w), "WORDS": str(m["words"])},
+        connections=[ir.PortConnection(port=p, signal=sg) for p, sg in [
+            ("clk", clock), ("en", f"{n}_req_vld"), ("we", f"{n}_req[{aw + w}]"),
+            ("a", f"{n}_req[{aw + w - 1}:{w}]"), ("wd", f"{n}_req[{w - 1}:0]"),
+            ("rd", f"{n}_rd")]]))
+    nets = {f"{m['name']}_req": {"data": f"{n}_req", "valid": f"{n}_req_vld", "ready": "1'b1"},
+            f"{m['name']}_rd": {"data": f"{n}_rd"}}
+    return nets, fields
+
+
 def _fifo(c: dict, clock: str, reset: str, instances: List[ir.ModuleInstance]
           ) -> List[ir.Field]:
     """The FIFO for channel *c*, by its storage binding (:mod:`fw.hdl.storage`):
@@ -555,13 +657,24 @@ def integrate(shell: Shell, sigs: Dict[str, ir.BlockSignature],
     # be its end's.
     provider = {tuple(b["port"]): tuple(b["provider"]) for b in shell.binds}
     for c in shell.children:
-        sig = sigs.get(c["module"])
+        sig = sigs.get(c.get("sig", c["module"]))
         if sig is None:
             raise XlsFlowError(f"no block signature for {c['name']} (module {c['module']!r})")
         conns = [ir.PortConnection(port=sig.clock, signal=clock)]
         if sig.reset:
-            conns.append(ir.PortConnection(port=sig.reset, signal=reset))
+            conns.append(ir.PortConnection(
+                port=sig.reset, signal=f"!{reset}" if sig.reset_active_low else reset))
+        extra = (c.get("extern") or {}) if c.get("engine") == "extern" else {}
+        mem_nets = {}
+        for m in c.get("mems", []):
+            nets_m, f_m = _mem_ram(c["name"], m, clock, instances)
+            mem_nets.update(nets_m)
+            fields += f_m
         for ch in sig.channels:
+            if ch.name in mem_nets:
+                for role, pin in ch.ports.items():
+                    conns.append(ir.PortConnection(port=pin, signal=mem_nets[ch.name][role]))
+                continue
             prov = provider.get((c["name"], ch.name))
             if prov is None:
                 raise XlsFlowError(f"{c['name']}.{ch.name}: in {sig.name}'s signature but "
@@ -579,7 +692,10 @@ def integrate(shell: Shell, sigs: Dict[str, ir.BlockSignature],
                 if sig_name is None:
                     raise XlsFlowError(f"{c['name']}.{ch.name}: no {role} net for it")
                 conns.append(ir.PortConnection(port=pin, signal=sig_name))
-        instances.append(ir.ModuleInstance(module=sig.name, name=c["name"], connections=conns))
+        conns += [ir.PortConnection(port=p, signal=v) for p, v in extra.get("ties", {}).items()]
+        conns += [ir.PortConnection(port=p, signal="") for p in extra.get("opens", [])]
+        instances.append(ir.ModuleInstance(module=sig.name, name=c["name"], connections=conns,
+                                           parameters=dict(extra.get("params", {}))))
 
     top = ir.DataTypeComponent(name=top_name, super=None, fields=fields,
                                module_instances=instances)
@@ -635,13 +751,20 @@ def native_blocks(part: Partition) -> List[Block]:
 
 
 def extern_signatures(shell: Shell) -> Dict[str, ir.BlockSignature]:
-    """The signatures of every extern child (at any depth), by module name,
-    and of every native child already written to files. A signature's
-    ``sources`` default to the entry's ``files``."""
+    """The signatures of every extern child (at any depth), by module name
+    (a wrapper's by its ``sig`` key: one module may have several), and of
+    every native child already written to files. A signature's ``sources``
+    default to the entry's ``files``."""
     out: Dict[str, ir.BlockSignature] = {}
     for sh in shell.walk():
         for c in sh.children:
             ext = c.get(c.get("engine")) if c.get("engine") in ("extern", "native") else None
+            if ext and "signature_json" in ext:
+                # A wrapper: derived from its map, one per specialization.
+                sig = ir.signature_from_json(ext["signature_json"])
+                sig.sources = list(ext.get("files", sig.sources))
+                out[c.get("sig", c["module"])] = sig
+                continue
             if not ext or "signature" not in ext:
                 continue
             sig = ir.load_signature(ext["signature"])

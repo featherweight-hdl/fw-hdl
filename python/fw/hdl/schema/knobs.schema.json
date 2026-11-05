@@ -33,6 +33,16 @@
               "files": {"type": "array", "items": {"type": "string"}}
             }
           }
+        },
+        "filesets": {
+          "type": "object",
+          "description": "Named file lists a wrapper's extern_fileset() may give: name -> files (relative to the knob file).",
+          "additionalProperties": {"type": "array", "items": {"type": "string"}}
+        },
+        "facts": {
+          "type": "array",
+          "description": "Sidecar files (fw-hdl.facts) of characterization facts, relative to the knob file.",
+          "items": {"type": "string"}
         }
       }
     },

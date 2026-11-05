@@ -9,16 +9,32 @@ latency** in cycles, with every input valid and every output ready:
   (read from the block's schedule and optimized IR). Add 1 for each registered
   channel (`flop` or `skid` in its codegen signature).
 - **Through a channel:** 1 for a FIFO (depth ≥ 1, no bypass); 0 for a wire.
+- **Through a structural child:** the paths of its own components, from the port the
+  value enters by.
+- **Through a block nothing schedules** (a [wrapped module](extern.md), an extern or
+  native block): its declared `latency` [facts](facts.md), fixed or a `min..max` range;
+  else the `latency` of its block signature. With neither, the path stops there and
+  the report says so in a note.
 
-Output is `latency.md` and `latency.json`. The XLS signature's `pipeline.latency`
+A path through a range has a range itself: `min..max`, or `min..` when a hop is
+unbounded. A path that uses a declared number no measurement has confirmed is marked
+`*` (`"unverified": true` in the JSON). Each hop gives its `source`: `schedule`,
+`structural`, `declared` or `signature`.
+
+Output is `latency.md` and `latency.json`. A JSON path has `cycles` (the fewest, kept
+for existing readers), `min`, `max` (null: unbounded) and `unverified`. The XLS signature's `pipeline.latency`
 is not used: for a proc it counts stages, not the receive-to-send distance.
 
 ```
 | `req -> rsp` | 3 | tagger[in->out]=0 + q[depth=1]=1 + responder[in->out]=2 |
+| `in -> out` | 4..6 * | s[in->out]=2 + c[depth=1]=1 + q[in->out]=1..3 (declared, unverified) |
 ```
 
 `tests/xls/test_latency_report.py` and `tests/xls/test_resp_tracker.py` check that
 the prediction equals the latency measured in simulation, for every knob set.
+`tests/xls/test_declared_facts.py` does the same through a structural child and wrapped
+modules with declared facts, and checks that a measured latency lies inside a declared
+range.
 
 ## Latency contracts
 

@@ -170,8 +170,8 @@ def test_registry_lists_fw_hdl_entries():
     assert {x for x in got if x[1] != "elab"} == \
         {("fw_reg_component", "native")}
     # the channel classes and port APIs the front end matches are entries too,
-    # and the tables, for the storage bindings they allow
+    # and the tables and memories, for the storage bindings they allow
     assert {n for n, t in got if t == "elab"} == {
         "fw_channel", "fw_valid_channel", "fw_level_channel", "fw_get_if", "fw_get_nb_if",
         "fw_put_if", "fw_put_step_if", "fw_valid_put_if", "fw_level_if", "fw_level_set_if",
-        "fw_keyed_table", "fw_token_pool", "fw_slot_reserve", "fw_dep_tracker"}
+        "fw_keyed_table", "fw_token_pool", "fw_slot_reserve", "fw_dep_tracker", "fw_sp_mem"}

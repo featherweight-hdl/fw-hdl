@@ -19,6 +19,8 @@ macros
 rtl
 contracts
 registry
+extern
+facts
 knobs
 reports
 tasks

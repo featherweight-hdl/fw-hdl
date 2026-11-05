@@ -21,11 +21,25 @@ Every binding has fw_rv_fifo's handshake, cycle for cycle (an SRAM FIFO
 keeps its head in flops), so the class model, the contracts and the latency
 report do not depend on it.
 
-A knob key is the channel's instance path below the top: ``q``, or
-``sub.q`` for a channel inside child ``sub``. A table (a class with
-:class:`~fw.hdl.lib.registry.StorageKind`) may be named too, but allows
-flops only. ``default`` applies to every channel that holds values (DEPTH
-of 1 or more; a level holds none).
+A memory member of a step class (``fw_sp_mem``,
+:class:`~fw.hdl.lib.registry.MemoryKind`) is a RAM beside its block, on the
+block's ``<mem>_req`` and ``<mem>_rd`` ports. Integrate places it:
+
+==========  ===========================================================
+bind        module
+==========  ===========================================================
+flops       ``fw_ram_1rw_model`` (a flop array)
+sram        ``macro:`` (default ``fw_ram_1rw_model``), a shim with its ports
+wrapper     ``module:``, with its ports
+==========  ===========================================================
+
+Every one has a 1-cycle read, the memory's own timing.
+
+A knob key is the instance path below the top: ``q``, or ``sub.q`` for a
+channel inside child ``sub``; ``u.mem`` for memory ``mem`` of child ``u``.
+A table (a class with :class:`~fw.hdl.lib.registry.StorageKind`) may be
+named too, but allows flops only. ``default`` applies to every channel that
+holds values (DEPTH of 1 or more; a level holds none) and to every memory.
 """
 from __future__ import annotations
 
@@ -38,6 +52,9 @@ from .xls_flow import XlsFlowError
 FIFO_MODULES = {"flops": "fw_rv_fifo", "sram": "fw_sram_fifo"}
 #: The RAM an SRAM FIFO uses when the knob names no ``macro:``.
 RAM_MODEL = "fw_ram_1r1w_model"
+#: The single-port RAM of a memory member bound to flops, or to sram with
+#: no ``macro:``.
+RAM_1RW_MODEL = "fw_ram_1rw_model"
 #: The codegen flags of a group whose channels are bound to flops.
 GROUP_FLOPS_FLAGS = ["--multi_proc", "--fifo_module=fw_xls_fifo_wrapper"]
 #: The smallest DEPTH an SRAM FIFO takes (its output stage is two flops).
@@ -72,6 +89,30 @@ def _holders(shell) -> Dict[str, dict]:
         for c in sh.children:
             if c.get("engine") != "structural":
                 out[prefix + c["name"]] = c
+    return out
+
+
+def _mems(shell) -> Dict[str, Tuple[dict, dict]]:
+    """path -> (leaf child, memory), for every memory member at any depth."""
+    return {f"{p}.{m['name']}": (c, m) for p, c in _holders(shell).items()
+            for m in c.get("mems", [])}
+
+
+def _mem_storage(key: str, b: dict, m: dict) -> dict:
+    """The checked binding of memory *m* (knob key *key*)."""
+    bind = b.get("bind", "flops")
+    if bind not in m["bindings"]:
+        raise _err(key, f"a memory ({m['class']}) may be bound to {m['bindings']}, "
+                        f"not {bind!r}")
+    if bind == "wrapper" and not b.get("module"):
+        raise _err(key, "bind: wrapper needs `module:`, the RAM module's name")
+    if b.get("read_latency", 1) != 1:
+        raise _err(key, f"read_latency {b['read_latency']}: {m['class']} is a RAM with a "
+                        f"1-cycle read")
+    out = {"bind": bind, "module": b["module"] if bind == "wrapper" else
+           (b.get("macro") or RAM_1RW_MODEL) if bind == "sram" else RAM_1RW_MODEL}
+    if b.get("files"):
+        out["files"] = list(b["files"])
     return out
 
 
@@ -120,7 +161,10 @@ def plan(shell, knob: Optional[dict] = None) -> dict:
     default = dict(knob.pop("default", None) or {"bind": "flops"})
     chans = {p: (c, g) for p, c, g in _channels(shell)}
     holders = _holders(shell)
+    mems = _mems(shell)
     for key, b in knob.items():
+        if key in mems:
+            continue
         if key in chans:
             c, _ = chans[key]
             if c.get("kind") == "level" or c["depth"] == 0:
@@ -137,7 +181,8 @@ def plan(shell, knob: Optional[dict] = None) -> dict:
             tables = sorted(p for p, c in holders.items() if c.get("holds"))
             raise _err(key, f"no channel or storage instance {key!r} below the top; its "
                             f"channels are {sorted(chans)}"
-                            + (f" and its tables {tables}" if tables else ""))
+                            + (f", its tables {tables}" if tables else "")
+                            + (f", its memories {sorted(mems)}" if mems else ""))
     rows: List[dict] = []
     groups: Dict[str, Dict[str, list]] = {}
     for path, (c, g) in chans.items():
@@ -166,6 +211,15 @@ def plan(shell, knob: Optional[dict] = None) -> dict:
             raise XlsFlowError(f"storage: the channels of group {g!r} are one XLS package, "
                                f"which takes one FIFO form; they differ: "
                                + "; ".join(f"{k} for {v}" for k, v in sorted(forms.items())))
+    for path, (c, m) in mems.items():
+        b = {**default, **knob.get(path, {})}
+        st = _mem_storage(path if path in knob else "default", b, m)
+        m["storage"] = st
+        bits = m["words"] * m["bits"]
+        flop, ram = (bits, 0) if st["bind"] == "flops" else \
+            (None, 0) if st["bind"] == "wrapper" else (0, bits)
+        rows.append({"path": path, "kind": "memory", "depth": m["words"], "bits": m["bits"],
+                     "group": None, **st, "flop_bits": flop, "ram_bits": ram})
     for path, c in holders.items():
         if c.get("holds"):
             rows.append({"path": path, "class": c["class"], "bind": "flops",
@@ -194,6 +248,8 @@ def files(shell) -> List[str]:
     out: List[str] = []
     for _, c, _ in _channels(shell):
         out += [f for f in c.get("storage", {}).get("files", []) if f not in out]
+    for _, m in _mems(shell).values():
+        out += [f for f in m.get("storage", {}).get("files", []) if f not in out]
     return out
 
 

@@ -250,6 +250,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     raw = list(sys.argv[1:] if argv is None else argv)
     if raw[:1] == ["knobs"]:
         return _cmd_knobs(raw[1:])
+    if raw[:1] == ["wrap"]:
+        from .wrap import main as wrap_main
+        return wrap_main(raw[1:])
     plus_incdirs, plus_defines, rest = _split_plusargs(raw)
     args = _build_parser().parse_args(rest)
     cfg = _config_from_args(args, plus_incdirs, plus_defines)

@@ -560,8 +560,10 @@ Stalls = Dict[str, Sequence[int]]
 
 
 def _ports(comp: ir.DataTypeComponent):
+    """The class's own ports; a memory member's (pragma ``fw_mem``) are the
+    RAM's, not the test's."""
     for f in comp.fields:
-        if f.kind == ir.FieldKind.Port:
+        if f.kind == ir.FieldKind.Port and not f.pragmas.get("fw_mem"):
             yield (f.name, f.pragmas["sv_type"], f.datatype.element_type.bits,
                    isinstance(f.datatype, ir.DataTypeGetIF), f.pragmas.get("fw_flow", "ready_valid"))
 
@@ -672,12 +674,27 @@ def step_testbench(pkg_name: str, cls: str, comp: ir.DataTypeComponent,
     return "\n".join(L) + "\n"
 
 
+def _mems(comp: ir.DataTypeComponent) -> Dict[str, dict]:
+    """Memory member -> its ``fw_mem`` info, with the ``req`` and ``rd`` port names."""
+    out: Dict[str, dict] = {}
+    for f in comp.fields:
+        m = f.pragmas.get("fw_mem") if f.kind == ir.FieldKind.Port else None
+        if m:
+            out.setdefault(m["member"], dict(m))[m["role"]] = f.name
+    return out
+
+
 def rtl_step_testbench(sig: ir.BlockSignature, schedule: Schedule, cycles: int,
-                       stalls: Optional[Stalls] = None) -> str:
+                       stalls: Optional[Stalls] = None,
+                       mems: Optional[Dict[str, dict]] = None) -> str:
     """XLS's RTL on the same schedule as :func:`step_testbench`: cycle 0 is
     the first rising edge after reset, every output is ready except in its
-    *stalls* cycles, and each output transfer prints ``C <port> <cycle> <hex>``."""
+    *stalls* cycles, and each output transfer prints ``C <port> <cycle> <hex>``.
+    Each memory member (*mems*, :func:`_mems`) gets an ``fw_ram_1rw_model``
+    on its ports."""
     stalls = stalls or {}
+    mems = mems or {}
+    mem_ports = {m[r] for m in mems.values() for r in ("req", "rd")}
     from fw.hdl.spl_flow import channel_kind
     rst_on, rst_off = ("1'b0", "1'b1") if sig.reset_active_low else ("1'b1", "1'b0")
     L = ["module xh_rtl_step_tb;", "  logic clk = 0;", f"  logic rst = {rst_on};",
@@ -692,6 +709,10 @@ def rtl_step_testbench(sig: ir.BlockSignature, schedule: Schedule, cycles: int,
         L += [f"  logic [{w - 1}:0] {n}_d = 0;", f"  logic {n}_v = 0, {n}_r;"]
         conns += [f".{ch.ports[r]}({n}_{r[0]})" for r in ("data", "valid", "ready")
                   if r in ch.ports]
+        if sv in mem_ports:
+            if ch.direction == "out":
+                L += [f"  assign {n}_r = 1'b1;"]
+            continue
         if ch.direction == "out":
             st = sorted(set(stalls.get(sv, [])))
             L += [f"  bit {n}_st [{cycles + 1}];",
@@ -720,6 +741,14 @@ def rtl_step_testbench(sig: ir.BlockSignature, schedule: Schedule, cycles: int,
                        f"        {n}_v = 1; {n}_d = {n}_q[{n}_i];", "      end"]
         body_edge += [f"      if ({n}_v && {n}_r) {n}_i++;"]
         body_fall += [f"      if ({n}_v && {n}_r_q) {n}_v = 0;"]
+    for name, m in mems.items():
+        w, aw, req, rd = m["bits"], m["addr_bits"], m["req"], m["rd"]
+        # The data nets are variables with initializers above; the RAM drives rd's.
+        L = [x for x in L if not x.startswith(f"  logic [{w - 1}:0] {rd}_d = 0;")]
+        L += [f"  logic [{w - 1}:0] {rd}_d;",
+              f"  fw_ram_1rw_model #(.WIDTH({w}), .WORDS({m['words']})) {name}_ram("
+              f".clk(clk), .en({req}_v), .we({req}_d[{aw + w}]), "
+              f".a({req}_d[{aw + w - 1}:{w}]), .wd({req}_d[{w - 1}:0]), .rd({rd}_d));"]
     L += [f"  {sig.name} dut({', '.join(conns)});",
           "  initial begin",
           "    repeat (4) begin #5 clk = 1; #5 clk = 0; end",
@@ -765,12 +794,14 @@ def check_step(sv_files: Sequence[str], pkg_name: str, cls: str, schedule: Sched
         d = workdir / f"xls_s{stages}{''.join(f.split('=')[0].replace('-', '_') for f in flags)}"
         d.mkdir(parents=True, exist_ok=True)
         (d / "xls_rtl.sv").write_text(res.verilog)
+        mems = _mems(comp)
         (d / "xh_rtl_step_tb.sv").write_text(rtl_step_testbench(res.signature, schedule,
-                                                                 cycles + stages, stalls))
+                                                                 cycles + stages, stalls, mems))
         from fw.hdl.spl_flow import channel_kind
         levels = {c.name[:-1] if c.name.endswith("_") and c.name[:-1] in xir.IR_KEYWORDS
                   else c.name for c in res.signature.channels if channel_kind(c) == "level"}
-        rtl = _trace(run_verilator([d / "xls_rtl.sv", d / "xh_rtl_step_tb.sv"],
+        ram = [REPO / "src" / "rtl" / "fw_ram_1rw_model.sv"] if mems else []
+        rtl = _trace(run_verilator([d / "xls_rtl.sv", *ram, d / "xh_rtl_step_tb.sv"],
                                    "xh_rtl_step_tb", d / "rtl", with_lib=False,
                                    extra=["--assert", "+define+ASSERT_ON"]))
         for name in set(model) | set(rtl):

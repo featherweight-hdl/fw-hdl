@@ -150,4 +150,20 @@
         mirror_ep.connect(__fw_bridge); \
     end
 
+// ----------------------------------------------------------------------
+// Wrapped IP (fw_extern.svh): the module and its sources.
+//
+//   class q_rtl extends q implements fw_extern_impl;
+//       `fw_extern_utils("fw_rv_fifo", "rtl/fw_rv_fifo.sv")
+//       virtual function void extern_map(fw_extern_map x); ... endfunction
+//   endclass
+// ----------------------------------------------------------------------
+`define fw_extern_utils(MODULE, FILESET) \
+    virtual function string extern_module(); \
+        return MODULE; \
+    endfunction \
+    virtual function string extern_fileset(); \
+        return FILESET; \
+    endfunction
+
 `endif /* INCLUDED_FW_HDL_MACROS_SVH */

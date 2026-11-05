@@ -130,6 +130,17 @@ def test_storage_section_resolves_files(tmp_path):
     assert s["default"] == {"bind": "flops"}
 
 
+def test_filesets_resolve_against_the_knob_file(tmp_path):
+    (tmp_path / "sub").mkdir()
+    base = write(tmp_path / "sub", "base.yaml",
+                 "design:\n  filesets:\n    ip: [rtl/a.sv, /abs/b.sv]\n")
+    k = load(write(tmp_path, "k.yaml", COMMON.replace(
+        "design:\n", f"base: [{base}]\ndesign:\n  filesets:\n    top_ip: [t.sv]\n", 1)))
+    assert k.filesets() == {"ip": [str((tmp_path / "sub" / "rtl" / "a.sv").resolve()),
+                                   "/abs/b.sv"],
+                            "top_ip": [str((tmp_path / "t.sv").resolve())]}
+
+
 def test_sv_package_compiles(tmp_path):
     from xls_harness import have_verilator, run_verilator  # tests/xls on sys.path below
     k = load(write(tmp_path, "k.yaml", COMMON))

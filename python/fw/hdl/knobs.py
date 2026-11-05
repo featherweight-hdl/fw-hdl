@@ -222,6 +222,24 @@ class Knobs:
                         "files": [res(f) for f in e.get("files", [])]}
         return out
 
+    def filesets(self) -> Dict[str, List[str]]:
+        """``design.filesets``: name -> files, with relative paths resolved
+        against the knob file that names them."""
+        out = {}
+        for name, fs in (self.get("design", "filesets", default={}) or {}).items():
+            o = self.origin("design", "filesets", name)
+            base = Path(o.file).parent if o else Path(".")
+            out[name] = [f if os.path.isabs(f) else str((base / f).resolve()) for f in fs]
+        return out
+
+    def facts_files(self) -> List[str]:
+        """``design.facts``: sidecar files of characterization facts, with
+        relative paths resolved against the knob file that names them."""
+        fs = self.get("design", "facts", default=[]) or []
+        o = self.origin("design", "facts")
+        base = Path(o.file).parent if o else Path(".")
+        return [f if os.path.isabs(f) else str((base / f).resolve()) for f in fs]
+
     def block_options(self, block: str) -> dict:
         """xls.default merged with xls.blocks.<block> (block wins)."""
         out = dict(self.get("xls", "default", default={}) or {})

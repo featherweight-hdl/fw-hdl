@@ -569,6 +569,10 @@ class StaticMapper:
                                               args=[]))
 
     def call(self, e) -> ir.Expr:
+        mem = None if e.isSystemCall else self._mem_of(e.thisClass)
+        if mem is not None:
+            raise self.fail(f"{mem}.{e.subroutineName}() used as a value; read the memory "
+                            f"on its own: `v = {mem}.rd();`", e)
         port = None if e.isSystemCall else self._port_of(e.thisClass, e)
         if port is not None:
             raise self.fail(f"{port[1]}.t.{e.subroutineName}() used as a value; read a level "
@@ -721,6 +725,8 @@ class StaticMapper:
             if nb is not None:
                 return [ir.StmtAssign(targets=[target], value=nb)]
             lv = self._level_get(e.right)
+            if lv is None:
+                lv = self._mem_rd(e.right)
             if lv is not None:
                 return [ir.StmtAssign(targets=[target], value=lv)]
             self.lvalue.append(target)
@@ -917,6 +923,9 @@ class StaticMapper:
     def call_stmt(self, e) -> List[ir.Stmt]:
         if e.isSystemCall:
             raise self.fail(f"system task {e.subroutineName} is not in the static subset", e)
+        mc = self._mem_call(e)
+        if mc is not None:
+            return mc
         port = self._port_of(e.thisClass, e)
         if port is not None:
             idx, pname = port
@@ -940,6 +949,12 @@ class StaticMapper:
                                    args=[self.expr(e.arguments[0])])
                 return [ir.StmtExpr(expr=ir.ExprAwait(value=call))]
             if method == "put_or_stall" and pname in self.port_stall:
+                if self.mems:
+                    raise self.fail(f"{pname}.t.put_or_stall(): a step that uses a memory "
+                                    f"({', '.join(self.mems)}) cannot stall; the RAM access "
+                                    f"of a stalled cycle would still happen. Offer the value "
+                                    f"on a valid-only port (fw_valid_put_if) once the "
+                                    f"receiver has room", e)
                 if self.behavior != "atomic":
                     raise self.fail(f"{pname}.t.put_or_stall() stalls the whole step, so it "
                                     f"needs an all-or-nothing step (a class derived from "
@@ -1065,6 +1080,103 @@ class StaticMapper:
             (self.locals, self.local_names, self.params, self.ret_var,
              self.in_function) = saved
 
+    def mem_fields(self, m) -> Optional[List[ir.Field]]:
+        """The two ports of memory member *m* (``fw_sp_mem #(T, WORDS)``,
+        a registry :class:`~fw.hdl.lib.registry.MemoryKind`): ``<m>_req``,
+        valid-only ``{we, a, wd}``, and ``<m>_rd``, a level of T. None if *m*
+        is not a memory."""
+        ct = m.type.canonicalType
+        if ct.kind != ast.SymbolKind.ClassType or ct.genericClass is None:
+            return None
+        from ..lib.registry import memory_kinds
+        mk = memory_kinds().get(ct.genericClass.name)
+        if mk is None:
+            return None
+        elem, words = None, None
+        for x in ct:
+            if x.kind == ast.SymbolKind.TypeParameter and x.name == "T":
+                elem = x.targetType.type
+            if x.kind == ast.SymbolKind.Parameter and x.name == "WORDS":
+                from .elab.values import const_to_py
+                words = int(const_to_py(x.value))
+        if elem is None or words is None or words < 1:
+            raise self.fail(f"memory {m.name!r}: cannot read T and WORDS (WORDS >= 1)", m)
+        et = self.dtype(elem, m, f"the word type of memory {m.name!r}", decl=True)
+        w = int(elem.canonicalType.bitWidth)
+        aw = max(1, (words - 1).bit_length())
+        req, rd = f"{m.name}_req", f"{m.name}_rd"
+        self.port_dirs[req], self.port_flow[req] = "put", "valid"
+        self.port_dirs[rd], self.port_flow[rd] = "get", "level"
+        self.mems[m.name] = {"req": req, "rd": rd, "aw": aw, "w": w, "words": words}
+        info = {"member": m.name, "words": words, "bits": w, "addr_bits": aw,
+                "read_latency": mk.read_latency}
+        loc = self.loc(m)
+        sv_type = str(elem)
+        if elem.isAlias and f"::{self.cls_name}::" in sv_type:
+            sv_type = f"{self.cls_spelling}::{elem.name}"
+        return [
+            ir.Field(name=req, datatype=ir.DataTypePutIF(element_type=_int_dt(1 + aw + w, False)),
+                     kind=ir.FieldKind.Port, loc=loc,
+                     pragmas={"sv_type": f"logic [{aw + w}:0]", "fw_flow": "valid",
+                              "fw_mem": {**info, "role": "req"}}),
+            ir.Field(name=rd, datatype=ir.DataTypeGetIF(element_type=et),
+                     kind=ir.FieldKind.Port, loc=loc,
+                     pragmas={"sv_type": sv_type, "fw_flow": "level",
+                              "fw_mem": {**info, "role": "rd"}})]
+
+    def _mem_of(self, this) -> Optional[str]:
+        """``<mem>`` of a call ``<mem>.read(...)`` on a memory member."""
+        if this is None or this.kind != EK.NamedValue or \
+                this.symbol.kind != ast.SymbolKind.ClassProperty:
+            return None
+        return this.symbol.name if this.symbol.name in self.mems else None
+
+    def _mem_rd(self, e) -> Optional[ir.Expr]:
+        """`v = <mem>.rd()`: the memory's read data, a level."""
+        e0 = e
+        while e.kind == EK.Conversion:
+            e = e.operand
+        if e.kind != EK.Call or e.isSystemCall or e.subroutineName != "rd":
+            return None
+        name = self._mem_of(e.thisClass)
+        if name is None:
+            return None
+        if self.in_function is not None:
+            raise self.fail("memory accesses are only allowed in step()", e0)
+        ref = ir.ExprRefField(base=ir.TypeExprRefSelf(), index=self.fields[self.mems[name]["rd"]])
+        return ir.ExprAwait(value=ir.ExprCall(func=ir.ExprAttribute(value=ref, attr="get"),
+                                              args=[]))
+
+    def _mem_call(self, e) -> Optional[List[ir.Stmt]]:
+        """`<mem>.read(a)` / `<mem>.write(a, v)`: a put of {we, a, wd} on the
+        memory's request port. At most one per step is the model's rule
+        (fw_sp_mem); the RAM takes one access per cycle."""
+        name = self._mem_of(e.thisClass)
+        if name is None:
+            return None
+        mi = self.mems[name]
+        if self.in_function is not None or self.behavior not in ("step", "atomic"):
+            raise self.fail("memory accesses are only allowed in step()", e)
+        method = e.subroutineName
+        if method == "read" and len(e.arguments) == 1:
+            we = 0
+            wd = _synth(ir.ExprCast(target_type=_int_dt(mi["w"], False),
+                                    value=ir.ExprConstant(value=0)), "literal-type")
+        elif method == "write" and len(e.arguments) == 2:
+            we = 1
+            wd = self.cast(self.expr(e.arguments[1]), mi["w"], False)
+        elif method == "rd":
+            raise self.fail(f"read {name}.rd() on its own: `v = {name}.rd();`", e)
+        else:
+            raise self.fail(f"expected `{name}.read(a)` or `{name}.write(a, v)`", e)
+        a = self.cast(self.expr(e.arguments[0]), mi["aw"], False)
+        we_c = _synth(ir.ExprCast(target_type=_int_dt(1, False),
+                                  value=ir.ExprConstant(value=we)), "literal-type")
+        ref = ir.ExprRefField(base=ir.TypeExprRefSelf(), index=self.fields[mi["req"]])
+        call = ir.ExprCall(func=ir.ExprAttribute(value=ref, attr="put"),
+                           args=[ir.ExprConcat(values=[we_c, a, wd])])
+        return [ir.StmtExpr(expr=ir.ExprAwait(value=call))]
+
     def port_field(self, m, name: Optional[str] = None, ctype=None) -> Optional[ir.Field]:
         """The port field for property *m*; *name* and *ctype* override its
         name and type (one element of an array of ports)."""
@@ -1130,6 +1242,7 @@ class StaticMapper:
         ``fw_component_param``), which the body reads as constants."""
         self.fields, self.port_dirs, self.port_nb = {}, {}, set()
         self.port_stall, self.port_flow = set(), {}
+        self.mems = {}
         self.param_values = dict(param_values or {})
         self.cls_name, self.cls_spelling = cls.name, spelling or cls.name
         fields: List[ir.Field] = []
@@ -1150,6 +1263,12 @@ class StaticMapper:
                     for k in range(n):
                         f = self.port_field(m, name=f"{m.name}_{k}", ctype=et)
                         f.pragmas["sv_name"] = f"{m.name}[{k}]"
+                        self.fields[f.name] = len(fields)
+                        fields.append(f)
+                    continue
+                mf = self.mem_fields(m)
+                if mf is not None:
+                    for f in mf:
                         self.fields[f.name] = len(fields)
                         fields.append(f)
                     continue

@@ -92,6 +92,24 @@ def _own_sub(ct, name: str):
     return None
 
 
+def _declared_sub(ct, name: str):
+    """*name* declared in the user class or a user base, not inherited from
+    the library (``find`` also sees fw_component's default)."""
+    while ct is not None and ct.kind == SK.ClassType \
+            and _generic(ct) not in ("fw_component", "fw_component_param"):
+        for m in ct:
+            if m.kind == SK.Subroutine and m.name == name:
+                return m
+        b = ct.baseClass
+        ct = b.canonicalType if b is not None else None
+    return None
+
+
+def _implements_extern(ct) -> bool:
+    from ..static_mapper import _implements
+    return _implements(ct, "fw_extern_impl")
+
+
 def channel_kinds() -> Dict[str, str]:
     """The channel classes and the kind each one is (registry entries,
     ``fw.hdl.lib.registry``)."""
@@ -169,6 +187,11 @@ class Node:
     #: for a channel and None for one of this node's own ports.
     binds: List[Tuple[Tuple[str, str], Tuple[str, Optional[str]]]] = dc.field(default_factory=list)
     has_run: bool = False
+    #: A wrapper's extern_map() (:class:`fw.hdl.extern.ExternRecord`), or None.
+    extern: Any = None
+    #: What a leaf's facts() declared (:class:`fw.hdl.facts.BlockFact`), ports
+    #: by RTL name.
+    facts: List[Any] = dc.field(default_factory=list)
 
     @property
     def structural(self) -> bool:
@@ -201,6 +224,8 @@ class _Recorder(Interpreter):
         super().__init__(compilation, top_inst)
         self.created: Dict[int, Any] = {}       # oid -> the `new` call expression
         self.connects: List[Tuple[Obj, Any, Any]] = []   # (endpoint, provider, call)
+        #: fw_extern_map / fw_facts oid -> [(method, call site)], in call order.
+        self.map_calls: Dict[int, List[Tuple[str, Any]]] = {}
 
     def construct(self, cls, call_expr, caller: Frame):
         o = super().construct(cls, call_expr, caller)
@@ -214,6 +239,11 @@ class _Recorder(Interpreter):
         if sub.name == "get_if" and isinstance(this, Obj) and _derives(this.cls, "fw_port") \
                 and this.fields.get(_prop(this.cls, "m_provider")) is None:
             return None
+        if isinstance(this, Obj) and (
+                (sub.name in _MAP_CALLS and _derives(this.cls, "fw_extern_map"))
+                or (sub.name in _FACT_CALLS and _derives(this.cls, "fw_facts"))):
+            site = caller.pos[-1] if caller is not None and caller.pos else call_expr
+            self.map_calls.setdefault(this.oid, []).append((sub.name, site))
         res = yield from super().call_sub(sub, this, iface, args, caller, call_expr)
         if sub.name == "connect" and isinstance(this, Obj) and args \
                 and (_derives(this.cls, "fw_port") or _derives(this.cls, "fw_export")):
@@ -222,6 +252,12 @@ class _Recorder(Interpreter):
                 if _derives(this.cls, "fw_port") else None
             self.connects.append((this, prov, site))
         return res
+
+
+#: The fw_extern_map methods whose call sites diagnostics point at.
+_MAP_CALLS = ("param", "param_str", "clock", "reset", "rv", "valid", "level", "tie", "open")
+#: The fw_facts methods, likewise.
+_FACT_CALLS = ("latency", "ii", "capacity", "comb_path", "registered", "area")
 
 
 class _Top:
@@ -296,7 +332,8 @@ class _Reader:
         while c is not None and c.kind == SK.ClassType \
                 and _generic(c) not in ("fw_component", "fw_component_param"):
             for m in c:
-                if m.kind == SK.ClassProperty:
+                if m.kind == SK.ClassProperty \
+                        and m.lifetime != ast.VariableLifetime.Static:
                     yield m
             b = c.baseClass
             c = b.canonicalType if b is not None else None
@@ -365,6 +402,19 @@ class _Reader:
                         t = t.canonicalType.arrayElementType if hasattr(
                             t.canonicalType, "arrayElementType") else t
                     n.children[rname] = self.node(e, f"{path}.{rname}", rname, h[0], h[1], t)
+        if _implements_extern(cls):
+            if n.children:
+                raise HierError(f"class {cls.name!r} has children and implements "
+                                f"fw_extern_impl; a wrapper is a leaf",
+                                _sub(cls, "extern_map"))
+            n.extern = self.extern_record(o, n)
+        fsub = _declared_sub(cls, "facts")
+        if fsub is not None:
+            if n.children:
+                raise HierError(f"class {cls.name!r} has children and declares facts(); facts "
+                                f"describe a leaf (a structural component's come from its "
+                                f"children)", fsub)
+            n.facts = self.declared_facts(o, n, fsub)
         if n.children:
             self._check_props(n)
             if n.has_run:
@@ -374,6 +424,114 @@ class _Reader:
                                 _own_sub(cls, "run") or _own_step(cls))
             self._binds(n)
         return n
+
+    def _call(self, o: Obj, name: str, args=()):
+        it = self.it
+        fr = Frame(None, None, None)
+        return it.run_sync(it.call_sub(it._dispatch(o.cls, _sub(o.cls, name)), o, None,
+                                       [Val(a) for a in args], fr, None))
+
+    def extern_record(self, o: Obj, n: Node):
+        """Run the wrapper's extern_map() and read what it recorded."""
+        from ...extern import Binding, ExternError, ExternRecord
+        it = self.it
+        map_sub = _sub(o.cls, "extern_map")
+        map_t = it.comp.getPackage("fw_hdl_pkg").find("fw_extern_map")
+        x = it.new_object(map_t)
+        try:
+            self._call(o, "extern_map", [x])
+            module, fileset = self._call(o, "extern_module"), self._call(o, "extern_fileset")
+        except HierError:
+            raise
+        except ElabError as e:
+            raise HierError(f"{n.path}: extern_map(): {e}", map_sub) from None
+        f = lambda name: self._field(x, name)                       # noqa: E731
+        calls = it.map_calls.get(x.oid, [])
+        by: Dict[str, List[Any]] = {}
+        for meth, site in calls:
+            by.setdefault(meth, []).append(site)
+        port_of = {p.obj.oid: name for name, p in n.ports.items()}
+        rec = ExternRecord(cls=str(o.cls), module=module, fileset=fileset, site=map_sub)
+        names = f("m_param_names") or []
+        ints, strs = f("m_param_int") or {}, f("m_param_str") or {}
+        psites = by.get("param", []) + by.get("param_str", [])
+        for i, pn in enumerate(names):
+            if pn in rec.params:
+                raise HierError(f"{n.path}: x.param({pn!r}, ...) given twice",
+                                psites[i] if i < len(psites) else map_sub)
+            rec.params[pn] = strs[pn] if pn in strs else int(ints[pn])
+        rec.clock, rec.reset = f("m_clock") or "", f("m_reset") or ""
+        rec.reset_active_low = bool(f("m_reset_active_low"))
+        for k in ("clock", "reset"):
+            if by.get(k):
+                rec.sites[k] = by[k][-1]
+        bsites = [s for m, s in calls if m in ("rv", "valid", "level")]
+        for i, b in enumerate(f("m_binds") or []):
+            site = bsites[i] if i < len(bsites) else map_sub
+            ep = self._field(b, "ep")
+            if not isinstance(ep, Obj):
+                raise HierError(f"{n.path}: x.{self._field(b, 'kind')}(...) is given a null "
+                                f"port (not built?)", site)
+            port = port_of.get(ep.oid)
+            if port is None:
+                raise HierError(f"{n.path}: x.{self._field(b, 'kind')}(...) is given "
+                                f"{self._field(ep, 'm_ep_name')!r}, which is not a port of "
+                                f"{o.cls.name}", site)
+            rec.bindings.append(Binding(port=port, kind=self._field(b, "kind"),
+                                        name=self._field(b, "name"),
+                                        style=self._field(b, "style"),
+                                        pins=dict(self._field(b, "pins") or {}), site=site))
+        tsites, osites = by.get("tie", []), by.get("open", [])
+        for i, (pin, v) in enumerate(zip(f("m_tie_pins") or [], f("m_tie_values") or [])):
+            rec.ties.append((pin, int(v)))
+            if i < len(tsites):
+                rec.sites[f"tie:{pin}"] = tsites[i]
+        for i, pin in enumerate(f("m_open_pins") or []):
+            rec.opens.append(pin)
+            if i < len(osites):
+                rec.sites[f"open:{pin}"] = osites[i]
+        return rec
+
+    def declared_facts(self, o: Obj, n: Node, fsub) -> List[Any]:
+        """Run the leaf's facts() and read what it recorded."""
+        from ...facts import KINDS, BlockFact, FactsError, check_value
+        it = self.it
+        x = it.new_object(it.comp.getPackage("fw_hdl_pkg").find("fw_facts"))
+        try:
+            self._call(o, "facts", [x])
+        except HierError:
+            raise
+        except ElabError as e:
+            raise HierError(f"{n.path}: facts(): {e}", fsub) from None
+        sites = [s for _, s in it.map_calls.get(x.oid, [])]
+        port_of = {p.obj.oid: name for name, p in n.ports.items()}
+        fields = {"latency": ("src", "dst"), "capacity": ("src", "dst"),
+                  "comb_path": ("src", "dst"), "ii": ("port",), "registered": ("port",),
+                  "area": ()}
+        out = []
+        for i, r in enumerate(self._field(x, "m_facts") or []):
+            site = sites[i] if i < len(sites) else fsub
+            kind = self._field(r, "kind")
+            v: Dict[str, Any] = {}
+            for fname, ep in zip(fields[kind], (self._field(r, "a"), self._field(r, "b"))):
+                if not isinstance(ep, Obj):
+                    raise HierError(f"{n.path}: f.{kind}(...) is given a null port (not built?)",
+                                    site)
+                port = port_of.get(ep.oid)
+                if port is None:
+                    raise HierError(f"{n.path}: f.{kind}(...) is given "
+                                    f"{self._field(ep, 'm_ep_name')!r}, which is not a port of "
+                                    f"{o.cls.name}", site)
+                v[fname] = port
+            v.update({k: int(val) for k, val in (self._field(r, "n") or {}).items()})
+            v.update(dict(self._field(r, "s") or {}))
+            f = BlockFact(KINDS[kind], v, site)
+            try:
+                check_value(f)
+            except FactsError as e:
+                raise HierError(f"{n.path}: {e}", site) from None
+            out.append(f)
+        return out
 
     def unbuilt(self, o: Obj, out=None) -> List[Tuple[str, List[str], Any]]:
         """After do_build: the endpoint and child properties left null, per

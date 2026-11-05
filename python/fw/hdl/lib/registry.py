@@ -16,6 +16,8 @@ the other channels
 other port APIs                   flow control
 ``fw_keyed_table`` and  elab      :class:`StorageKind`: the storage bindings
 the other tables                  it allows (flops only), and why
+``fw_sp_mem``           elab      :class:`MemoryKind`: a member array in a
+                                  RAM (its ports, read latency, bindings)
 ======================  ========  ===========================================
 
 A channel's :class:`ChannelKind` also lists the storage bindings it allows
@@ -92,6 +94,17 @@ class StorageKind:
 
 
 @dc.dataclass(frozen=True)
+class MemoryKind:
+    """A memory member of a step class: an array held outside the block in a
+    RAM with *ports* access ports and a *read_latency*-cycle read, and the
+    storage bindings (knob ``storage:``) it allows. Every binding has that
+    timing."""
+    ports: int
+    read_latency: int
+    bindings: tuple
+
+
+@dc.dataclass(frozen=True)
 class PortApi:
     """A port API: ``get`` or ``put``, its flow control, whether a get may
     poll (``try_get``), and whether a put may stall an all-or-nothing step
@@ -117,6 +130,8 @@ ENTRIES = [
     ("fw_valid_put_if", {"T": object}, "elab", PortApi("put", "valid")),
     ("fw_level_if", {"T": object}, "elab", PortApi("get", "level")),
     ("fw_level_set_if", {"T": object}, "elab", PortApi("put", "level")),
+    ("fw_sp_mem", {"T": object, "WORDS": int}, "elab",
+     MemoryKind(1, 1, ("flops", "wrapper", "sram"))),
 ] + [
     (name, {}, "elab", StorageKind(("flops",), "it reads every entry each cycle"))
     for name in ("fw_keyed_table", "fw_token_pool", "fw_slot_reserve", "fw_dep_tracker")
@@ -165,6 +180,38 @@ def storage_kind(cls) -> Optional[StorageKind]:
         b = ct.baseClass
         ct = b.canonicalType if b is not None else None
     return None
+
+
+def memory_kinds() -> Dict[str, MemoryKind]:
+    """Memory class name -> :class:`MemoryKind`, from the registry."""
+    return {e.name: e.lowering for e in registry().externals("elab")
+            if isinstance(e.lowering, MemoryKind)}
+
+
+def memories(cls) -> List[Dict[str, Any]]:
+    """The memory members of class *cls* (and its bases): one
+    ``{name, class, words, bits, addr_bits, bindings}`` each, in declaration
+    order."""
+    from pyslang import ast
+    kinds = memory_kinds()
+    out: List[Dict[str, Any]] = []
+    ct = cls
+    while ct is not None and ct.kind == ast.SymbolKind.ClassType:
+        for m in ct:
+            if m.kind != ast.SymbolKind.ClassProperty:
+                continue
+            t = m.type.canonicalType
+            g = getattr(t, "genericClass", None) if t.kind == ast.SymbolKind.ClassType else None
+            if g is None or g.name not in kinds:
+                continue
+            p = class_params(t)
+            words, bits = int(p["WORDS"]), int(p["T"])
+            out.append({"name": m.name, "class": g.name, "words": words, "bits": bits,
+                        "addr_bits": max(1, (words - 1).bit_length()),
+                        "bindings": list(kinds[g.name].bindings)})
+        b = ct.baseClass
+        ct = b.canonicalType if b is not None else None
+    return out
 
 
 def port_apis() -> Dict[str, PortApi]:

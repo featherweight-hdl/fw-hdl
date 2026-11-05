@@ -222,6 +222,11 @@ class fw_component implements fw_elaboratable;
     virtual function void connect();
     endfunction
 
+    // Characterization facts about this component's boundary (fw_facts.svh).
+    // The elaborator calls it after connect(); a simulation never does.
+    virtual function void facts(fw_facts f);
+    endfunction
+
     // Build is TOP-DOWN: build self first (which creates and registers this
     // component's children), then recurse into those just-created children.
     //

@@ -231,6 +231,9 @@ keeps its own name. Anything else is named `<class>__<hash8>`, and `partition.js
 keeps the SV class beside it as `alias`. A block body reads `m_params.<field>` as a
 constant.
 
+A child can also be an existing Verilog module behind a class: see
+[Wrapped IP](ip-reuse.md).
+
 ## The root and the edge of the tree
 
 The tree's root is wrapped by {sv:mod}`fw_root`, which holds it in reset and starts it.

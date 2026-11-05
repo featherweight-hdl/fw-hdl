@@ -74,6 +74,38 @@ and the parameters `WIDTH` and `WORDS`.
 - **A real memory.** Write a shim with these ports that instantiates the cell, and
   name it in `macro:`.
 
+## Binding a memory
+
+A step class may keep an array in a RAM: an `fw_sp_mem #(T, WORDS)` member
+({doc}`../reference/lib`). Its block has the ports `<mem>_req` and `<mem>_rd`, and
+Integrate places a RAM beside it on those ports. The knob key is `<child>.<mem>`:
+
+```yaml
+storage:
+  tbl.mem: {bind: sram, macro: my_ram_shim, files: [rtl/my_ram_shim.sv]}
+```
+
+| `bind` | The RAM Integrate places |
+|---|---|
+| `flops` (default) | `fw_ram_1rw_model`, a flop array |
+| `sram` | `macro:` (default `fw_ram_1rw_model`), a shim with the ports below |
+| `wrapper` | `module:`, with the ports below |
+
+Every one has a 1-cycle read, which is the memory's own timing, so a binding changes area,
+not behaviour.
+
+The RAM's ports:
+
+| Port | Direction | Meaning |
+|---|---|---|
+| `clk` | in | clock |
+| `en` | in | an access this cycle |
+| `we` | in | the access is a write (otherwise a read) |
+| `a`, `wd` | in | address, write data |
+| `rd` | out | read data, valid the cycle after a read, held until the next read |
+
+The parameters are `WIDTH` and `WORDS`. `read_latency`, if given, must be 1.
+
 ## What may be bound
 
 | Class | Bindings |
@@ -81,6 +113,7 @@ and the parameters `WIDTH` and `WORDS`.
 | `fw_channel` | `flops`, `wrapper`, `xls_fifo`, `sram` |
 | `fw_valid_channel` | `flops`, `wrapper`, `sram` |
 | `fw_level_channel`, any channel of `DEPTH` 0 | none: it holds no values |
+| `fw_sp_mem` (a member) | `flops`, `wrapper`, `sram` |
 | `fw_keyed_table`, `fw_token_pool`, `fw_slot_reserve`, `fw_dep_tracker` | `flops` only: each reads every entry each cycle |
 
 The library registry records what each class allows.
@@ -102,7 +135,8 @@ for each channel:
 - its binding and module;
 - its bits in flops and in RAM. The bits in flops are unknown for a wrapper.
 
-Tables are listed with their binding (always flops).
+Memories are listed as well, with their words, their width and the RAM module. Tables
+are listed with their binding, which is always flops.
 
 ```
 instance                 bind       depth x bits  flop bits  RAM bits  module
@@ -122,3 +156,5 @@ q                        sram             6 x 12         24        60  fw_ram_1r
     the class model, its contract and its latency report.
 - `tests/stdlib/cosim/fw_channel_sram.yaml`: the SRAM FIFO against `fw_channel`'s
   contract and rules.
+- `tests/xls/test_sp_mem.py`: a memory bound to flops, an SRAM shim or a wrapper, with
+  the same stream cycle for cycle.

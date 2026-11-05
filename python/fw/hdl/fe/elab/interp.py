@@ -758,19 +758,11 @@ class Interpreter:
             if fr.iface is not None and sym.name in fr.iface.vars:
                 return fr.iface.vars[sym.name]
             if sym.lifetime == ast.VariableLifetime.Static:
-                if sym not in self.statics:
-                    self.statics[sym] = (self.eval(sym.initializer, fr)
-                                         if sym.initializer is not None
-                                         else default_value(sym.type, sym.name))
-                return self.statics[sym]
+                return self._named_static(sym, fr)
             raise ElabError(f"variable {sym.name} has no value")
         if sk == ast.SymbolKind.ClassProperty:
             if self._is_static(sym):
-                if sym not in self.statics:
-                    self.statics[sym] = (self.eval(sym.initializer, Frame(None, None, None))
-                                         if sym.initializer is not None
-                                         else default_value(sym.type, sym.name))
-                return self.statics[sym]
+                return self._named_static(sym)
             if fr.this is None:
                 raise ElabError(f"property {sym.name} without an object")
             return fr.this.fields[sym]
@@ -814,11 +806,13 @@ class Interpreter:
             return self.iface_of(m)
         raise ElabError(f"unsupported member access .{m.name} on {base_t}")
 
-    def _named_static(self, sym):
+    def _named_static(self, sym, fr: Optional[Frame] = None):
         if sym not in self.statics:
-            self.statics[sym] = (self.eval(sym.initializer, Frame(None, None, None))
-                                 if sym.initializer is not None
-                                 else default_value(sym.type, sym.name))
+            # The default first: an initializer may read the variable itself
+            # (`static T me = get();` where get() tests `me == null`).
+            self.statics[sym] = default_value(sym.type, sym.name)
+            if sym.initializer is not None:
+                self.statics[sym] = self.eval(sym.initializer, fr or Frame(None, None, None))
         return self.statics[sym]
 
     @staticmethod

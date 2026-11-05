@@ -2,7 +2,8 @@
 
 Building blocks in `fw_std_pkg` whose cycle behaviour is part of their definition:
 queues, credit senders, arbiters, keyed tables, token pools, slot reservations and
-dependency trackers; and set matches, which are functions for a class's own step. Each class states:
+dependency trackers; set matches, which are functions for a class's own step; and
+memories, arrays a class's step keeps in a RAM. Each class states:
 
 - what it **observes** in a cycle;
 - what it **consumes**;
@@ -27,6 +28,7 @@ Any module that claims to implement a class can be cosimulated against that cont
 | `fw_slot_reserve` | `src/std/pool/` | cycle step | its `step()`, mapped |
 | `fw_dep_tracker` | `src/std/dep/` | cycle step | its `step()`, mapped |
 | `fw_match_set` | `src/std/match/` | static functions | an IR function the caller's step invokes |
+| `fw_sp_mem` | `src/std/mem/` | member of a step class | two ports of the class's block, and a RAM beside it that the knob `storage:` binds |
 
 ## fw_channel
 
@@ -609,6 +611,93 @@ the unit that has a contract and can be cosimulated.
 
 ```{eval-rst}
 .. autosvclass:: fw_std_pkg::fw_match_set
+   :members:
+```
+
+## fw_sp_mem
+
+An array of a step class, held in a single-port RAM with a 1-cycle read. It is a member
+of the class, not a component: the class's `step()` reads and writes it.
+
+```systemverilog
+fw_sp_mem #(type T = bit [7:0], int WORDS = 16)
+function void read (bit [AW-1:0] a);          // its data is rd() from the next step on
+function void write(bit [AW-1:0] a, T v);
+function T    rd   ();                        // the latest earlier read's data, held
+```
+
+`AW` is `$clog2(WORDS)` (1 when `WORDS` is 1).
+
+**Per cycle.** The rules are the RAM's own:
+- **One access per step**, a read or a write. A second is an error in the model.
+- **A read** issued in cycle t is `rd()` from cycle t + 1. `rd()` holds it until the
+  next read, as the RAM's output does.
+- **A write** in cycle t is seen by a read in cycle t + 1 or later.
+- **Before anything is written**, `rd()` is 0 before the first read. A word not yet
+  written reads as 0 in the model but as unknown in a RAM, so a design writes a word
+  before it reads it.
+
+So the model is cycle-exact whatever holds the array.
+
+**A step with a memory cannot stall.** A `put_or_stall` in the same class is an error.
+In RTL the RAM access of a stalled cycle would still happen, so the model's undo could
+not be kept. Offer a result on a valid-only port (`fw_valid_put_if`) once the receiver
+has room.
+
+```systemverilog
+class mm_rw extends fw_atomic_step #(bit);        // s: a read is in flight
+    fw_port #(fw_get_nb_if #(bit [20:0]))    cmd;  // {wr, a, d}
+    fw_port #(fw_valid_put_if #(bit [15:0])) rsp;
+    fw_sp_mem #(bit [15:0], 16)              mem;
+    ...
+    virtual function void step();
+        bit [20:0] c;
+        bit [15:0] d;
+        bit        p = 1'b0;
+        if (s) begin
+            d = mem.rd();
+            rsp.t.put(d);
+        end
+        if (cmd.t.try_get(c)) begin
+            if (c[20]) mem.write(c[19:16], c[15:0]);
+            else begin mem.read(c[19:16]); p = 1'b1; end
+        end
+        s = p;
+    endfunction
+endclass
+```
+
+**Lowering.** The member becomes two ports of the class's block:
+- `<mem>_req`, valid-only, `{we, a, wd}`;
+- `<mem>_rd`, a level of T.
+
+`read` and `write` are puts on `<mem>_req`, and `rd()` is a get of `<mem>_rd`.
+
+Integrate puts a RAM on these ports. Its ports are `clk, en, we, a, wd, rd`, and its
+parameters `WIDTH` and `WORDS`. The knob `storage:` picks the module, keyed by
+`<child>.<mem>` ({doc}`../methodology/storage`).
+
+The XLS engine keeps the RAM's timing in codegen:
+- the request and the read data in one stage;
+- the block's single-value inputs not flopped.
+
+At more than one stage, the request still meets the data in the next cycle.
+
+XLS's own RAM rewrite (`--ram_configurations`) is not used. It takes the response a
+fixed number of stages after the request, in the same activation, while a step reads
+the data in the next activation.
+
+**Tests** (`tests/xls/test_sp_mem.py`):
+- **Lowering:** the member is two ports, with the codegen flags.
+- **A step with a stall:** it is an error.
+- **One step against its RTL:** the class model, a Python model of the RAM and XLS's
+  RTL with `fw_ram_1rw_model` on the ports agree cycle for cycle, at 1 and 2 stages.
+- **Bindings in a design:** bound to flops, an SRAM shim or a wrapper, the response
+  stream is the same, cycle for cycle. This holds through `spl_to_rtl`, and through
+  dfm at 2 stages.
+
+```{eval-rst}
+.. autosvclass:: fw_std_pkg::fw_sp_mem
    :members:
 ```
 

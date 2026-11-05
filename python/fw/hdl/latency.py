@@ -12,6 +12,12 @@ The latency of a path, top input to top output, is the sum of its hops:
   no bypass), 0 for depth 0 (a wire).
 * through a multi-proc block: its members' hops and its in-package
   FIFOs, the same way (:class:`GroupTiming`).
+* through a structural child: the paths of its own shell, from the port the
+  value enters by.
+* through a block nothing schedules (a wrapper, an extern or native block):
+  its ``iface.latency`` facts (:mod:`fw.hdl.facts`), fixed or a min..max
+  range, else its signature's ``latency``. A declared fact no measurement has
+  confirmed makes the path *unverified*.
 
 This is the first-value latency with every input valid and every output ready;
 backpressure only adds to it. The XLS signature's ``pipeline.latency`` is not
@@ -138,12 +144,32 @@ def group_timing(module: str, entry: dict, opt_ir: str, schedule: str,
     return GroupTiming(module, entry, members)
 
 
+_SAME = object()
+
+
 @dc.dataclass
 class Hop:
     what: str           # "block" | "channel"
     name: str           # instance or channel name
     via: str            # "in->out" for a block, "depth=N" for a channel
-    cycles: int
+    cycles: int         # the fewest cycles
+    max: Optional[int] = _SAME      # the most; None: unbounded (default: = cycles)
+    #: Where the number comes from: schedule, structural, declared, signature.
+    source: str = "schedule"
+    unverified: bool = False
+
+    def __post_init__(self):
+        if self.max is _SAME:
+            self.max = self.cycles
+
+
+@dc.dataclass
+class _Cost:
+    """A block hop's value while paths are walked (see :func:`report`)."""
+    lo: int
+    hi: Optional[int]
+    source: str
+    unverified: bool = False
 
 
 @dc.dataclass
@@ -154,7 +180,23 @@ class PathLatency:
 
     @property
     def cycles(self) -> int:
+        """The fewest cycles (the latency, when every hop is fixed)."""
         return sum(h.cycles for h in self.hops)
+
+    @property
+    def max(self) -> Optional[int]:
+        """The most cycles; None when a hop is unbounded."""
+        his = [h.max for h in self.hops]
+        return None if None in his else sum(his)
+
+    @property
+    def unverified(self) -> bool:
+        return any(h.unverified for h in self.hops)
+
+    @property
+    def range(self) -> str:
+        lo, hi = self.cycles, self.max
+        return str(lo) if hi == lo else f"{lo}..{'' if hi is None else hi}"
 
     @property
     def name(self) -> str:
@@ -172,30 +214,41 @@ class Report:
 
     def to_json(self) -> dict:
         return {"format": "fw-hdl.latency", "version": 1, "top": self.top,
-                "paths": [{"src": p.src, "dst": p.dst, "cycles": p.cycles,
+                "paths": [{"src": p.src, "dst": p.dst, "cycles": p.cycles, "min": p.cycles,
+                           "max": p.max, "unverified": p.unverified,
                            "hops": [dc.asdict(h) for h in p.hops]} for p in self.paths],
                 "notes": self.notes}
 
     def markdown(self) -> str:
         L = [f"# Latency: {self.top}", "",
-             "First-value latency in cycles, every input valid and every output ready.", "",
+             "First-value latency in cycles, every input valid and every output ready.",
+             "A range is min..max (no max: unbounded); * marks a declared fact no",
+             "measurement has confirmed.", "",
              "| Path | Cycles | Hops |", "|---|---|---|"]
         for p in self.paths:
-            hops = " + ".join(f"{h.name}[{h.via}]={h.cycles}" for h in p.hops)
-            L.append(f"| `{p.name}` | {p.cycles} | {hops} |")
+            hops = " + ".join(f"{h.name}[{h.via}]={_hop_cycles(h)}" for h in p.hops)
+            L.append(f"| `{p.name}` | {p.range}{' *' if p.unverified else ''} | {hops} |")
         if self.notes:
             L += ["", "Notes:"] + [f"- {n}" for n in self.notes]
         return "\n".join(L) + "\n"
 
 
-def walk(shell, block_hops, notes: Optional[List[str]] = None):
+def _hop_cycles(h: Hop) -> str:
+    r = str(h.cycles) if h.max == h.cycles else f"{h.cycles}..{'' if h.max is None else h.max}"
+    if h.source not in ("schedule", "structural") and h.what == "block":
+        r += f" ({h.source}{', unverified' if h.unverified else ''})"
+    return r
+
+
+def walk(shell, block_hops, notes: Optional[List[str]] = None, start: Optional[str] = None):
     """Every path from a top input to a top output through *shell* (the
     partition: ports, channels, children, binds), as ``(src, dst, hops)``.
 
     ``block_hops(child, in_port)`` gives ``[(out_port, value)]``: where a value
     entering *child* on *in_port* can leave, and at what cost (an int, or
     anything the caller adds up). A channel hop's value is 1 for a FIFO and 0
-    for a wire. A cycle ends that path (noted in *notes*)."""
+    for a wire. A cycle ends that path (noted in *notes*). With *start*, only
+    the paths from that top input."""
     notes = [] if notes is None else notes
     depth = {c["name"]: int(c["depth"]) for c in shell.channels}
     consumer: Dict[Tuple[str, Optional[str]], Tuple[str, str]] = {}
@@ -230,7 +283,7 @@ def walk(shell, block_hops, notes: Optional[List[str]] = None):
                h + [Hop("channel", name, f"depth={depth[name]}", 1 if depth[name] else 0)],
                seen | {(nxt[0], name)})
 
-    for p in tops_in:
+    for p in ([start] if start is not None else tops_in):
         c = consumer.get((p, None))
         if c is not None:
             go(p, c[0], c[1], [], frozenset())
@@ -240,19 +293,53 @@ def walk(shell, block_hops, notes: Optional[List[str]] = None):
 def report(shell, blocks: Dict[str, "BlockTiming | GroupTiming"]) -> Report:
     """The latency of every top-input to top-output path. *blocks* is keyed
     by module name."""
-    child_mod = {c["name"]: c["module"] for c in shell.children}
     rep = Report(getattr(shell, "module", shell.top), [])
-
-    def hops(child, port):
-        bt = blocks.get(child_mod[child])
-        if bt is None:
-            rep.notes.append(f"{child}: no timing for module {child_mod[child]}")
-            return []
-        return [(o, bt.latency(port, o)) for o in bt.outputs if bt.latency(port, o) is not None]
-
-    for src, dst, h in walk(shell, hops, rep.notes):
+    for src, dst, h in _paths(shell, blocks, rep.notes, None, ""):
         rep.paths.append(PathLatency(src, dst, h))
     return rep
+
+
+def _paths(shell, blocks, notes: List[str], start: Optional[str], prefix: str):
+    """``(src, dst, [Hop])`` through *shell*, descending into structural
+    children; *prefix* names the shell's instance in notes."""
+    child = {c["name"]: c for c in shell.children}
+
+    def hops(name, port):
+        c = child[name]
+        if c.get("engine") == "structural":
+            out = []
+            for _, dst, h in _paths(shell.nested(c), blocks, notes, port, f"{prefix}{name}."):
+                p = PathLatency(port, dst, h)
+                out.append((dst, _Cost(p.cycles, p.max, "structural", p.unverified)))
+            return out
+        lat = [f for f in c.get("facts", []) if f["kind"] == "iface.latency"
+               and f["value"]["src"] == port]
+        if lat:
+            out = []
+            for f in lat:
+                v = f["value"]
+                lo, hi = (v["fixed"], v["fixed"]) if v.get("fixed") is not None \
+                    else (v["min"], v.get("max"))
+                out.append((v["dst"], _Cost(lo, hi, f.get("provenance", "declared"),
+                                            bool(f.get("unverified")))))
+            return out
+        bt = blocks.get(c["module"])
+        if bt is not None:
+            return [(o, bt.latency(port, o)) for o in bt.outputs
+                    if bt.latency(port, o) is not None]
+        sig = (c.get("extern") or {}).get("signature_json") or {}
+        if sig.get("latency") is not None:
+            return [(ch["name"], _Cost(sig["latency"], sig["latency"], "signature"))
+                    for ch in sig.get("channels", []) if ch["direction"] == "out"]
+        notes.append(f"{prefix}{name}: no timing for module {c['module']}")
+        return []
+
+    out = []
+    for src, dst, h in walk(shell, hops, notes, start):
+        out.append((src, dst, [Hop(x.what, x.name, x.via, x.cycles.lo, x.cycles.hi,
+                                   x.cycles.source, x.cycles.unverified)
+                               if isinstance(x.cycles, _Cost) else x for x in h]))
+    return out
 
 
 def load_blocks(files: Sequence[Tuple[str, str, str, Optional[str]]],
