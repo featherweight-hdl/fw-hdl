@@ -227,3 +227,6 @@ packages/
 obj_dir/
 rundir/
 
+
+# RTL pattern survey corpus (docs/research/rtl-pattern-survey-plan.md §3)
+/corpus/

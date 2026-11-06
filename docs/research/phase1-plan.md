@@ -1,6 +1,6 @@
 # Phase 1 ("It's just a module"): implementation, test and documentation plan
 
-*Status: **draft for review** (2026-11-02). The open decisions are in §10.*
+*Status: **accepted 2026-11-02**, all §10 recommendations (D1–D5). M1 done; M2 done except P2–P4 (2026-11-03). Next: P2–P4, then M3. The schedulable-library plan's W2 runs alongside (it needed P1, K2 and R3).*
 
 This is Phase 1 of [adoption-path-plan.md](adoption-path-plan.md), implementing the design
 in [shell-generation.md](shell-generation.md). It builds on Phase 0
@@ -215,7 +215,7 @@ L1–L3 don't depend on the rest and can run alongside M2–M4.
 **Effort:** the roadmap's sum is about 5–7 weeks. P1/P2 and S2 (function blocks) add about
 a week that the roadmap didn't count.
 
-## 10. Decisions for review
+## 10. Decisions (accepted 2026-11-02: the recommended option for D1–D5)
 
 - **D1. Signature v3 for function blocks** (P1).
   - **Recommended:** extend `BlockSignature` (`kind`, `data_ports`, `valid` flow control).
@@ -240,11 +240,14 @@ a week that the roadmap didn't count.
 
 | Step | State | Note |
 |---|---|---|
-| Plan | draft | Awaiting review of §10 |
-| E1–E3 | — | |
-| K1–K6 | — | |
-| R1–R6 | — | |
-| P1–P4 | — | |
+| Plan | accepted | D1–D5 as recommended (2026-11-02) |
+| E1–E3 | done | E1: `wpk/phase1` in fw-hdl, ir-core, synth, be-sv, be-xls. E2: `build/phase1-baseline/`. E3: zuspec-synth already depends on ir-core; be-sv's dependency on synth waits for S1 |
+| K1 | done | Verilator 5.052 (`tests/rv_proto/k1/k1_typeparam.sv`, logs `build/phase1-k1/`). Bug B (type-param instance driven from outside) is **fixed**: 8-bit and struct `T` pass. Bug A **remains** when the module port is spelled `k1_rv_if #(T) port` (V3Param.cpp:524 "Couldn't find pin in clone list"), but a **bare** port `k1_rv_if port` (parameters inferred from the connection) passes. So K3 keeps `type T`, with the rule "interface module ports are declared without parameters"; the D3 fallback (`int W`) is not needed unless K2 hits something the small test missed |
+| K2–K4, K6 | done | `src/std/rv/` (`fw_rv_pkg`: APIs, bridges, `fw_put_to_rv_bridge`, `fw_get_from_rv_bridge`; `fw_rv_{initiator,target,monitor}_xtor{_if,_core,}`), filesets `hdl.rv-src`, `hdl.rv-cores`. `tests/rv_proto/test_rv_kit.py` (8): round trip at 32 bits, 8 bits and a struct with backpressure, the adapters under backpressure, the dfm fragment, yosys elaboration of the cores, and an SBY BMC of the cores back to back (`tests/rv_proto/formal`). Two findings beyond K1: (1) Verilator 5.052 rejects a **queue** in a parameterized interface reached through a virtual handle, so the interfaces use ring buffers; (2) yosys's SV front end has **no `type` parameters**, so the cores (only) take `int W` and the modules pass `$bits(T)`: D3's fallback, limited to the synthesizable part. The old harness had no FORMAL define and so proved nothing; the new test checks the property cells reach the model |
+| K5 | done | `src/std/rv/fw_rv_kit.yaml`, `src/std/fw_put_kit.yaml`; `fw.hdl.kits` (`registry()`, pyslang `sv_port_reader`, `check_kits`); `tests/python/unit/test_kits.py` (7) |
+| R1–R6 | done | `packages/zuspec-synth/src/zuspec/synth/kits/` (`zuspec.kit` v1, `zuspec.shell-map` v1 with schemas; `KitRegistry.resolve` in §4.3 order, `by_bridge`, R4 messages, `pin_names` for `fw`/`xls`, `check_ports`); `tests/kits/test_kit_registry.py` (19); doc `docs/kits.rst`. Adapters carry `to.endpoint`, since the get adapter maps a port onto the target (an export) |
+| P1 | done | ir-core `BlockSignature.kind`, `data_ports`, `valid_ports`, `flow_control: valid`; v3, reads v1–v2; `tests/test_signature_file.py`, `test_schemas.py` (176 pass) |
+| P2–P4 | — | |
 | G1–G4 | — | |
 | S1–S5 | — | |
 | L1–L3 | — | |
