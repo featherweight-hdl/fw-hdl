@@ -6,6 +6,24 @@ Storage is most of a design's area. fw-hdl keeps **what** a design stores apart 
 - the knob file chooses what holds it, per instance;
 - the source, the class model and the contracts are the same for every binding.
 
+This page is about **binding storage between and beside blocks**: channels, and memories
+that a step class holds as members. A binding is a knob, it keeps the storage's timing
+cycle for cycle, and so it changes area, not behaviour.
+
+It relates to the storage model of {doc}`timing` (Storage) as follows:
+- **Arrays inside a process** are the other half. There, the engine chooses a realization
+  for each array field, from the target's list, and `(* fw_storage="..." *)` in the
+  source is a requirement that a knob may override per build. That model is read by
+  the front end and not yet acted on.
+- **Port capacity.** A binding here has a fixed capacity: one push and one pop per
+  cycle for a FIFO, one access per cycle for `fw_sp_mem`. The source is written to it
+  (a step class makes at most one access per cycle). In the storage model an engine
+  spreads the accesses of untimed code over cycles to fit the capacity instead.
+- **XLS-specific parts.** `xls_fifo`, the `island.groups` column, the
+  `fw_xls_fifo_wrapper` and the `register_push_outputs` setting below belong to the XLS
+  engine (a group is one XLS package). Bindings between blocks (Integrate) and `fw_sp_mem`
+  don't depend on the engine.
+
 ## Binding a channel
 
 The knob `storage:` maps an instance path below the top to a binding. `default`

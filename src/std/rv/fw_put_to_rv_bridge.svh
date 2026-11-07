@@ -3,6 +3,9 @@
 // unchanged: put() queues the beat on the fw_rv_initiator_xtor_if, blocking
 // while its FIFO is full, so no beat is lost when ready is low.
 // `fw_root_bind_port(src.out, xtor.u_if, fw_put_to_rv_bridge #(T)).
+// The put API over ready/valid tolerates any delay (the binding declares it;
+// fw_put_if itself is also bound to no-handshake outputs).
+(* fw_latency_insensitive *)
 class fw_put_to_rv_bridge #(type T) extends fw_export #(fw_put_if #(T))
         implements fw_put_if #(T);
     virtual fw_rv_initiator_xtor_if #(T) vif;

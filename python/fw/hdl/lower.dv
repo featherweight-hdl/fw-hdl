@@ -32,11 +32,72 @@ package:
         doc: State encoding (binary or onehot)
         type: str
         value: binary
+      schedule:
+        doc: |
+          The engine (zuspec.synth.proc.sched) that places untimed code in
+          cycles. as-written (the default): the code runs as written, one
+          cycle per edge its timed calls take, with no overlap.
+          random:<seed> (or random:seed=<s>,n=<n>,max=<k>): as written, plus
+          edges at about n (default 8) random legal points of untimed code;
+          a soundness harness for the rules, the front end and the lowering.
+          delay (or delay:period=<ns>,model=<m>,wire=,margin=,rounds=<n>,split=0):
+          as written, plus edges where the logic would break the clock period
+          by the delay model; model and period default to delay_model and
+          clock_period. rounds > 1 checks the lowered netlist with the timing
+          analysis and tightens the budget (at most n lowerings). Its report
+          goes into lower_report.txt (delay: lines).
+        type: str
+        value: as-written
       options:
         doc: |
           Other lowering options, comma-separated key=value
-          (zuspec.synth.proc.lower.LowerOptions fields, e.g. share_joins=0)
+          (zuspec.synth.proc.lower.LowerOptions fields, e.g. share_joins=0;
+          keep_loops=0 has the front end unroll loops itself)
+        type: str
+        value: ""
+      emit_sched:
+        doc: |
+          Also write the schedule as source: <top>_sched_pkg.sv, a package
+          with, per process of class code, <cls>_sched extends <cls> (an edge
+          is tick(1), a call the source made is that call, a fork a fork).
+          Output as filetype fwSchedSource; SchedSource makes it simulation
+          source.
+        type: bool
+        value: false
+      delay_model:
+        doc: |
+          Run the timing analysis (zuspec.synth.proc.timing) with this delay
+          model: a built-in name (unit) or a JSON file. Empty: no analysis.
+          Writes timing_report.txt and timing.json; a summary goes into
+          lower_report.txt.
+        type: str
+        value: ""
+      clock_period:
+        doc: Clock period in ns for the timing analysis's slack (0 = none)
+        type: float
+        value: 0
+      delay_wire:
+        doc: Routing delay per hop in ps, overriding the delay model's (0 = the model's)
+        type: float
+        value: 0
+    shell: pytask
+    run: fw.hdl.dfm_tasks.Lower
+
+  - name: SchedSource
+    scope: export
+    desc: The schedule as source (Lower emit_sched), as SystemVerilog to simulate
+    doc: |
+      Passes the Lower task's fwSchedSource package on as systemVerilogSource,
+      with ``define`` set, so a design top can pick the emitted class in place
+      of the source class (``ifdef``). Order it after the source class's
+      package and before the top.
+    passthrough: none
+    consumes:
+    - filetype: fwSchedSource
+    with:
+      define:
+        doc: A define (NAME or NAME=VALUE) the output carries
         type: str
         value: ""
     shell: pytask
-    run: fw.hdl.dfm_tasks.Lower
+    run: fw.hdl.dfm_tasks.SchedSource

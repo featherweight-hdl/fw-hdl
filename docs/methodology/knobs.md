@@ -10,6 +10,23 @@ The source says *what* a design does. A **knob file** says how it is built:
 Changing a knob file never changes the source. Every build is checked against the
 same function and the same contracts.
 
+## Goals and knobs
+
+Some things can be said in two places. They differ in who says them:
+
+| | Says | Where | Example |
+|---|---|---|---|
+| a **goal** or requirement | what the design must achieve, for every build | an attribute in the source ({doc}`timing`, Directive summary) | `(* fw_ii=1 *)` on a loop, `(* fw_storage="bram" *)` on an array |
+| a **knob** | how one build is made | the knob file | the stages a block is scheduled into, a channel's binding |
+
+An attribute is part of the design: every build must meet it, and an engine that can't
+reports why (a recurrence path, say) rather than missing it silently. A knob is a
+per-build choice. It may override an attribute that names a realization (a knob can
+put an `fw_storage="bram"` array in flops for a build that has no block RAM), but it
+doesn't relax a goal. Today the knob file drives the XLS engine's schedule (stages,
+registered channels) and the storage bindings; the source goals are read by the front
+end and not yet acted on by an engine.
+
 ## The flow
 
 ```

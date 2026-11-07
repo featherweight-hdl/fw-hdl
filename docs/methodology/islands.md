@@ -89,6 +89,15 @@ a level has no order against streams (see §Channel kinds). In tests,
 `rtl_testbench(..., after={"in": "cfg"})` does that.
 (`tests/xls/compose/regs_pkg.sv`, `tests/xls/test_native.py`.)
 
+**One hardware writer.** Hardware reads a register through its level. The rule for
+writes ({doc}`timing`, Shared state) is that one hardware process writes a given field,
+and a second writer is an error unless the field carries an arbitration directive such
+as `(* fw_arbitrate="priority" *)`. A register-block child has no hardware writers yet,
+so Partition rejects any; when it gets them, they follow that rule. Software writes over
+`wr` are governed by each field's `sw_write` access. The same rule holds for the fields of
+a class model: the native lowering rejects two of the model's processes writing the same
+bits in one cycle unless the field has `fw_arbitrate`.
+
 ## Multi-proc islands
 
 By default each XLS child is its own block. The knob file can instead make several

@@ -190,6 +190,15 @@ class layer of the kit package (`.svh`), alongside the bridges.
    is independently parameterized with `#(type T)`.
 6. Gotcha: `checker` is a reserved SystemVerilog keyword (checker/endchecker) —
    don't name a class `checker` (the example uses `sink`).
+7. **Declare latency-insensitivity.** Components are untimed by default, and may
+   call a kit's API only if it is declared `(* fw_latency_insensitive *)`
+   (`fw-hdl/docs/methodology/timing.md`). Put it on the API interface class when
+   every binding tolerates any delay before and between calls (a handshake
+   protocol: ready/valid, Wishbone with ack). Put it on the bridge class instead
+   when only some bindings do, as with `fw_put_if` over ready/valid. A protocol
+   with no handshake, whose pins are sampled every cycle, is not
+   latency-insensitive; its users must be `(* fw_timed *)`. Bridges (classes
+   holding a virtual interface) and transactor interfaces are timed code already.
 
 ## Layout & build
 ```

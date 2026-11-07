@@ -78,6 +78,8 @@ endclass
 // put counts the values waiting at the start of its edge, as the RTL FIFO
 // does. So a producer that puts every cycle needs DEPTH >= 2, and a wire
 // (DEPTH == 0) cannot join two steps.
+// Timed library code (get waits on its queue); its calls tolerate any delay.
+(* fw_timed, fw_latency_insensitive *)
 class fw_valid_channel #(type T = int, int DEPTH = 1) extends fw_component;
     fw_valid_channel_put_ex #(T, DEPTH) put_ex;
     fw_valid_channel_get_ex #(T, DEPTH) get_ex;

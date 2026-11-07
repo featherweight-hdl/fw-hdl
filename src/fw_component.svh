@@ -151,6 +151,9 @@ class fw_component implements fw_elaboratable;
     endfunction
 
     // Advance this component's clock domain by n cycles (run phase only).
+    // Timed; from untimed code it means at least n cycles
+    // (docs/methodology/timing.md).
+    (* fw_timed, fw_latency_insensitive *)
     task tick(int n = 1);
         clock.get_if().tick(n);
     endtask
@@ -324,6 +327,10 @@ class fw_component implements fw_elaboratable;
     // registered directly here, then recurse into child components so their
     // runnables are launched too. (Ports/exports are leaves -- they never hold
     // child components -- so the recursion only follows fw_component entries.)
+    // Timed library code: it starts the processes, and the step() driver it
+    // forks is cycle-exact by construction (one step per rising edge). A run()
+    // it starts is a process of its own and keeps its own timing context.
+    (* fw_timed *)
     virtual task do_run();
         foreach (m_run[i]) begin
             automatic fw_runnable r   = m_run[i];

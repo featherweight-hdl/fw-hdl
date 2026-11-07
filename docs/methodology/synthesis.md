@@ -4,6 +4,16 @@ The synthesis flow reads the SV source with slang, maps the static subset to zus
 IR, and lowers that IR to XLS IR. From there XLS optimizes, schedules and generates
 Verilog, and Yosys maps that Verilog to gates. You write no DSLX.
 
+```{note}
+This page is the **XLS engine**: one synthesis engine among several, reached only
+through its adapter. {doc}`timing` defines what the source means and what any engine may
+do with it; the rules here are this engine's refinement of those. Where they are
+stricter (all effects of an activation in program order, constant-bound loops
+unrolled, calls to other tasks rejected), that is a property of this engine, not of the
+language. The native flow (`fw.hdl.lower`, {doc}`flows`) runs the engines of
+`zuspec.synth.proc.sched` and keeps calls and loops.
+```
+
 ```
 <name>_pkg.sv ─► fw.hdl.xls.IR ─► synth.xls.Codegen ─► synth.yosys.Synth
                  (SV → zuspec IR    (opt_main, then        (generic, ice40,
@@ -39,9 +49,9 @@ proc:
 | `out.t.put(v)` | a blocking send |
 | a `get`/`put` under `if` | a predicated receive or send |
 | `in.t.try_get(x)` on an `fw_get_nb_if` port | a non-blocking receive |
-| statement order | the token chain: effects happen in program order, except that effects on exclusive paths are not ordered against each other |
+| statement order | the token chain: effects happen in program order, except that effects on exclusive paths are not ordered against each other. This is stricter than the language's rule (effects on one port in order, effects on different ports ordered only by data; {doc}`timing`), and so a legal refinement of it |
 | several `get`s or `put`s on one port, under guards | one operation per activation; see below |
-| a `get`/`put` in a constant-bound `for` or `repeat` | unrolled |
+| a `get`/`put` in a constant-bound `for` or `repeat` | unrolled (by this engine; loops otherwise reach an engine as loops, {doc}`timing`) |
 | state used (read and written) only under a guard | a predicated `state_read` and `next_value` |
 
 The run-length encoder of the {doc}`../examples/xls/rle` example, in full:
@@ -104,7 +114,9 @@ The flow rejects, with a located diagnostic, what it cannot lower. That includes
 - two operations on one port where one is unguarded;
 - two whose guards can both hold, with another effect between them;
 - two operations on a level;
-- `#delay`, `@` and calls to other tasks.
+- `#delay`, `@` and calls to other tasks (in untimed code, edges are errors in any
+  engine; calls to latency-insensitive timed tasks are allowed by the language,
+  {doc}`timing`, but this engine doesn't take them).
 
 ## Composition
 
@@ -164,6 +176,6 @@ end matches are entries too.
 | `+ - *` | wrap at SV's context-determined width |
 | `/ %` | only by a non-zero constant, or under a `d != 0` guard |
 | `>>`, `>>>` | logical; arithmetic on a signed left operand |
-| `for`, `repeat` with constant bounds | unrolled |
+| `for`, `repeat` with constant bounds | unrolled by the XLS engine; kept as loops for the native engines ({doc}`timing`, Loops and goals) |
 | `case` | first match wins; `casez`/`casex` are rejected |
 | immediate `assert` | an XLS assertion, with the message |

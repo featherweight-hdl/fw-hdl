@@ -122,6 +122,8 @@ endclass
 // A step may not use a DEPTH 0 channel. Its RTL is a wire, which moves a
 // value in the cycle it is put, and steps at one edge do not see each
 // other's puts; the model stops with an error, and so does partition.
+// Timed library code (it waits on its queue); its put/get tolerate any delay.
+(* fw_timed, fw_latency_insensitive *)
 class fw_channel #(type T = int, int DEPTH = 1) extends fw_component;
     fw_channel_put_ex #(T, DEPTH) put_ex;
     fw_channel_put_step_ex #(T, DEPTH) put_step_ex;

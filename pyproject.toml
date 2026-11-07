@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "fw-hdl"
 version = "0.0.1"
 description = "Featherweight-HDL: SystemVerilog -> Zuspec IR -> synthesizable RTL"
-readme = "README.md"
+readme = "python/README.md"
 license = {text = "Apache-2.0"}
 authors = [
     {name = "Matthew Ballance", email = "matt.ballance@gmail.com"}
@@ -52,14 +52,17 @@ fw-hdl = "fw.hdl.dfm_ext"
 [project.entry-points."zuspec.lowering"]
 fw-hdl = "fw.hdl.lib.registry:register"
 
+# The package sources are under python/. The project file sits at the repo root
+# so that ivpm finds it and installs the dfm plugin into the workspace venv.
 [tool.setuptools.packages.find]
-where = ["."]
+where = ["python"]
 include = ["fw*"]
 
 [tool.setuptools.package-data]
 "fw.hdl" = ["*.dv", "schema/*.json"]
 
 [tool.pytest.ini_options]
-testpaths = ["../tests/python"]
+testpaths = ["tests/python"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
+markers = ["verilator: builds and runs a Verilator simulation"]

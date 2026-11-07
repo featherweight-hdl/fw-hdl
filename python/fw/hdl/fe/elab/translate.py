@@ -34,6 +34,7 @@ from pyslang import ast
 from zuspec.synth.proc import ir as P
 from zuspec.synth.proc import term as T
 
+from . import attrs as A
 from .entry import ElabResult
 from .interp import ElabError, Frame, Thread
 from .values import (Event, Iface, Obj, Opaque, const_to_py, default_value, mask, skey,
@@ -67,6 +68,29 @@ class _Restart(Exception):
     """A field taken as static was written: translate again."""
 
 
+class ClassSrc(NamedTuple):
+    """Where a process's class is declared, for emitting a class that extends
+    it (proc.emit_src): its package, and its constructor's arguments as
+    (SV type, name)."""
+    package: str
+    ctor: List[Tuple[str, str]]
+
+
+def _class_src(cls) -> ClassSrc:
+    sc = getattr(cls, "genericClass", None) or cls
+    path = sc.lexicalPath or ""                  # 'pkg::cls'
+    pkg = path.split("::")[0] if "::" in path else ""
+    ctor: List[Tuple[str, str]] = []
+    new = cls.find("new")
+    if new is not None:
+        ctor = [(str(a.type), a.name) for a in new.arguments]
+    return ClassSrc(pkg, ctor)
+
+
+_DIRS = {ast.ArgumentDirection.In: "in", ast.ArgumentDirection.Out: "out",
+         ast.ArgumentDirection.InOut: "inout", ast.ArgumentDirection.Ref: "ref"}
+
+
 class Act:
     """An inlined activation: one subroutine (or a loop frame) in a process."""
 
@@ -78,11 +102,15 @@ class Act:
         self.name = name            # for var names
         self.locals: Dict[Any, Any] = {}
         self.ret = T.ZERO           # returned (static 0/1 or a flag var term)
+        self.timed = True           # timing context (docs/methodology/timing.md)
 
 
 class Translator:
-    def __init__(self, elab: ElabResult):
+    def __init__(self, elab: ElabResult, keep_loops: bool = False):
         self.elab = elab
+        # keep static non-blocking `for` loops as loops (P.Loop.trip) instead of
+        # unrolling them (docs/methodology/timing.md, loops and goals)
+        self.keep_loops = keep_loops
         self.it = elab.interp
         self.dyn_fields: Set[Tuple[int, Any]] = set()     # (oid, prop)
         self.dyn_ifvars: Set[Tuple[str, str]] = set()     # (iface path, name)
@@ -97,6 +125,7 @@ class Translator:
             if kind == "init":
                 self.comb_vars.add((f.path, node.name))
         self._in_comb = False
+        self._attr_cache: Dict[tuple, Dict[str, object]] = {}
         self._loc = ""                                   # see pe_stmt
         self._loc_cache: Dict[tuple, str] = {}
         # what RTL modules' clocked blocks and tasks write is state: known up
@@ -130,6 +159,8 @@ class Translator:
     def _translate_once(self) -> P.Design:
         self.vars: Dict[tuple, P.Var] = {}
         self.var_list: List[P.Var] = []
+        self._by_name: Dict[str, P.Var] = {}
+        self.class_src: Dict[str, ClassSrc] = {}
         self._names: Set[str] = set()
         self._tmp = 0
         procs: List[P.Proc] = []
@@ -187,8 +218,15 @@ class Translator:
         if not self._found_initial:
             raise TranslateError(f"{self._proc_name}: the blocking point was not found "
                                  "while translating its loop")
+        obj = task = ""
+        if fr.this is not None and fr.sub is not None:
+            cls = A.class_of(fr.sub)
+            obj = self._obj_names.get(fr.this.oid, "")
+            task = f"{cls.name}.{fr.sub.name}" if cls is not None else ""
+            if cls is not None:
+                self.class_src[self._proc_name] = _class_src(cls)
         return P.Proc(name=self._proc_name, body=out, priority=self._priority(th, fr),
-                      origin=th.root.label)
+                      origin=th.root.label, obj=obj, task=task, timed=act.timed)
 
     def _comb(self, f: Iface, kind: str, node, label: str) -> P.Proc:
         """Combinational code of an RTL module -> a combinational process."""
@@ -234,6 +272,7 @@ class Translator:
     def _act_from_frame(self, fr: Frame, frames, fi: int) -> Act:
         path = tuple(skey(f.call) for f in frames[1:fi + 1] if f.call is not None)
         act = Act(fr.sub, fr.this, fr.iface, (), self._fname(fr))
+        act.timed = self._timed_ctx(fr.sub, None)
         f: Optional[Frame] = fr
         while f is not None:
             for sym, v in f.locals.items():
@@ -341,7 +380,8 @@ class Translator:
             self.pe_list(list(s.list), act)
         elif k == SK.Block:
             if s.blockKind != ast.StatementBlockKind.Sequential:
-                raise TranslateError("fork inside a process is not supported (anti-pattern A5)")
+                self._fork(s, act)
+                return
             self.pe_stmt(s.body, act)
         elif k == SK.VariableDeclaration:
             sym = s.symbol
@@ -385,9 +425,11 @@ class Translator:
             fl = self._innermost_flags(act)
             act.locals[fl["cont"]] = T.ONE
         elif k == SK.Timed:
+            self._untimed_edge(s, act, "a clock edge or delay")
             self._timed(s, act)
             self.pe_stmt(s.stmt, act)
         elif k == SK.Wait:
+            self._untimed_edge(s, act, "wait()")
             c = self._bool(self.ev(s.cond, act))
             if not (c.is_const and c.val):
                 self._await(c, s, act)
@@ -422,7 +464,12 @@ class Translator:
         self._with_out(e_out, else_fn)
         after_e = self._snapshot(acts)
         def_e = set(self._defined)
+        nt, ne = len(t_out), len(e_out)
         self._merge(acts, c, after_t, after_e, t_out, e_out)
+        # the merge's writes define their vars on that side too: a default
+        # after one would overwrite the value it carries out of the branch
+        def_t |= {s.var for s in t_out[nt:] if isinstance(s, P.Assign)}
+        def_e |= {s.var for s in e_out[ne:] if isinstance(s, P.Assign)}
         # definite assignment: a private var first written on one side gets a
         # default on the other, so its old value is never read (no register)
         for v in sorted(def_t - def_e - def0, key=lambda v: v.name):
@@ -447,7 +494,9 @@ class Translator:
     def _merge(self, acts, c, st, se, t_out, e_out) -> None:
         for a, (lt, rt), (le, re) in zip(acts, st, se):
             merged: Dict[Any, Any] = {}
-            for key in set(lt) | set(le):
+            # in insertion order, not set order: the order values are
+            # materialized in is the order of the emitted assignments
+            for key in list(lt) + [k for k in le if k not in lt]:
                 vt = lt.get(key, None)
                 ve = le.get(key, None)
                 if key in self._nba_old:
@@ -588,6 +637,8 @@ class Translator:
         if self._may_block(s.body):
             self._residual_loop(s, act, forever=False)
             return
+        if self.keep_loops and k == SK.ForLoop and self._kept_loop(s, act):
+            return
         fl = self._push_flags(act)
         try:
             first = True
@@ -613,6 +664,65 @@ class Translator:
             raise TranslateError("loop did not terminate during unrolling")
         finally:
             self._pop_flags(act, fl)
+
+    def _static_trip(self, s, act: Act) -> Optional[int]:
+        """The trip count of a `for` loop whose control is static: the condition
+        and steps depend only on the loop variables, which the body doesn't
+        write. None otherwise. Evaluated on a copy of the locals."""
+        lvars = list(s.loopVars or [])
+        if not lvars or s.initializers or s.stopExpr is None:
+            return None
+        if self._assigned_locals(s.body, act) & set(lvars):
+            return None
+        saved = dict(act.locals)
+        try:
+            n = 0
+            while n <= self._UNROLL_LIMIT:
+                c = self._bool(self.ev(s.stopExpr, act))
+                if not c.is_const:
+                    return None
+                if not c.val:
+                    return n
+                n += 1
+                for st in s.steps:
+                    self.ev(st, act)
+            return None
+        except TranslateError:
+            return None
+        finally:
+            act.locals = saved
+
+    def _kept_loop(self, s, act: Act) -> bool:
+        """Keep a static `for` loop as a loop: translate its body once with the
+        loop variables symbolic (as a residual loop) and record the trip count.
+        False (nothing emitted, locals as they were) when the trip count isn't
+        static, or when the body needs the index as a constant (a translate
+        error with it symbolic); the caller unrolls it then."""
+        n = self._static_trip(s, act)
+        if n is None:
+            return False
+        out = self._out
+        mark = len(out)
+        acts = self._acts_live()
+        snap = self._snapshot(acts)
+        defined = set(self._defined)
+        try:
+            self._residual_loop(s, act, forever=False)
+        except TranslateError:
+            del out[mark:]
+            self._restore(acts, snap)
+            self._defined = defined
+            return False
+        loop = next(x for x in reversed(out[mark:]) if isinstance(x, P.Loop))
+        if _unbounded_comb_loop(loop.body):
+            # an inner loop's bound depends on this loop's index: only
+            # unrolling this one makes it static
+            del out[mark:]
+            self._restore(acts, snap)
+            self._defined = defined
+            return False
+        loop.trip = n
+        return True
 
     def _may_block(self, s) -> bool:
         """Syntactically: can this statement wait (an event control, a wait, or a
@@ -699,7 +809,7 @@ class Translator:
         if k == SK.ForLoop:
             for st in s.steps:
                 assigned |= self._assigned_in_expr(st, act)
-        for sym in assigned:
+        for sym in sorted(assigned, key=_sym_order):
             cur = act.locals.get(sym)
             if cur is None or isinstance(cur, T.Term):
                 w = width_of(sym.type)
@@ -745,7 +855,7 @@ class Translator:
                     post = T.and_(post, T.not_(stop))
                 else:
                     pre = T.and_(pre if pre is not None else T.ONE, T.not_(stop))
-            self.emit(P.Loop(body=body, pre=pre, post=post))
+            self.emit(P.Loop(body=body, pre=pre, post=post, attrs=dict(self.attrs(s))))
             if not brk.is_const:
                 v = self._local_var(act, fl["brk"], 1)
                 self.emit(P.Assign(v, T.ZERO))
@@ -832,6 +942,86 @@ class Translator:
             sym.lifetime == ast.VariableLifetime.Automatic
 
     # ----------------------------------------------------------------- await
+    def _fork(self, s, act: Act) -> None:
+        """fork ... join in timed code: a Par, each branch translated from the
+        same state (docs/methodology/timing.md, timed code)."""
+        where = self._src_loc(s)
+        if not act.timed:
+            raise TranslateError(
+                f"{where}: fork in untimed code ({self._task_name(act)}); an engine finds "
+                "the concurrency in untimed code. fork/join belongs to (* fw_timed *) code")
+        bk = s.blockKind
+        if bk == ast.StatementBlockKind.JoinNone:
+            raise TranslateError(f"{where}: fork/join_none inside a process "
+                                 f"({self._task_name(act)}); processes are started by the "
+                                 "component (add_runnable), not forked")
+        if bk == ast.StatementBlockKind.JoinAny:
+            raise TranslateError(f"{where}: fork/join_any is not supported yet (only join)")
+        if (act.path, skey(s)) == self._target:
+            raise TranslateError(f"{where}: {self._proc_name}: the process first waits inside "
+                                 "a fork; put a wait (a port call or tick) before the fork")
+        body = s.body
+        items = list(body.list) if body.kind == SK.List else [body]
+        branches = []
+        for st in items:
+            if st.kind == SK.VariableDeclaration:       # declarations run first
+                self.pe_stmt(st, act)
+            else:
+                branches.append(st)
+        acts = self._acts_live()
+        snap = self._snapshot(acts)
+        def0 = set(self._defined)
+        outs: List[List[P.Stmt]] = []
+        ends = []
+        defs: Set[Any] = set()
+        for st in branches:
+            self._restore(acts, snap)
+            self._defined = set(def0)
+            lst: List[P.Stmt] = []
+            self._with_out(lst, lambda st=st: self.pe_stmt(st, act))
+            outs.append(lst)
+            ends.append(self._snapshot(acts))
+            defs |= self._defined
+        # after the join: the state each branch left (they change disjoint
+        # locals; checked here, and the vars in the lowering)
+        for ai, a in enumerate(acts):
+            loc0, ret0 = snap[ai]
+            merged = dict(loc0)
+            owner: Dict[Any, int] = {}
+            for bi, end in enumerate(ends):
+                loc, ret = end[ai]
+                if ret is not ret0:
+                    raise TranslateError(f"{where}: return inside a fork branch")
+                for key, v in loc.items():
+                    if loc0.get(key, None) is v:
+                        continue
+                    if key in owner:
+                        name = getattr(key, "name", key)
+                        raise TranslateError(f"{where}: fork branches {owner[key]} and {bi} "
+                                             f"both write {name}")
+                    owner[key] = bi
+                    merged[key] = v
+            a.locals = merged
+            a.ret = ret0
+        self._defined = defs
+        self.emit(P.Par(kind="all", branches=outs, loc=where))
+
+    def _untimed_edge(self, s, act: Act, what: str) -> None:
+        """Untimed code writes no edges (docs/methodology/timing.md)."""
+        if act.timed:
+            return
+        raise TranslateError(
+            f"{self._src_loc(s)}: {what} in untimed code ({self._task_name(act)}). Call a "
+            "latency-insensitive API to wait, or mark the task or its class (* fw_timed *)")
+
+    @staticmethod
+    def _task_name(act: Act) -> str:
+        sub = act.sub
+        if sub is None:
+            return act.name
+        cls = A.class_of(sub)
+        return f"{cls.name}.{sub.name}" if cls is not None else sub.name
+
     def _timed(self, s, act: Act) -> None:
         tc = s.timing
         tk = tc.kind
@@ -891,7 +1081,91 @@ class Translator:
             sub = self.it._dispatch(recv.cls, sub)
         this = recv if isinstance(recv, Obj) else None
         iface = recv if isinstance(recv, Iface) else None
+        if this is not None and self._is_resource(this.cls):
+            return self._lock(sub, this, list(e.arguments), act, e)
+        if e.thisClass is not None:
+            self._guarded_access(e.thisClass, act, e)
         return self._inline(sub, this, iface, list(e.arguments), act, e)
+
+    # ============================================================ resources
+    def _is_resource(self, cls) -> bool:
+        """Whether ``cls`` is (or extends) the library's ``fw_resource``."""
+        key = ("resource",) + skey_sym(cls)
+        r = self._attr_cache.get(key)
+        if r is None:
+            r = False
+            c = cls
+            while c is not None and not r:
+                gen = getattr(c, "genericClass", None)
+                r = c.name == "fw_resource" or (gen is not None and gen.name == "fw_resource")
+                base = getattr(c, "baseClass", None)
+                c = base.canonicalType if base is not None else None
+            self._attr_cache[key] = r
+        return r
+
+    def _lock(self, sub, res, args, act: Act, e):
+        """A call on an ``fw_resource``: ``Lock`` statements, not inlined code
+        (its sequential body only checks the order; zuspec.synth.proc.lockcheck
+        checks the same on every path)."""
+        name = self._obj_names.get(res.oid, f"res{res.oid}")
+        loc = self._src_loc(e)
+        if sub.name not in ("reserve", "block", "acquire", "free"):
+            raise TranslateError(f"{loc}: {name}.{sub.name}() is not supported in a "
+                                 "process; use reserve, block, acquire and free")
+        formals = list(sub.arguments)
+
+        def arg(i):
+            x = args[i] if i < len(args) else None
+            return None if x is None or x.kind == EK.EmptyArgument else x
+        kx = arg(0)
+        kw = width_of(formals[0].type)
+        key = self._term(self.ev(kx, act), kw, kx) if kx is not None else T.const(0, kw)
+        rw = ""
+        if sub.name in ("reserve", "acquire"):
+            rx = arg(1)
+            rw = "w"
+            if rx is not None:
+                v = self._term(self.ev(rx, act), 1, rx)
+                if not v.is_const:
+                    raise TranslateError(f"{loc}: {name}.{sub.name}: the access kind "
+                                         "(FW_READ / FW_WRITE) must be a constant")
+                rw = "w" if v.val else "r"
+        if sub.name == "acquire":
+            self.emit(P.Lock("reserve", name, key, rw, loc=loc))
+            self.emit(P.Lock("block", name, key, loc=loc))
+        else:
+            op = "release" if sub.name == "free" else sub.name
+            self.emit(P.Lock(op, name, key, rw, loc=loc))
+        return None
+
+    def _guarded_access(self, recv_e, act: Act, call_e) -> None:
+        """A call through a field marked ``(* fw_guard="<resource>" *)`` is an
+        access to the state that resource guards."""
+        x = recv_e
+        while x is not None:
+            if x.kind == EK.MemberAccess:
+                m, base = x.member, x.value
+            elif x.kind == EK.NamedValue:
+                m, base = x.symbol, None
+            else:
+                return
+            if m.kind == ast.SymbolKind.ClassProperty:
+                guard = self.attrs(m).get("fw_guard")
+                if guard:
+                    owner = self.ev(base, act) if base is not None else act.this
+                    if not isinstance(owner, Obj):
+                        raise TranslateError(f"{self._src_loc(call_e)}: fw_guard on "
+                                             f"{m.name}: its object is not static")
+                    prop = next((p for p in owner.fields if p.name == guard), None)
+                    res = owner.fields.get(prop) if prop is not None else None
+                    if not isinstance(res, Obj) or not self._is_resource(res.cls):
+                        raise TranslateError(f"{self._src_loc(call_e)}: {m.name} is "
+                                             f"(* fw_guard=\"{guard}\" *), but {guard} is "
+                                             "not an fw_resource field of the same object")
+                    name = self._obj_names.get(res.oid, f"res{res.oid}")
+                    self.emit(P.Lock("access", name, None, loc=self._src_loc(call_e)))
+                    return
+            x = base
 
     def _call_union(self, e, hu: HU, act: Act):
         res_var = None
@@ -923,6 +1197,80 @@ class Translator:
         chain(0)
         return T.var(res_var.name, w) if res_var is not None else None
 
+    def attrs(self, node) -> Dict[str, object]:
+        """The checked fw-hdl directives on a class, task, field or loop."""
+        key = skey(node) if hasattr(node, "sourceRange") else \
+            (int(node.kind.value), node.location.buffer.id, node.location.offset)
+        r = self._attr_cache.get(key)
+        if r is None:
+            r = self._attr_cache[key] = A.read_attrs(self.it.comp, node)
+        return r
+
+    def _timed_ctx(self, sub, caller: Optional[bool]) -> bool:
+        """Whether ``sub``'s body is timed code. A class task is untimed unless
+        it or its class carries ``fw_timed``; interface and module code is
+        timed. A function takes no time and keeps its caller's context, as
+        does a package task."""
+        if sub is None:                                  # an always/initial root
+            return True
+        if sub.subroutineKind == ast.SubroutineKind.Function and caller is not None:
+            return caller
+        cls = A.class_of(sub)
+        if cls is None:
+            return True if caller is None or A.in_instance(sub) else caller
+        if self.attrs(sub).get("fw_timed") or self.attrs(cls).get("fw_timed"):
+            return True
+        return self._is_bridge_class(cls)
+
+    def _is_bridge_class(self, cls) -> bool:
+        """A class holding a virtual interface is a transactor bridge: timed by
+        construction (its code is signal-level)."""
+        key = ("bridge",) + skey_sym(cls)
+        r = self._attr_cache.get(key)
+        if r is None:
+            r = False
+            c = cls
+            while c is not None and not r:
+                for m in c.members if hasattr(c, "members") else c:
+                    if m.kind == ast.SymbolKind.ClassProperty and \
+                            m.type.canonicalType.kind == ast.SymbolKind.VirtualInterfaceType:
+                        r = True
+                        break
+                base = getattr(c, "baseClass", None)
+                c = base.canonicalType if base is not None else None
+            self._attr_cache[key] = r
+        return r
+
+    def _check_timed_call(self, sub, caller: Act, call_e) -> str:
+        """Untimed code may call timed code only through a latency-insensitive
+        API: one declared so on the interface class it calls through, or on
+        the class or task that implements it (the binding)."""
+        decl = []
+        recv = getattr(call_e, "thisClass", None)
+        if recv is not None:
+            t = recv.type.canonicalType
+            if t.kind == ast.SymbolKind.ClassType:
+                decl.append(t)
+        stat = getattr(call_e, "subroutine", None)
+        for f in (stat, sub):
+            if f is not None:
+                decl.append(f)
+                cls = A.class_of(f)
+                if cls is not None:
+                    decl.append(cls)
+        if any(self.attrs(d).get("fw_latency_insensitive") for d in decl):
+            # the API method the untimed code called
+            api = decl[0] if recv is not None else A.class_of(stat)
+            return f"{api.name}.{stat.name}" if api is not None else stat.name
+        cls = A.class_of(sub)
+        callee = f"{cls.name}.{sub.name}" if cls is not None else sub.name
+        api = f" (called through {decl[0].name})" if recv is not None and decl else ""
+        raise TranslateError(
+            f"{self._src_loc(call_e)}: untimed code ({self._task_name(caller)}) calls timed "
+            f"{callee}{api}, which is not declared latency-insensitive. Declare it "
+            "(* fw_latency_insensitive *) on the API interface class or the binding, if the "
+            "protocol tolerates any delay, or mark the caller (* fw_timed *)")
+
     def _inline(self, sub, this, iface, args, caller: Act, call_e):
         if sub.body is None or sub.kind == ast.SymbolKind.MethodPrototype:
             raise TranslateError(f"call to {sub.name} has no body")
@@ -930,18 +1278,29 @@ class Translator:
             raise TranslateError(f"call depth exceeded at {sub.name} (recursion?)")
         path = caller.path + (skey(call_e),)
         a = Act(sub, this, iface, path, _safe(f"{caller.name}.{sub.name}"))
+        a.timed = self._timed_ctx(sub, caller.timed)
+        site = self._call_site(sub, this, iface, caller, call_e)
         outs = []
         formals = list(sub.arguments)
         for i, fa in enumerate(formals):
             x = args[i] if i < len(args) else None
             d = fa.direction
+            if site is not None:
+                site.dirs.append(_DIRS.get(d, "in"))
+                site.args.append(None)
             if x is None or x.kind == EK.EmptyArgument:
                 dv = getattr(fa, "defaultValue", None)
                 v = self.ev(dv, caller) if dv is not None else self._default(fa.type)
                 self.set_local(a, fa, self._conv_to(v, fa.type, dv))
                 continue
             if d == ast.ArgumentDirection.In:
-                self.set_local(a, fa, self._conv_to(self.ev(x, caller), fa.type, x))
+                v = self._conv_to(self.ev(x, caller), fa.type, x)
+                if site is not None:
+                    if isinstance(v, T.Term):
+                        site.args[-1] = v
+                    else:
+                        site = None           # a handle argument: not written back
+                self.set_local(a, fa, v)
             else:
                 lhs = x.left if x.kind == EK.Assignment else x
                 if d in (ast.ArgumentDirection.InOut, ast.ArgumentDirection.Ref):
@@ -955,7 +1314,23 @@ class Translator:
         try:
             if sub.name == "new":
                 raise TranslateError("object construction inside a process (anti-pattern A1)")
-            self.pe_stmt(sub.body, a)
+            call = ""
+            if a.timed and not caller.timed:
+                call = self._check_timed_call(sub, caller, call_e)
+            if a.timed != caller.timed or site is not None:
+                cls = A.class_of(sub)
+                reg = P.Region(timed=a.timed,
+                               origin=f"{cls.name}.{sub.name}" if cls is not None else sub.name,
+                               call=call)
+                self.emit(reg)
+                self._with_out(reg.body, lambda: self.pe_stmt(sub.body, a))
+                if site is not None:
+                    reg.site = self._with_out(reg.body, lambda: self._site_results(
+                        site, a, sub, [fa for fa, _ in outs]))
+                if not reg.body and (reg.site is None or a.timed != caller.timed):
+                    self._out.remove(reg)
+            else:
+                self.pe_stmt(sub.body, a)
         finally:
             self._act_stack.pop()
         for fa, lhs in outs:
@@ -963,6 +1338,74 @@ class Translator:
         if sub.returnValVar is not None:
             return a.locals[sub.returnValVar]
         return None
+
+    # ============================================================ call sites
+    def _call_site(self, sub, this, iface, caller: Act, call_e) -> Optional[P.CallSite]:
+        """The call as written, when it is one the emitted source keeps as a
+        call (proc.ir ``CallSite``): a call from the process's own object's
+        code to another object, or into timed code. None otherwise, and when
+        the receiver has no path from the process's object."""
+        root = self._act_stack[0].this if self._act_stack else None
+        if not isinstance(root, Obj) or caller.this is not root:
+            return None
+        other = (this is not None and this is not root) or (this is None and iface is not None)
+        if not other and self._timed_ctx(sub, caller.timed) == caller.timed:
+            return None
+        recv_e = getattr(call_e, "thisClass", None)
+        recv = self._recv_path(recv_e, caller) if recv_e is not None else ("" if not other
+                                                                            else None)
+        if recv is None:
+            return None
+        return P.CallSite(recv=recv, method=sub.name)
+
+    def _recv_path(self, e, act: Act) -> Optional[str]:
+        """``e``'s path from the process's object in source syntax (fields,
+        constant indexes), or None when it goes through anything else."""
+        if e.kind == EK.NamedValue:
+            sym = e.symbol
+            return sym.name if sym.kind == ast.SymbolKind.ClassProperty else None
+        if e.kind == EK.MemberAccess:
+            base = self._recv_path(e.value, act)
+            return None if base is None else f"{base}.{e.member.name}" if base else e.member.name
+        if e.kind == EK.ElementSelect:
+            base = self._recv_path(e.value, act)
+            k = self.ev(e.selector, act) if base is not None else None
+            if not (isinstance(k, T.Term) and k.is_const):
+                return None
+            return f"{base}[{k.val}]"
+        return None
+
+    def _site_results(self, site: P.CallSite, a: Act, sub, out_formals) -> P.CallSite:
+        """Fill the site's outputs and return var: each is a var local to the
+        callee, so the emitted call can write it (a value that is anything
+        else is copied into one first)."""
+        def held(sym, value):
+            if not isinstance(value, T.Term):
+                return None
+            if value.op == "var":
+                v = self._var_named(value.name)
+                if v is not None and v.origin.startswith("local "):
+                    return v
+            v = self._local_var(a, ("out", getattr(sym, "name", "ret")), value.w)
+            self.emit(P.Assign(v, value))
+            a.locals[sym] = T.var(v.name, v.w)
+            return v
+        formals = list(sub.arguments)
+        for fa in out_formals:
+            v = held(fa, a.locals.get(fa))
+            if v is None:
+                return None
+            site.args[formals.index(fa)] = T.var(v.name, v.w)
+        if sub.returnValVar is not None:
+            site.ret = held(sub.returnValVar, a.locals.get(sub.returnValVar))
+            if site.ret is None:
+                return None
+        return site
+
+    def _var_named(self, name: str) -> Optional[P.Var]:
+        if len(self._by_name) != len(self.var_list):
+            self._by_name = {v.name: v for v in self.var_list}
+        return self._by_name.get(name)
 
     # ========================================================== expressions
     def ev(self, e, act: Act):
@@ -1191,7 +1634,9 @@ class Translator:
             if idx.is_const:
                 lo = self.it._bit_offset(t, idx.val, ew)
                 return T.slice_(v, lo, ew)
-            # run-time bit select: a shifter
+            if v.w // ew <= self.MUX_MAX_ELEMS:
+                return self._dyn_select(v, t, idx, ew)
+            # run-time bit select on a wide vector: a shifter
             pos = T.sub(idx, T.const(right, idx.w)) if left >= right else \
                 T.sub(T.const(right, idx.w), idx)
             sh = T.lshr(v, T.zext(T.mul(T.zext(pos, max(idx.w, v.w)), T.const(ew, max(idx.w, v.w))), v.w)
@@ -1543,17 +1988,55 @@ class Translator:
             return
         raise TranslateError(f"unsupported assignment target {k.name}")
 
+    # A run-time index into a packed vector of at most this many elements reads
+    # through a mux tree and writes through a per-element decode (a register
+    # file: 32:1 read muxes, one write enable per register). Wider vectors keep
+    # the shifter form, which is smaller there.
+    MUX_MAX_ELEMS = 256
+
     @staticmethod
-    def _dyn_insert(cur: T.Term, t, idx: T.Term, val: T.Term) -> T.Term:
-        """*cur* with the element at run-time index *idx* replaced by *val*
-        (a write out of range changes nothing)."""
-        w, ew = cur.w, val.w
+    def _elem_num(t, idx: T.Term, w: int, ew: int) -> T.Term:
+        """The element number of run-time index *idx* (0 = the least
+        significant element), wide enough that an index out of range does not
+        wrap onto a valid element."""
         r = t.fixedRange
         left, right = int(r.left), int(r.right)
         iw = max(idx.w, (max(abs(left), abs(right)) * ew + w).bit_length() + 1)
         ix = T.resize(idx, iw)
-        # element index -> element number from the least significant end
-        num = T.sub(ix, T.const(right, iw)) if left >= right else T.sub(T.const(right, iw), ix)
+        return T.sub(ix, T.const(right, iw)) if left >= right else T.sub(T.const(right, iw), ix)
+
+    @classmethod
+    def _dyn_select(cls, v: T.Term, t, idx: T.Term, ew: int) -> T.Term:
+        """Element *idx* of *v*: a balanced mux tree on the element number's
+        bits, 0 when the index is out of range."""
+        n = v.w // ew
+        num = cls._elem_num(t, idx, v.w, ew)
+        k = max(1, (n - 1).bit_length())
+        level = [T.slice_(v, e * ew, ew) if e < n else T.const(0, ew) for e in range(1 << k)]
+        for b in range(k):
+            sel = T.slice_(num, b, 1)
+            level = [T.ite(sel, level[j + 1], level[j]) for j in range(0, len(level), 2)]
+        out = level[0]
+        if num.w > k:
+            out = T.ite(T.redor(T.slice_(num, k, num.w - k)), T.const(0, ew), out)
+        return out
+
+    @classmethod
+    def _dyn_insert(cls, cur: T.Term, t, idx: T.Term, val: T.Term) -> T.Term:
+        """*cur* with the element at run-time index *idx* replaced by *val*
+        (a write out of range changes nothing)."""
+        w, ew = cur.w, val.w
+        n = w // ew
+        num = cls._elem_num(t, idx, w, ew)
+        if n <= cls.MUX_MAX_ELEMS:
+            # one decoded write enable per element
+            parts = []
+            if n * ew < w:
+                parts.append(T.slice_(cur, n * ew, w - n * ew))
+            for e in reversed(range(n)):
+                parts.append(T.ite(T.eq(num, T.const(e, num.w)), val, T.slice_(cur, e * ew, ew)))
+            return T.concat(*parts)
+        iw = num.w
         off = T.mul(num, T.const(ew, iw)) if ew > 1 else num
         m = T.shl(T.resize(T.ones(ew), w), off)
         return T.or_(T.and_(cur, T.not_(m)), T.and_(T.shl(T.resize(val, w), off), m))
@@ -1743,7 +2226,14 @@ class Translator:
         init = o.fields[prop]
         init = init if isinstance(init, int) else 0
         name = f"{self._obj_names.get(o.oid, o.cls.name)}.{prop.name}"
-        return self._mk_var(key, name, w, "reg", mask(init, w), origin=f"{o.cls.name}.{prop.name}")
+        v = self._mk_var(key, name, w, "reg", mask(init, w), origin=f"{o.cls.name}.{prop.name}")
+        if prop.kind == ast.SymbolKind.ClassProperty:
+            v.attrs.update(self.attrs(prop))
+            v.obj, v.member = self._obj_names.get(o.oid, ""), prop.name
+            ct = prop.type.canonicalType
+            v.flat = not (ct.kind == ast.SymbolKind.PackedArrayType and
+                          ct.elementType.canonicalType.kind != ast.SymbolKind.ScalarType)
+        return v
 
     def _state_var_if(self, f: Iface, name: str, t) -> P.Var:
         key = ("i", f.path, name)
@@ -1833,15 +2323,58 @@ class Translator:
     _lvref_val = None
 
 
+def _unbounded_comb_loop(stmts) -> bool:
+    """A loop with no trip count and no await (it could never be lowered)."""
+    for s in stmts:
+        if isinstance(s, P.Loop):
+            if s.trip is None and not _waits(s.body):
+                return True
+            if _unbounded_comb_loop(s.body):
+                return True
+        elif isinstance(s, P.If):
+            if _unbounded_comb_loop(s.then) or _unbounded_comb_loop(s.orelse):
+                return True
+        elif isinstance(s, P.Region) and _unbounded_comb_loop(s.body):
+            return True
+        elif isinstance(s, P.Par) and any(_unbounded_comb_loop(b) for b in s.branches):
+            return True
+    return False
+
+
+def _waits(stmts) -> bool:
+    for s in stmts:
+        if isinstance(s, P.Await):
+            return True
+        if isinstance(s, P.If) and (_waits(s.then) or _waits(s.orelse)):
+            return True
+        if isinstance(s, (P.Loop, P.Region)) and _waits(s.body):
+            return True
+        if isinstance(s, P.Par) and any(_waits(b) for b in s.branches):
+            return True
+    return False
+
+
+def skey_sym(sym) -> tuple:
+    loc = sym.location
+    return (loc.buffer.id, loc.offset, sym.name)
+
+
+def _sym_order(sym) -> tuple:
+    """A run-independent order for symbols (pyslang symbols hash by address)."""
+    loc = sym.location
+    return (loc.buffer.id, loc.offset, sym.name)
+
+
 def _safe(name: str) -> str:
     return "".join(c if (c.isalnum() or c == "_") else "_" for c in name).strip("_")
 
 
-def translate(elab: ElabResult) -> Tuple[P.Design, List[str]]:
-    tr = Translator(elab)
+def translate(elab: ElabResult, keep_loops: bool = False) -> Tuple[P.Design, List[str]]:
+    tr = Translator(elab, keep_loops=keep_loops)
     tr._act_stack = []
     tr._loop_flags = []
     d = tr.translate()
+    d.class_src = dict(tr.class_src)     # proc name -> ClassSrc (for emit_src)
     return d, tr.warnings
 
 

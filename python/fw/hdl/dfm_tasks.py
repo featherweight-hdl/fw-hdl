@@ -1,7 +1,7 @@
 """dv-flow task implementations for fw-hdl's SPL -> RTL steps (``python/flow.yaml``).
 
 These wrap :mod:`fw.hdl.spl_flow`. They need the fw-hdl Python package
-installed in the flow's environment (``python/pyproject.toml``).
+installed in the flow's environment (``pyproject.toml`` at the repo root).
 """
 from __future__ import annotations
 
@@ -1132,11 +1132,18 @@ async def Lower(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
     import json
     with open(os.path.join(rundir, "lower_inputs.json"), "w") as f:
         json.dump({"files": files, "incdirs": incdirs, "defines": defines, "top": p.top,
-                   "module": p.module or None, "encoding": p.encoding, "options": opts},
+                   "module": p.module or None, "encoding": p.encoding, "options": opts,
+                   "schedule": getattr(p, "schedule", "") or "as-written"},
                   f, indent=1)
     try:
+        timing = {"model": getattr(p, "delay_model", "") or "",
+                  "period": getattr(p, "clock_period", 0) or None,
+                  "wire": getattr(p, "delay_wire", 0) or None}
         res = lower_design(files, p.top, incdirs=incdirs, defines=defines,
-                           module=(p.module or None), encoding=p.encoding, options=opts)
+                           module=(p.module or None), encoding=p.encoding, options=opts,
+                           timing=timing,
+                           schedule=getattr(p, "schedule", "") or "as-written",
+                           emit_sched=bool(getattr(p, "emit_sched", False)))
     except (FwHdlError, ElabError, Exception) as e:   # report any lowering failure
         return TaskDataResult(status=1, changed=True, output=[],
                               markers=[TaskMarker(msg=f"{type(e).__name__}: {e}",
@@ -1148,6 +1155,33 @@ async def Lower(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
         f.write("\n".join(res.report) + "\n")
     markers = [TaskMarker(msg=r, severity=SeverityE.Warning)
                for r in res.report if r.startswith("warning")]
-    return TaskDataResult(status=0, changed=True, markers=markers, output=[
-        FileSet(src=input.name, filetype="verilogSource", basedir=rundir, files=[vfile]),
-        FileSet(src=input.name, filetype="text", basedir=rundir, files=["lower_report.txt"])])
+    out = [FileSet(src=input.name, filetype="verilogSource", basedir=rundir, files=[vfile]),
+           FileSet(src=input.name, filetype="text", basedir=rundir, files=["lower_report.txt"])]
+    if res.timing is not None:
+        with open(os.path.join(rundir, "timing_report.txt"), "w") as f:
+            f.write("\n".join(res.timing.detail()) + "\n")
+        with open(os.path.join(rundir, "timing.json"), "w") as f:
+            json.dump(res.timing.to_json(), f, indent=1)
+        out.append(FileSet(src=input.name, filetype="lowerTiming", basedir=rundir,
+                           files=["timing.json", "timing_report.txt"]))
+    if res.sched is not None:
+        sfile = f"{res.sched_pkg}.sv"
+        with open(os.path.join(rundir, sfile), "w") as f:
+            f.write(res.sched)
+        out.append(FileSet(src=input.name, filetype="fwSchedSource", basedir=rundir,
+                           files=[sfile]))
+    return TaskDataResult(status=0, changed=True, markers=markers, output=out)
+
+
+async def SchedSource(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
+    """Lower's fwSchedSource as systemVerilogSource, carrying ``define``."""
+    d = str(getattr(input.params, "define", "") or "")
+    out = [FileSet(src=input.name, filetype="systemVerilogSource", basedir=fs.basedir,
+                   files=list(fs.files), defines=[d] if d else [])
+           for fs in getattr(input, "inputs", []) or []
+           if getattr(fs, "filetype", None) == "fwSchedSource"]
+    if not out:
+        return TaskDataResult(status=1, changed=True, output=[], markers=[TaskMarker(
+            msg="no fwSchedSource input (set emit_sched on the Lower task)",
+            severity=SeverityE.Error)])
+    return TaskDataResult(status=0, changed=True, output=out)

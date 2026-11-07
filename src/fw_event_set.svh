@@ -29,6 +29,8 @@ typedef class fw_component;      // forward: an optional owner, for the debug co
 // blocked_for}` around the wait -- plus, when +fw_dbg_track is on, it maintains
 // the live blocked-on set that fw_dbg_dump() prints. Both arguments are optional;
 // an unnamed set behaves exactly as before.
+// Timed library code: wait_any() is the wake-up for untimed code (it tolerates any delay).
+(* fw_timed, fw_latency_insensitive *)
 class fw_event_set implements fw_dbg_contextual;
     protected event              m_any;
     protected string             m_name;

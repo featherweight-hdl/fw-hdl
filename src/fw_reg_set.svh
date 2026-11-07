@@ -12,6 +12,8 @@
 // The set is flat over whatever registers are add()ed, so it spans sub-blocks
 // freely. One backing event, no per-register process. A burst of same-delta
 // updates may wake a waiter more than once, which a re-arbitrate loop tolerates.
+// Timed library code: wait_change() is the wake-up for untimed code (it tolerates any delay).
+(* fw_timed, fw_latency_insensitive *)
 class fw_reg_set #(int W = 32);
     protected fw_reg_base #(W) m_regs[$];
     protected event            m_any;

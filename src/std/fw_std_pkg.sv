@@ -49,5 +49,6 @@ package fw_std_pkg;
     `include "dep/fw_dep_tracker.svh"   // dependents wait for the youngest older producer
     `include "match/fw_match_set.svh"   // equality over the valid slots of a set (functions)
     `include "mem/fw_sp_mem.svh"        // an array in a single-port RAM, 1-cycle read
+    `include "fw_resource.svh"          // a hazard lock: reserve / block / release (PDL)
 
 endpackage

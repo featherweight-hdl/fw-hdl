@@ -6,6 +6,7 @@
 overview
 components
 synthesis
+timing
 knobs
 islands
 storage

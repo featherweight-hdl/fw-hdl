@@ -29,6 +29,24 @@ Any module that claims to implement a class can be cosimulated against that cont
 | `fw_dep_tracker` | `src/std/dep/` | cycle step | its `step()`, mapped |
 | `fw_match_set` | `src/std/match/` | static functions | an IR function the caller's step invokes |
 | `fw_sp_mem` | `src/std/mem/` | member of a step class | two ports of the class's block, and a RAM beside it that the knob `storage:` binds |
+| `fw_resource` | `src/std/fw_resource.svh` | member of any class: a hazard lock | checked, then erased (no overlap) |
+
+**Which are timed** ({doc}`../methodology/timing`). These classes are library code with
+their own timing, and untimed code uses them through calls:
+- `fw_channel` and `fw_valid_channel` are `(* fw_timed, fw_latency_insensitive *)`:
+  their `get` and `put` wait on the queue, and untimed code may call them because they
+  tolerate any delay.
+- The step classes (`fw_credit_tx`, `fw_arbiter`, `fw_keyed_table`, `fw_token_pool`,
+  `fw_slot_reserve`, `fw_dep_tracker`) are timed by construction: one `step()` per
+  rising edge. "Cycle for cycle" on this page is a property of that timed code.
+- `fw_match_set` is static functions, and `fw_sp_mem` is called from a step; both take
+  no time of their own.
+- `fw_resource` is `(* fw_latency_insensitive *)`. Its `block` and `acquire` are the
+  only calls that may wait.
+
+Outside `fw_std_pkg`, `fw_component.tick`, `fw_event_set` and `fw_reg_set` are timed
+and latency-insensitive (`wait_any()` and `wait_change()` are how untimed code waits for
+an event), and `fw_component.do_run` is timed library code that starts the processes.
 
 ## fw_channel
 
@@ -700,6 +718,43 @@ the data in the next activation.
 .. autosvclass:: fw_std_pkg::fw_sp_mem
    :members:
 ```
+
+## fw_resource
+
+A hazard lock, after PDL ({doc}`../methodology/timing`, resources). It orders accesses
+to state the compiler can't see, such as memory behind two ports, for when a schedule
+overlaps iterations.
+
+```systemverilog
+typedef enum bit {FW_READ, FW_WRITE} fw_rw_e;
+fw_resource #(type KEY = bit)
+function new(string name = "fw_resource");
+function void reserve(KEY key = 0, fw_rw_e rw = FW_WRITE);  // in program order
+task          block  (KEY key = 0);                         // until the access is safe
+task          acquire(KEY key = 0, fw_rw_e rw = FW_WRITE);  // reserve, then block
+function void free   (KEY key = 0);                         // release (an SV keyword)
+function bit  held   (KEY key = 0);                         // testbench use only
+```
+
+- **Keys.** A key is an address or index. A whole resource uses one key (the default).
+- **Accesses.** A port field marked `(* fw_guard="<field>" *)` names the resource that
+  guards it. Each call through that port is an access.
+- **The model.** It takes no time and only checks the order. Each of these is an
+  `$error`:
+  - reserving a key twice;
+  - block or free without a reserve;
+  - free before block;
+  - a write freed before an earlier write.
+- **Lowering.** Each call is a `Lock` statement in the process IR, and `held` is an
+  error in a process. `zuspec.synth.proc.lockcheck` checks every path:
+  - reserve → block → access → free;
+  - write frees in program order;
+  - each guarded call while a key is blocked;
+  - nothing held at the end of a loop iteration.
+
+  The as-written schedule then erases the operations.
+- **Tests:** `tests/python/unit/test_elab_resource.py` (a copy through two guarded
+  ports); zuspec-synth `tests/test_proc_lockcheck.py`.
 
 ## Cosimulation
 

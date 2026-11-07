@@ -18,6 +18,7 @@ debug
 macros
 rtl
 contracts
+diagnostics
 registry
 extern
 facts

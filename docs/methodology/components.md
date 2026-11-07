@@ -90,7 +90,10 @@ a polling component's outputs can depend on timing. The
 Some components are defined by what they do in one clock cycle, not by the stream
 they produce: an arbiter, a merge, a credit counter. Such a component implements
 {sv:class}`fw_hdl_pkg::fw_steppable` and registers with `add_steppable(this)`. Its
-`step()` is called once per rising edge of the component's clock domain:
+`step()` is called once per rising edge of the component's clock domain. A step is
+timed by construction (the driver that calls it, `do_run()`, is timed library code;
+see [timing](timing.md)), so the cycle-exact reading below holds whether or not the
+class is marked:
 
 ```{literalinclude} ../../tests/xls/micro/micro_f6_pkg.sv
 :language: systemverilog
@@ -253,5 +256,7 @@ port to it. The component does not know its `put()` reaches a pin.
 Every component has a `clock` port, its clock domain
 ({sv:class}`fw_hdl_pkg::fw_clock_domain_if`). It inherits the port from its parent
 unless it is connected explicitly. The root's domain is seated by `fw_root` from its
-`clock` and `reset`. `tick(n)` waits `n` cycles of the component's domain. See
+`clock` and `reset`. `tick(n)` waits `n` cycles of the component's domain. In timed
+code that is exact. In untimed code it is a minimum: at least `n` cycles separate the
+code before it from the code after it, and an engine may add more ({doc}`timing`). See
 {doc}`../reference/clocking`.

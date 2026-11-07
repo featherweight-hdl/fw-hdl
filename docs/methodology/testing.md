@@ -62,6 +62,21 @@ mismatch found at gates can be debugged at `model` in milliseconds.
 
 The tests compare streams of values, not cycle timings. For functions and for networks
 of blocking components (see {doc}`components`), that comparison holds at every level,
-whatever the pipeline depth XLS chose. A component that polls (`try_get`) is not
+whatever schedule the engine chose (the pipeline depth XLS picks, for example). A component that polls (`try_get`) is not
 determinate. Its test has to accept the timings each level can produce; the
 {doc}`../examples/xls/lfsr` example shows how.
+
+One comparison is cycle by cycle: an emitted schedule against its own netlist (see
+{doc}`timing`, emitted source). The emitted class says which cycle each step takes, so
+it and the netlist agree on every pin in every cycle, once the two are aligned at
+their first bus cycle. fw-picorv32's `cyc-eq-*` benches make this check. Untimed source
+has no such guarantee: against the netlist it is compared as streams.
+
+**Random schedules.** The `random` engine (`Lower` with `schedule: random:<seed>`) is a
+test of the rules rather than a way to build. It schedules as written, then adds edges at
+random points where {doc}`timing` lets an engine put them. Every such schedule must give
+the same streams, port by port, as the source; one that doesn't shows that the design
+depends on cycles its source never wrote (a port that isn't really latency-insensitive),
+or that the front end or the lowering has a bug. Run a design's stream tests over a range
+of seeds, and its cycle-by-cycle check (the emitted class against its netlist) on each.
+fw-picorv32's `rand-<seed>-*` benches do both for 20 seeds.

@@ -15,6 +15,8 @@
 //                    n (1:1); behind a divide-by-2 then divide-by-3 it returns
 //                    6*n. This is the "N clocks in <domain> wrt <root_domain>"
 //                    query, resolved by tracing up the tree.
+// Latency-insensitive: in untimed code tick(n) means at least n cycles.
+(* fw_latency_insensitive *)
 interface class fw_clock_domain_if;
     pure virtual task     tick(int n = 1);
     pure virtual function longint root_ticks(int n = 1);

@@ -116,6 +116,24 @@ class and binds *every* implementation, so pick for the most time-consuming one.
 When in doubt, use a `task` — over-committing to a `function` is the one choice
 you cannot walk back without changing the contract for every implementation.
 
+**Untimed by default.** Class code is *untimed*: program order binds only through
+data, control, and the per-port order of calls. A synthesis engine picks the cycles.
+The rules are in `docs/methodology/timing.md`. In practice:
+- Class code writes no `@(...)`, `wait(...)` or `#delay`; translate rejects them.
+  Code whose cycle timing is the point, such as a UART's bit timing, is marked
+  `(* fw_timed *)` on the class or task. Interface, module and bridge code is
+  always timed. A bridge is a class that holds a virtual interface.
+- Untimed code calls timed code only through a **latency-insensitive** API: one
+  that tolerates any delay before and between calls (ready/valid, Wishbone with ack).
+  Declare it with `(* fw_latency_insensitive *)`:
+  - on the API interface class, when every binding tolerates delay (`wb_proto_if`,
+    `fw_clock_domain_if`);
+  - or on the bridge that binds it, when only some do. `fw_put_if` over the
+    ready/valid kit is latency-insensitive; over `fw_put_xtor_if`, which has no
+    handshake, it is not.
+- `tick(n)` from untimed code means *at least* n cycles.
+- Functions take no time and keep their caller's context.
+
 ### Providing an API — the `` `FW_*_IMP `` macro
 Every std API ships an implementation-template macro. A component that *provides*
 the API uses the macro instead of hand-rolling the export proxy. It stamps a
@@ -185,23 +203,14 @@ Elaboration (build/connect) is separate from execution (run):
   default; an object that needs a process `implements fw_runnable` and calls
   `add_runnable(this)` (usually from its constructor). There is no auto-detection.
 
-> **Waking a `run()` on external events — use a level-sensitive wait, not
-> `@event`.** When a `run()` loop sleeps until some *other* component pokes it
-> (e.g. a non-blocking sink method sets a flag), wait on a **level** — a flag
-> cleared before you read state — not on an edge:
-> ```systemverilog
-> function void notify(); m_dirty = 1; endfunction   // called from another process
-> task run();
->     forever begin
->         wait (m_dirty);         // returns immediately if already set -> no lost poke
->         m_dirty = 0;            // clear BEFORE reading, so a poke during eval re-dirties
->         act_on(current_state());
->     end
-> endtask
-> ```
-> A bare `@(m_wake)` drops any poke that lands between your last evaluate and the
-> `@` — the loop then sleeps forever on state that already moved. (For a *set* of
-> heterogeneous sources, an `fw_event_set` gives the same guarantee.)
+> **Waking a `run()` on external events: use the library's wait APIs.** When a
+> `run()` loop sleeps until something else changes, call `fw_event_set.wait_any()`
+> (a set of `fw_awaitable_if` sources) or `fw_reg_set.wait_change()` (register
+> fields). Both are timed library tasks declared latency-insensitive, so untimed
+> code may call them. A `wait(flag)` or `@event` written in a `run()` is an error
+> in untimed code. In a `(* fw_timed *)` class, wait on a level (a flag cleared
+> before you read state), never a bare `@event`, which loses a poke that lands
+> before it.
 
 The phases (`src/fw_component.svh`):
 - **`do_build()`** — TOP-DOWN: run *this* `build()` (which creates children), then
@@ -212,7 +221,9 @@ The phases (`src/fw_component.svh`):
   during which each port resolves its provider into `port.t`. Because `connect()`
   only wires and resolution happens in the recursion afterward, ordering is free.
 - **`do_run()`** — fork the `run()` of every registered runnable, then recurse
-  into child components.
+  into child components. It is timed library code; the `step()` driver it forks is
+  cycle-exact (one `step()` per rising edge), and each `run()` keeps its own
+  timing context.
 
 **Wiring vs. resolution:** `connect()` only *wires* pointers
 (`port.connect(provider)`); the graph isn't complete until every `connect()` has
@@ -313,7 +324,8 @@ endclass
 
 - A component advances its own domain with `this.tick(n)` (which resolves
   `clock.get_if().tick(n)`); `root_ticks(n)` walks up to the root, folding in each
-  divisor, and is callable any time the graph is wired.
+  divisor, and is callable any time the graph is wired. In timed code `tick(n)` is
+  exactly n cycles; in untimed code, at least n.
 - **Auto-inheritance:** a child whose `clock` was not explicitly bound defaults to
   its parent's domain during `do_connect()`. The root's domain is seated
   externally by `fw_root`.
@@ -493,5 +505,8 @@ A multi-endpoint example (ports *and* exports, plus a monitor) is in
   (resolve via `get_if()` or assert in `connect()`) — never a silent timeout (§2).
 - Never force-wire a *public* port from inside a reusable component — the internal
   `connect()` overwrites an integrator's binding (§2).
-- Wake a `run()` on external pokes with a level-sensitive `wait(flag)`, not
-  `@event` (§2).
+- Class code is untimed: no `@`, `wait` or `#` in it; mark `(* fw_timed *)` where
+  cycle timing is the point. Wake a `run()` with `fw_event_set.wait_any()` or
+  `fw_reg_set.wait_change()` (§2).
+- Untimed code calls timed code only through a `(* fw_latency_insensitive *)` API
+  or binding (§1).

@@ -26,6 +26,14 @@ A rule (`fw_order_rule` / `canon.Rule`) says which **later** items may leave bef
 | `set_strict(a, b)` / `strict_after: [[a, b]]` | an ordered (`a` before `b`) pair must also leave in strictly later cycles; leaving in the same cycle is a violation |
 | `pin_cycles` (Python only) | also compare leave cycles; only for views that are meant to be cycle-exact |
 
+**Untimed code and emitted schedules** ({doc}`../methodology/timing`). The untimed source
+of a process fixes the order on each port, not the cycles, so against its netlist it
+is compared without `pin_cycles`. An engine's schedule emitted as source is timed: it and
+its netlist are one view for this purpose, and `pin_cycles` holds between them. A
+`strict_after` rule is a timing requirement. The checker applies it to whatever view
+runs, emitted schedules included; the engines don't read contracts yet, so for an
+untimed process it is checked, not guaranteed.
+
 Items that enter in the same cycle are ordered by call order. To make "accepted in the
 same cycle counts as earlier" hold for one point, call `enter()` for that point first.
 
