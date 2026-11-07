@@ -60,7 +60,23 @@ jobs:
       # every push.
       run: |
         if [ -f pyproject.toml ]; then
-          python3 -c "import tomllib; d=tomllib.load(open('pyproject.toml','rb')); p=d.get('project',{}); print('pyproject:', p.get('name'), p.get('version'))"
+          # The runner's python3 may predate tomllib (3.11): fall back to a
+          # line check of the [project] table's name and version.
+          python3 - <<'EOF'
+        import re, sys
+        try:
+            import tomllib
+        except ModuleNotFoundError:
+            tomllib = None
+        if tomllib:
+            p = tomllib.load(open('pyproject.toml', 'rb')).get('project', {})
+        else:
+            m = re.search(r'^\[project\]\n(.*?)(?=^\[|\Z)', open('pyproject.toml').read(), re.M | re.S)
+            p = dict(re.findall(r'^(name|version)\s*=\s*"([^"]*)"', m.group(1), re.M)) if m else {}
+        if not p.get('name'):
+            sys.exit('pyproject.toml: no [project] name')
+        print('pyproject:', p.get('name'), p.get('version'))
+        EOF
         elif [ -f setup.py ]; then
           python3 -c "import ast; ast.parse(open('setup.py').read()); print('setup.py parses')"
         elif [ -f package.json ]; then

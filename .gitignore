@@ -230,3 +230,6 @@ rundir/
 
 # RTL pattern survey corpus (docs/research/rtl-pattern-survey-plan.md §3)
 /corpus/
+
+# Research and planning notes stay local; the published docs are docs/{methodology,reference,examples}.
+/docs/research/

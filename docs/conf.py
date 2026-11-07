@@ -43,7 +43,7 @@ myst_enable_extensions = [
 myst_heading_anchors = 3
 
 templates_path = ["_templates"]
-exclude_patterns = ["_build", "README.md", "tool-issues.md", "Thumbs.db", ".DS_Store"]
+exclude_patterns = ["_build", "README.md", "tool-issues.md", "research", "Thumbs.db", ".DS_Store"]
 
 # -- SystemVerilog (sphinx-systemverilog) ------------------------------------
 #
