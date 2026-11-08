@@ -19,6 +19,17 @@ jobs:
         with:
           dep-set: default-dev
 
+      # ivpm installs the dependencies but not this project itself, and the
+      # `fw.hdl.*` dv-flow packages come from fw-hdl's own entry point
+      # (fw.hdl.dfm_ext). Install it, editable, into the workspace venv.
+      - name: Install fw-hdl into the workspace venv
+        run: |
+          if packages/python/bin/python -m pip --version >/dev/null 2>&1; then
+            packages/python/bin/python -m pip install --no-deps -e .
+          else
+            uv pip install --python packages/python/bin/python --no-deps -e .
+          fi
+
       # The EDA toolchains publish `export.envrc` files; the project-root
       # `.envrc` sources packages/packages.envrc to put dfm, Verilator and
       # Yosys on PATH. direnv activates that environment for `direnv exec`.
