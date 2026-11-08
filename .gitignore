@@ -233,3 +233,30 @@ rundir/
 
 # Research and planning notes stay local; the published docs are docs/{methodology,reference,examples}.
 /docs/research/
+
+# Planning, research and status notes stay local (not documentation).
+/actions.md
+/ai-benchmark-strategy.md
+/chisel-xls-assessment.md
+/dynamic-coverage.md
+/hw-sw-interaction-patterns.md
+/hw-sw-movability.md
+/integration-thesis.md
+/ir-primitives.md
+/killer-app.md
+/multi-view-rearchitecture.md
+/one-model-many-hosts.md
+/software-model-taxonomy.md
+/software-object-models.md
+/xls-native-roadmap.md
+/zuspec-semantics.md
+/reference/
+/xls-examples.md
+/xls-phase0.md
+/xls-phase2.md
+/python/fw/hdl/PLAN.md
+/python/fw/hdl/DESIGN.md
+/python/fw/hdl/CENTRALIZED-LOWERING-DESIGN.md
+/python/fw/hdl/REUSE-AUDIT.md
+/tests/rv_proto/STATUS.md
+/docs/tool-issues.md

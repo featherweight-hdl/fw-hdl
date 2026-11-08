@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
 # XLS examples: SV ports of XLS designs, with the original DSLX beside them.
-# See README.md and ../../xls-examples.md.
+# See README.md.
 #
 # Each example (a fragment) builds its two paths, proves them equivalent and
 # synthesizes them, and offers one `bench-<level>` task per test level: what
@@ -68,7 +68,7 @@ package:
           mode: test
 
   - root: quick
-    desc: "The quick subset (xls-examples.md D-9): crc32, adler32, lfsr and rle, every level"
+    desc: "The quick subset: crc32, adler32, lfsr and rle, every level"
     uses: std.TestRunner
     needs: [crc32.test, crc32.formal, crc32.formal-chain, crc32.dslx-tests, adler32.test, lfsr.test, rle.test]
 

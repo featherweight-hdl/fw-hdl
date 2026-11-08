@@ -1,4 +1,4 @@
-// T1 (xls-phase2.md): three static-subset blocks chained by two channels.
+// Three static-subset blocks chained by two channels.
 //
 //   in ──► rle_enc8 ──c0 (rendezvous)──► pkt_framer ──c1 (depth 2)──► crc32_stream ──► out
 //

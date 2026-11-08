@@ -8,8 +8,8 @@ sphinx>=7.2.5            # the include-read event (docs/conf.py)
 myst-parser
 sphinx-copybutton
 furo
-# docs/tool-issues.md records 0.6.1's defects and the workarounds conf.py and
-# the pages use; take a new minor version deliberately.
+# conf.py and the pages work around 0.6.1's defects; take a new minor version
+# deliberately.
 sphinx-systemverilog>=0.6.1,<0.7
 
 # Not on PyPI at the needed revision; pinned to the commits the docs were

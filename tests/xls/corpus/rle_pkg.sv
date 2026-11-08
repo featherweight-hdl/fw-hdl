@@ -1,4 +1,4 @@
-// C2: run-length encoder, as written in chisel-xls-assessment.md §4.4: a
+// Run-length encoder: a
 // parameterized class (T7), a packed-struct payload (T3), state vs
 // temporaries (P2/P3), a predicated send (P7) and an assignment pattern (E16).
 // One change from the assessment's listing: its state variable `run` collides

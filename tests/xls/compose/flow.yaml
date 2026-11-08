@@ -1,9 +1,9 @@
-# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+# Yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
 fragment:
   name: compose
 
   tasks:
-  # T1 (xls-phase2.md): rle_enc8 -> pkt_framer -> crc32_stream, each block by XLS,
+  # rle_enc8 -> pkt_framer -> crc32_stream, each block by XLS,
   # integrated by signature. This is the pipeline spelled out step by step; the
   # libproject recipe wraps the same four tasks.
   - name: chain-corpus

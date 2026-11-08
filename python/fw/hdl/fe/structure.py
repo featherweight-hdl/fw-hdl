@@ -1,5 +1,5 @@
 """Component structure: the children, channels and connections of a structural
-component, as zuspec IR (``xls-phase2.md`` ST-2).
+component, as zuspec IR.
 
 A *structural* component has no ``run()``. It only builds and connects:
 

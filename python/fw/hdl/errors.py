@@ -47,8 +47,8 @@ class FwHdlError(Exception):
     """Raised when an unsupported/unrecognized construct is encountered.
 
     ``sv2ir`` is strict: rather than silently dropping constructs it can't map,
-    it raises this so gaps surface instead of miscompiling (PLAN.md §2 / DESIGN
-    §6).  The attached :class:`Diagnostic` carries the location.
+    it raises this so gaps surface instead of miscompiling.
+    The attached :class:`Diagnostic` carries the location.
     """
 
     def __init__(self, diagnostic: Diagnostic):

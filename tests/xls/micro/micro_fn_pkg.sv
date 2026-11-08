@@ -1,5 +1,5 @@
 // X0 construct micro-tests: one pure function per row of the semantics matrix
-// (xls-phase0.md §3). Each runs on Verilator (the normative SV reference) and,
+//. Each runs on Verilator (the normative SV reference) and,
 // through the static front end and zuspec-be-xls, in the XLS IR interpreter.
 // The row is in the function name.
 package micro_fn_pkg;

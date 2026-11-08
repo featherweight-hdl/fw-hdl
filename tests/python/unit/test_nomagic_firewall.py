@@ -8,7 +8,7 @@ import pathlib
 
 import zuspec.synth.spl as spl
 
-# Tokens that flag an inferential/scheduling module (REUSE-AUDIT.md "exclude" set).
+# Tokens that flag an inferential/scheduling module.
 _FORBIDDEN = (
     "schedule", "scheduler", "sdc_schedule",
     "hazard", "forwarding", "stall", "auto_thread",

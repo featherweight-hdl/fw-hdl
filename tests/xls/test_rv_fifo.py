@@ -1,4 +1,4 @@
-"""INT-2 (xls-phase2.md): fw_rv_fifo, the RTL form of fw_channel, on Verilator.
+"""fw_rv_fifo, the RTL form of fw_channel, on Verilator.
 
 Random valid on the input and random ready on the output: the output stream must
 equal the input stream, the FIFO must never hold more than DEPTH values, and

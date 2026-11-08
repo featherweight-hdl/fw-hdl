@@ -10,7 +10,7 @@ comparisons and logical ops that produce 1 bit.
 Kept out on purpose:
 
 * variable bit and part selects that could go out of range: Verilator does
-  not follow the LRM there (xls-phase0.md §11), so it can't be the reference;
+  not follow the LRM there, so it can't be the reference;
 * an unguarded divide (D-1). A divide is generated only as
   ``(b != 0) ? a / b : 0`` with ``b`` an argument, which the lowering accepts.
 
@@ -20,7 +20,7 @@ Written around:
   are self-determined and true when ``c`` is nonzero (``c != 0`` would not be,
   it widens ``c`` to 32 bits).
   Verilator 5.049 evaluates ``b ~^ 1`` and ``~(b ^ 1)`` (1-bit ``b``) at 1 bit
-  when they are a condition (xls-phase0.md §11); the bare forms are pinned in
+  when they are a condition; the bare forms are pinned in
   ``micro/lrm_pins_pkg.sv``.
 """
 from __future__ import annotations

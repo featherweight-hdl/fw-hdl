@@ -3,7 +3,7 @@ fragment:
   name: xls
 
   tasks:
-  # XLS back end, phase X0 (xls-phase0.md CH-6). The SV static subset runs on
+  # XLS back end. The SV static subset runs on
   # Verilator (the normative reference) and, through the static front end and
   # zuspec-be-xls, in our XLS IR interpreter; the results must match. Also runs
   # the be-xls unit tests. Both suites are pytest; this task runs them so that

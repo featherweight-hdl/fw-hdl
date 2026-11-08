@@ -33,5 +33,5 @@ graphs match in size (494 and 494, 2,234 and 2,234, 4,247 and 4,248 nodes); the 
 every level are the evidence.
 
 **Memory.** Yosys needs about 14 GB per AES-sized module (XLS's AES output goes through
-sv2v; xls-examples.md G-6). Run the AES examples with a few jobs at a time
+sv2v). Run the AES examples with a few jobs at a time
 (`dfm run -j 4 aes.all`).

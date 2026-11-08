@@ -1,4 +1,4 @@
-"""ST-1 (xls-phase2.md): fw_channel #(T, DEPTH) on Verilator.
+"""fw_channel #(T, DEPTH) on Verilator.
 
 A producer puts 0..N-1 as fast as the channel lets it; the consumer takes one
 value every 100 time units. Values must arrive in order, and each put must

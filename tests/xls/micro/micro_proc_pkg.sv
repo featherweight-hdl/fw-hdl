@@ -1,4 +1,4 @@
-// X0 proc micro-tests: one component class per proc row (xls-phase0.md §3.4).
+// X0 proc micro-tests: one component class per proc row.
 // Each class's run() is `<prologue> forever <activation>`; the harness feeds
 // its get ports from queues and records its put ports.
 `include "fw_std_macros.svh"

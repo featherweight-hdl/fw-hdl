@@ -498,7 +498,7 @@ async def XlsIR(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
                 is_fn = False
             module = module_name(top)
             # Anchors are assigned before lowering, on the IR the front end
-            # produced (phase0-plan.md D5); zuspec.xls.Overlay reads them.
+            # produced; zuspec.xls.Overlay reads them.
             if is_fn:
                 fns = sv_to_functions(files, [top], config, reporter, rename={top: module})
                 anchors = assign_anchors(fns)

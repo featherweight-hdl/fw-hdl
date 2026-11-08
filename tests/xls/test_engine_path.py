@@ -1,4 +1,4 @@
-"""The XLS engine adapter builds what the flow builds (phase0-plan.md exit 2).
+"""The XLS engine adapter builds what the flow builds.
 
 For each example block, ``XlsEngine.build`` must produce the same XLS IR as
 ``fw.hdl.xls.IR`` and byte-identical Verilog to ``synth.xls.Codegen``, as run

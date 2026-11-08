@@ -45,7 +45,6 @@ examples/xls/         one page per XLS example; see below
 reference/            generated: the SV library by topic, macros, modules, tasks
 conf.py               the SV build units, and the README include hook
 requirements.txt      the docs toolchain, for CI
-tool-issues.md        defects found in the doc tools (not published)
 ```
 
 ## The example pages
@@ -71,4 +70,4 @@ know when writing one:
 * an indented example under a plain comment is reflowed into the paragraph unless
   the line before it ends in `::`;
 * a single backtick before a macro name (`` `fw_root_begin ``) makes the comment look
-  like reST and then breaks it (tool-issues.md S-4).
+  like reST and then breaks it.

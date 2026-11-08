@@ -64,9 +64,8 @@ adjacent beat. Recognized beats:
 
 ## The static-subset contract (XLS back end)
 
-`fe/static_mapper.py` produces a related contract for `zuspec-be-xls`
-(`xls-phase0.md`, R6/R7). It shares the channel-op shape, and the `put` form is the
-same as above. It differs from the SPL contract in four ways:
+`fe/static_mapper.py` produces a related contract for `zuspec-be-xls`. It shares the
+channel-op shape, and the `put` form is the same as above. It differs from the SPL contract in four ways:
 
 | | static subset | SPL contract above |
 |---|---|---|
@@ -75,5 +74,3 @@ same as above. It differs from the SPL contract in four ways:
 | **port fields** | `Field(kind=Port, datatype=DataTypeGetIF/DataTypePutIF(element_type=T))`, `pragmas['sv_type']` = T as SV spells it | integral placeholder + pragma tags |
 | **widths** | exact: every pyslang `Conversion` is an `ExprCast`, every constant is cast to its type | conversions dropped |
 | **locals** | inside `forever`: `StmtAnnAssign` temporaries; before it: state | all hoisted to `Field(is_reg=True)` |
-
-Moving the SPL mapper onto this contract is `xls-phase0.md` FE-13.

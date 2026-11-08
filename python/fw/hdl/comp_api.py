@@ -1,4 +1,4 @@
-"""The call API of SV components -- procs (xls-examples.md G-9 for procs, E9).
+"""The call API of SV components -- procs.
 
 The function API (fn_api) gives a test one task per function. A component's
 API gives it one task per port, named after the port:

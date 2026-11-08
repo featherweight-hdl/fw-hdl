@@ -1,6 +1,6 @@
 """fw.hdl — Featherweight-HDL front end and synthesis flow.
 
-Pipeline (see ``DESIGN.md`` / ``PLAN.md`` alongside this package):
+Pipeline:
 
     FW-SystemVerilog --sv2ir--> SPL IR --spl2rtl--> RTL IR --rtl2v--> Verilog
 

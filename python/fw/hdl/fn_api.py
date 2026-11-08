@@ -1,4 +1,4 @@
-"""The call API of SV functions (xls-examples.md G-9, TB-2).
+"""The call API of SV functions.
 
 A test calls a design through an API: an interface class with one task per
 exported function. The test holds the API, never a binding, so the same test

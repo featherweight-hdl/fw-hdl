@@ -21,7 +21,7 @@ transactor; the file is the same.
 No deviations. `lfsr7` and `lfsr8` are each proven equivalent to the DSLX.
 
 Two specializations of one class used to collide in fw-hdl's front end (both became IR
-function `lfsr`); this example found it (xls-examples.md G-3, fixed).
+function `lfsr`); this example found it.
 
 ## The proc half: a proc that polls (`lfsr_proc`)
 

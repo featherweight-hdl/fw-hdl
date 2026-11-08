@@ -1,6 +1,6 @@
 """SV (fw-hdl static subset) -> zuspec IR -> XLS IR.
 
-The X0 path of ``xls-phase0.md``: parse with the fw-hdl library, map one
+The static-subset path: parse with the fw-hdl library, map one
 component class (or a set of functions) with :mod:`fw.hdl.fe.static_mapper`,
 and lower with ``zuspec-be-xls``.
 """
@@ -68,7 +68,7 @@ def sv_to_structure(files: Sequence[str], top: str,
                     config: Optional[FlowConfig] = None,
                     reporter: Optional[ErrorReporter] = None) -> Structure:
     """Map the structural component class *top*: its ports, children, channels
-    and binds (``xls-phase2.md`` ST-2)."""
+    and binds."""
     config = config or FlowConfig()
     reporter = reporter or ErrorReporter()
     parser = _parse(files, config, reporter)

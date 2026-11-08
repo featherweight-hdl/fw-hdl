@@ -1,4 +1,4 @@
-"""Unit tests for fw.hdl.ir_build — the IR contract chokepoint (PLAN.md §0).
+"""Unit tests for fw.hdl.ir_build — the IR contract chokepoint.
 
 These tests pin the two traps the §9.1 spike caught:
   - internal registers are plain ``Field``, never ``FieldInOut``

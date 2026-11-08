@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
 # E9, second half -- NOT upstream: the encoder and decoder composed. A
 # structural component (rle_pkg::rle_loopback) joins them by a channel; the
-# SPL -> RTL pipeline of xls-phase2.md implements each block with XLS and
+# SPL -> RTL pipeline implements each block with XLS and
 # integrates the top from their signatures alone. The test checks that what
 # goes in comes back out.
 fragment:

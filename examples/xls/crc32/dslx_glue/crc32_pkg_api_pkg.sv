@@ -1,6 +1,6 @@
 // HAND-WRITTEN. What a user writes, on the plain-XLS path, so that the
 // unchanged crc32_unit_test.sv runs against the DSLX path's RTL and netlist
-// (xls-examples.md section 2.3). On the fw-hdl path all of this is generated.
+//. On the fw-hdl path all of this is generated.
 //
 // The test imports crc32_pkg_api_pkg and calls get(), so this package must
 // provide both. DSLX has no SV types: the argument and result types are

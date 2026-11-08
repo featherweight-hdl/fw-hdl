@@ -1,4 +1,4 @@
-// F4 canary (phase0-plan.md): Euclid's GCD written the same way as
+// Canary: Euclid's GCD written the same way as
 // gcd_zdc.py's Gcd, so the SV and zuspec-dataclasses front ends can be
 // compared node for node. The example's gcd_pkg::gcd_euclidean8 calls
 // iterative_div_mod instead of `%`, which is a different program.

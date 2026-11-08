@@ -6,7 +6,7 @@ package:
     Registered by the fw-hdl Python package (entry point `dv_flow.mgr`), so any
     flow whose Python environment has fw-hdl installed can name these tasks.
     The libproject recipe `project.spl.utils.xls-rtl` wires them to
-    `synth.xls.Codegen` and `zuspec.xls.Signature`. See `xls-phase2.md`.
+    `synth.xls.Codegen` and `zuspec.xls.Signature`.
 
   tasks:
   - name: Partition

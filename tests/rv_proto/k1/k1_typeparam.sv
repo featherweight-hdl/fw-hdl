@@ -1,4 +1,4 @@
-// K1 (phase1-plan.md): do the two Verilator 5.049 bugs noted in
+// Do the two Verilator 5.049 bugs noted in
 // rv_proto_tb.sv still occur on the packet's Verilator?
 //   A. a `type`-parameterized interface as a MODULE PORT (5.049: V3Param crash)
 //   B. a `type`-parameterized interface INSTANCE whose input ports are driven

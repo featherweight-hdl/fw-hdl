@@ -29,4 +29,4 @@ DSLX tuple to `bits[256]`.
 within the flow's budget, and a 30-minute run ran out of memory. Both optimized graphs
 have 4,961 nodes, which is not a proof. The tests at every level are the evidence.
 
-To do (xls-examples.md EX-4): a clock-period sweep, pipeline stages against area.
+To do: a clock-period sweep, pipeline stages against area.

@@ -1,5 +1,5 @@
 """FE-12 / P10: constructs outside the static subset are rejected with one
-diagnostic that points at the SV source line (xls-phase0.md §5.3, "Negative")."""
+diagnostic that points at the SV source line."""
 import re
 
 import pytest

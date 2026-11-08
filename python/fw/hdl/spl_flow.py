@@ -1,5 +1,4 @@
-"""SPL sources -> an integrated RTL top, with XLS implementing chosen blocks
-(``xls-phase2.md``).
+"""SPL sources -> an integrated RTL top, with XLS implementing chosen blocks.
 
 The three steps, as plain functions (the dv-flow tasks wrap these):
 
@@ -107,7 +106,7 @@ def module_name(spelling: str) -> str:
 @dc.dataclass
 class Shell:
     """What integration needs from the top component, and nothing else: its
-    pins, channels, children and binds (``splPartition`` file, xls-phase2.md §3.1).
+    pins, channels, children and binds (``splPartition`` file).
 
     ``ports`` and ``channels`` hold dicts with ``name``, ``bits``, ``sv_type``
     and, respectively, ``direction`` ("in"/"out") or ``depth``. A child is

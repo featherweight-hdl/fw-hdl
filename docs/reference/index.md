@@ -18,6 +18,7 @@ debug
 macros
 rtl
 contracts
+spl-ir-contract
 diagnostics
 registry
 extern

@@ -1,6 +1,6 @@
 """Map the fw-hdl static subset (SV classes) to zuspec IR for the XLS back end.
 
-This is the X0 front end (``xls-phase0.md`` §4.2). It is separate from the
+This is the static-subset front end. It is separate from the
 SPL mapper (``class_mapper.py``) because its IR contract differs in ways the
 SPL path does not accept yet:
 

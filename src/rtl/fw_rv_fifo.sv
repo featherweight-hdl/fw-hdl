@@ -1,4 +1,4 @@
-// The RTL form of an fw_channel #(T, DEPTH) (xls-phase2.md §4, INT-2):
+// The RTL form of an fw_channel #(T, DEPTH):
 // a ready/valid channel between two blocks.
 //
 //   DEPTH == 0  a wire: in and out are the same handshake, as a rendezvous is.

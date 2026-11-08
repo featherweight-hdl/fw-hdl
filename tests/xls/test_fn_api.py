@@ -1,4 +1,4 @@
-"""fw.hdl.api (xls-examples.md G-9, TB-2): the call API generated from SV
+"""fw.hdl.api: the call API generated from SV
 function signatures, and its XLS binding generated from XLS's signature."""
 from pathlib import Path
 

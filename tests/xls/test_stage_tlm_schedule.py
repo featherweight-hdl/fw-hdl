@@ -1,5 +1,5 @@
-"""fw.hdl.xls.StageTLM reads XLS schedules through zuspec-be-xls's reader
-(phase0-plan.md D4): same stages, length and period as before."""
+"""fw.hdl.xls.StageTLM reads XLS schedules through zuspec-be-xls's reader:
+same stages, length and period as before."""
 from fw.hdl.stage_tlm import parse_schedules, stage_table
 
 TEXT = """

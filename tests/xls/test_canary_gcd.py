@@ -1,4 +1,4 @@
-"""F4 canary (phase0-plan.md): one GCD through two front ends.
+"""Canary: one GCD through two front ends.
 
 SV (fw-hdl) and Python (zuspec-dataclasses) versions of the same function
 must give the same anchors for what the user wrote (docs/anchors.md P1/P2),

@@ -1,5 +1,5 @@
 """XLS results as a Zuspec overlay, end to end: SV -> IR (anchored) -> XLS ->
-facts on the SV's anchors (phase0-plan.md C6)."""
+facts on the SV's anchors."""
 import json
 import os
 import subprocess
@@ -59,7 +59,7 @@ def overlay_of(table, art, **kw):
 
 def record_coverage(name, o):
     """Coverage is gated against regression, not against a bar: lossy engines
-    are acceptable (phase0-plan.md C6, golden/mapping_coverage.json)."""
+    are acceptable."""
     golden = json.loads(GOLDEN.read_text()) if GOLDEN.exists() else {}
     cov = o.header.coverage
     if os.environ.get("UPDATE_GOLDEN") or name not in golden:

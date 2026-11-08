@@ -167,7 +167,7 @@ package rle_pkg;
     typedef RunLengthEncoder #(32, 32) RunLengthEncoder32_32;
     typedef RunLengthDecoder #(32, 32) RunLengthDecoder32_32;
 
-    // NOT upstream: the composition of xls-examples.md E9. The encoder feeds
+    // NOT upstream: the encoder and decoder composed. The encoder feeds
     // the decoder through a channel, so the top gives back what it is given.
     // A structural component: it only builds and connects; fw.hdl.spl.Integrate
     // makes its RTL top from the blocks' signatures.

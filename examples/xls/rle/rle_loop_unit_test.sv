@@ -1,5 +1,5 @@
 // SVUnit test for rle_pkg::rle_loopback -- NOT upstream. The encoder feeds the
-// decoder (xls-examples.md E9's composition), so whatever goes in comes back
+// decoder, so whatever goes in comes back
 // out, symbol for symbol, with `last` on the final one. At `rtl` and `gates`
 // the top is the one fw.hdl.spl.Integrate builds from the two XLS blocks'
 // signatures, joined by a channel.

@@ -44,8 +44,8 @@ def parse_schedules(text: str) -> Dict[str, Schedule]:
 
 def schedule_from_bundle(path: str) -> Schedule:
     """The schedule of the block in IR bundle *path* (`<module>.zir/`), read
-    through a ResultStore from the newest overlay that schedules it
-    (phase0-plan.md D4). Nodes per stage are the XLS nodes the overlay put on
+    through a ResultStore from the newest overlay that schedules it.
+    Nodes per stage are the XLS nodes the overlay put on
     anchors (parameters on the block's), in the schedule's order: the same
     Schedule as `parse_schedules` gives, so the same SV (exit criterion 5)."""
     from zuspec.ir.core.results import load_store

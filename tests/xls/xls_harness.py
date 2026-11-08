@@ -1,5 +1,5 @@
 """Conformance harness: the SV source on Verilator vs our interpreter on the
-emitted XLS IR (``xls-phase0.md`` §4.6, CH-1..CH-3).
+emitted XLS IR.
 
 Verilator running the SV is the normative reference (``sv-normative-semantics``).
 Every check runs the same vectors through:
@@ -188,7 +188,7 @@ def check_functions_lrm(sv_files: Sequence[str],
     """Pin results against hand-computed LRM values, without Verilator.
 
     For constructs where Verilator does not follow the LRM (the
-    ``verilator-oracle-holes`` in xls-phase0.md §11). *expected* maps a
+    known Verilator oracle holes). *expected* maps a
     function to ``(args, result)`` pairs; the interpreter and, when present,
     XLS must both give *result*."""
     names = list(expected)

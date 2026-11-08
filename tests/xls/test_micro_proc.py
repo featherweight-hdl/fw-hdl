@@ -1,4 +1,4 @@
-"""CH-2: the proc rows of xls-phase0.md §3.4 as SV component classes, run on
+"""The static subset's proc forms as SV component classes, run on
 Verilator through a generated source/sink harness and in the interpreter on
 the emitted XLS proc. Output streams and final property values must match."""
 import random

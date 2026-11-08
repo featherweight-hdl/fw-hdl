@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Anchor churn across edits (phase0-plan.md A6).
+"""Anchor churn across edits.
 
 Builds the IR of named example tops at two source trees, assigns anchors to
 both, and diffs the tables per named scope (root or member):
@@ -299,7 +299,7 @@ def run_edits(tmp: str) -> List[dict]:
 
 def report(rows: List[dict]) -> str:
     tot = Diff()
-    lines = ["# Anchor churn (phase0-plan.md A6)", "",
+    lines = ["# Anchor churn", "",
              "| corpus | case | edit | scopes same/changed/+/- | (a) | (b) re-keyed/matched |",
              "|---|---|---|---|---|---|"]
     for r in rows:

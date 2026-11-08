@@ -1,4 +1,4 @@
-"""X2 (xls-phase2.md): the T1 composition rle_enc8 -> pkt_framer -> crc32_stream.
+"""The composition rle_enc8 -> pkt_framer -> crc32_stream.
 
 ST-2: the structure of chain_top as zuspec IR.
 ST-3: chain_top on Verilator (the SPL view) against a Python reference model.

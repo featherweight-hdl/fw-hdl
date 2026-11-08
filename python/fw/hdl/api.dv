@@ -39,8 +39,6 @@ package:
     `SVTEST_END
     ```
 
-    See `xls-examples.md` §2.2 (G-9, TB-2).
-
     **File types** `fwFnApi` -- `<api>.api.json`: the API's functions, their
     argument and result types, and the module XLS makes of each.
     `fwCompApi` -- `<api>.comp.json`: the same for components (`Components`):

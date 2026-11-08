@@ -11,7 +11,7 @@ package:
 
     `fw.hdl.spl.Partition` does the same for the XLS blocks of a whole
     structural design; this task takes the blocks one at a time, and also
-    takes functions. See `xls-examples.md` (G-1).
+    takes functions.
 
   tasks:
   - name: IR

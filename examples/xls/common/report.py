@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write RESULTS.md and results.json for the XLS examples (xls-examples.md §8).
+"""Write RESULTS.md and results.json for the XLS examples.
 
 Reads what a run left in the run directory -- nothing is rerun -- so run the
 examples first (`dfm run tests`, `dfm run <example>.all`). A missing result
@@ -180,7 +180,7 @@ def integration(rundir: str, ex: str, exdir: str, test: str) -> List[Dict]:
 
 
 def sweep(rundir: str) -> List[Dict]:
-    """sha256 scheduled at several clock periods (xls-examples.md EX-4)."""
+    """sha256 scheduled at several clock periods."""
     out = []
     for d in sorted(glob.glob(os.path.join(rundir, "xls_examples.sha256.sweep-rtl.*")),
                     key=lambda d: int(d.rsplit(".", 1)[1])):
@@ -212,7 +212,7 @@ def md(q: List[Dict], it: List[Dict], sw: List[Dict]) -> str:
     o += ["", "The sha256 is the same down each example's rows: one unedited file. The "
           "simulation time grows from the model (no clock) to RTL and gates (reset, then "
           "pipeline latency); a level that answers sooner than its latency allows is a "
-          "finding (xls-examples.md risk 6). Glue lines are what a user writes by hand to "
+          "finding. Glue lines are what a user writes by hand to "
           "run the test at that level: none on the fw-hdl path; `crc32/dslx_glue/` on the "
           "DSLX path. lfsr_proc polls, so when it sees a seed depends on the level; its test "
           "syncs on each new seed and checks the values skipped (lfsr/README.md).", "",

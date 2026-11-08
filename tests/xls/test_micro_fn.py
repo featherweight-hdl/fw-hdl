@@ -1,5 +1,5 @@
-"""CH-1 / CH-4: every expression and statement row of xls-phase0.md §3 as a
-pure SV function; Verilator, the interpreter and (if present) XLS must agree.
+"""Every expression and statement of the static subset as
+a pure SV function; Verilator, the interpreter and (if present) XLS must agree.
 
 Vectors are exhaustive when the arguments total 12 bits or fewer, else edge
 values plus random ones.
@@ -81,8 +81,8 @@ def test_micro_functions(workdir):
 
 
 def test_lrm_pins_where_verilator_differs():
-    # Verilator 5.049 evaluates `b ~^ 1` / `~(b ^ 1)` at 1 bit in a condition
-    # (xls-phase0.md §11, 2026-10-03); the LRM makes them 32 bits wide, so true.
+    # Verilator 5.049 evaluates `b ~^ 1` / `~(b ^ 1)` at 1 bit in a condition;
+    # the LRM makes them 32 bits wide, so true.
     check_functions_lrm([str(HERE / "micro" / "lrm_pins_pkg.sv")], {
         "c_xnor": [((0,), 7), ((1,), 7)],
         "c_not_xor": [((0,), 7), ((1,), 7)],

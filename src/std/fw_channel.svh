@@ -91,7 +91,7 @@ endclass
 // put() and get() are blocking, with no peek and no try, so a network of
 // components joined by channels is a Kahn process network: each channel's
 // value stream depends on neither timing nor DEPTH, unless the network
-// deadlocks (xls-phase2.md §4). A consumer that polls connects to get_nb_ex
+// deadlocks. A consumer that polls connects to get_nb_ex
 // (fw_get_nb_if, try_get) instead, and opts out of that guarantee.
 //
 // An all-or-nothing step (fw_atomic_step) puts through put_step_ex

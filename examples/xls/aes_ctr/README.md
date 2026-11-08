@@ -28,7 +28,7 @@ Deviations, both because a port's payload must be packed:
 * `pack_block` / `unpack_block` convert between the channel's packed block and the
   functions' `aes_pkg::Block`.
 
-xls-examples.md expected this proc to be *rejected*, because it would do several sends
+We expected this proc to be *rejected*, because it would do several sends
 and receives on one channel per activation (P10). That was read from google/xls `main`.
 At the pinned tag, `next` does one operation per channel, so the faithful port is
 accepted.

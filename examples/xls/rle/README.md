@@ -49,7 +49,7 @@ SV path is the smaller one; why is still to look into.
 ## The composition (not upstream)
 
 [`loop_flow.yaml`](loop_flow.yaml) builds `rle_pkg::rle_loopback`, a structural
-component: the encoder feeds the decoder through a channel. The SPL -> RTL pipeline of
-xls-phase2.md partitions it, has XLS implement each block, and integrates the top from
+component: the encoder feeds the decoder through a channel. The SPL -> RTL pipeline
+partitions it, has XLS implement each block, and integrates the top from
 the blocks' signatures alone. [`rle_loop_unit_test.sv`](rle_loop_unit_test.sv) checks
 that what goes in comes back out, at every level.
