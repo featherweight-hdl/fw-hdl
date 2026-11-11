@@ -13,18 +13,22 @@ module fw_rv_target_xtor_core #(parameter int W = 32) (
     output bit           ready,
     input  logic [W-1:0] data
 );
+    // Held low while reset is high, from the first reset cycle (the register is
+    // only cleared at the first reset edge); e.g. AXI A3.1.2 requires it.
+    bit up_valid_q;
+    assign up_valid = up_valid_q & !reset;
     typedef enum bit [0:0] {ACCEPT, PRESENT} state_t;
     state_t st;
     always @(posedge clock) begin
         if (reset) begin
-            st <= ACCEPT; ready <= 1'b1; up_valid <= 1'b0; up_data <= '0;
+            st <= ACCEPT; ready <= 1'b1; up_valid_q <= 1'b0; up_data <= '0;
         end else case (st)
             ACCEPT:  if (valid && ready) begin
-                         up_data <= data; up_valid <= 1'b1; ready <= 1'b0;
+                         up_data <= data; up_valid_q <= 1'b1; ready <= 1'b0;
                          st <= PRESENT;
                      end
-            PRESENT: if (up_valid && up_ready) begin
-                         up_valid <= 1'b0; ready <= 1'b1; st <= ACCEPT;
+            PRESENT: if (up_valid_q && up_ready) begin
+                         up_valid_q <= 1'b0; ready <= 1'b1; st <= ACCEPT;
                      end
             default: ;
         endcase

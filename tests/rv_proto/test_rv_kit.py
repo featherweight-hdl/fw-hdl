@@ -3,6 +3,7 @@
 * the kit test (driver -> initiator -> pins -> target -> sink, monitor tapping)
   at a 32-bit, an 8-bit and a struct payload, with backpressure on the pins;
 * the put/get adapters under backpressure: no beat lost or duplicated;
+* the run-time knobs (depth, max_gap) and the monitor's first-valid events;
 * the same test through the dfm fragment (tests/rv_proto/flow.yaml);
 * the synthesizable cores (width W, not `type T`: yosys has no type
   parameters) elaborate in yosys at two widths.
@@ -53,6 +54,14 @@ def test_put_get_adapters_under_backpressure(tmp_path):
     out = run_verilator([SRC / "fw_root.sv", *RV_FILES, HERE / "rv_adapter_tb.sv"],
                         "rv_adapter_tb", tmp_path, extra=[f"+incdir+{RV}"])
     assert "[rv_adapter] PASS" in out, "\n".join(out[-40:])
+
+
+@needs_vlt
+def test_runtime_knobs(tmp_path):
+    """depth and max_gap on the initiator and target; the monitor's first-valid events."""
+    out = run_verilator([SRC / "fw_root.sv", *RV_FILES, HERE / "rv_knobs_tb.sv"],
+                        "rv_knobs_tb", tmp_path, extra=[f"+incdir+{RV}"])
+    assert "[rv_knobs] PASS" in out, "\n".join(out[-40:])
 
 
 @pytest.mark.skipif(not DFM.exists(), reason="needs the packet's dfm")
