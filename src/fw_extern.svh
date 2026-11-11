@@ -35,6 +35,62 @@ class fw_extern_bind;
     string      pins[string];   // role -> pin name, overriding the style
 endclass
 
+// A mapping rule, as data: which algorithm names the pins for a struct port's
+// fields, and its arguments. The map is strings only (module pin <-> struct
+// port field); the tool that resolves it runs the algorithm.
+//   "prefix": pin = prefix + (rename[field] or field) + suffix, the middle
+//             part upper-cased after upper()
+//   x.prefix(in, "in_").rename("valid", "vld").rename("ready", "rdy");
+//   x.prefix(s, "S_AXI_").upper();       // S_AXI_AWADDR, ...
+//   x.prefix(s1, "s_axi_").slot(1);      // slot 1 of packed pins (see fw_extern_pin)
+class fw_pin_rule;
+    string m_kind;
+    string m_prefix;
+    string m_suffix;
+    string m_rename[string];
+    bit    m_upper;
+    int    m_slot = -1;
+
+    function fw_pin_rule rename(string field, string name);
+        m_rename[field] = name;
+        return this;
+    endfunction
+
+    function fw_pin_rule upper();
+        m_upper = 1;
+        return this;
+    endfunction
+
+    function fw_pin_rule slot(int k);
+        m_slot = k;
+        return this;
+    endfunction
+endclass
+
+// One entry of a struct-port pin map, in call order: either a module pin bound
+// to a field of a struct port, or to a bit slice of one (msb/lsb of -1: the
+// whole field); or a rule (rule != null) naming pins for the endpoint's
+// fields. Nothing about the protocol is assumed: the struct port's type
+// declares its fields.
+//
+// A slot (>= 0) places the field in one slot of a packed-vector pin shared by
+// several ports (e.g. a crossbar's s_axi_awid holds every slave port's ID):
+// slot k is bits [(k+1)*w-1 : k*w], w the width of what the entry maps. The
+// slots of one pin must be 0..n-1, each mapped once.
+//
+// Entries resolve in order. A rule maps only the fields still unmapped, so an
+// explicit pin before it is an exception the rule leaves alone. An explicit
+// pin after a rule replaces what the rule chose for that field.
+class fw_extern_pin;
+    string      pin;
+    fw_endpoint ep;
+    string      field;
+    int         msb;
+    int         lsb;
+    int         slot = -1;
+    fw_pin_rule rule;
+endclass
+
 // What extern_map() records.
 class fw_extern_map;
     string         m_param_names[$];
@@ -47,6 +103,7 @@ class fw_extern_map;
     string         m_tie_pins[$];
     longint        m_tie_values[$];
     string         m_open_pins[$];
+    fw_extern_pin  m_pins[$];
 
     // A module parameter, as an integer or a string.
     function void param(string name, longint value);
@@ -89,6 +146,32 @@ class fw_extern_map;
     function void level(fw_endpoint ep, string pin);
         fw_extern_bind b = add(ep, "level", pin, "fw");
         b.pins["data"] = pin;
+    endfunction
+
+    // A pin that is a field of a struct port, or bits [msb:lsb] of one.
+    function void pin(string pin, fw_endpoint ep, string field, int msb = -1, int lsb = -1,
+                      int slot = -1);
+        fw_extern_pin p = new;
+        p.pin = pin;
+        p.ep = ep;
+        p.field = field;
+        p.msb = msb;
+        p.lsb = lsb;
+        p.slot = slot;
+        m_pins.push_back(p);
+    endfunction
+
+    // Pins named prefix + field + suffix, for the fields still unmapped.
+    function fw_pin_rule prefix(fw_endpoint ep, string pre, string suffix = "");
+        fw_extern_pin p = new;
+        fw_pin_rule   r = new;
+        r.m_kind = "prefix";
+        r.m_prefix = pre;
+        r.m_suffix = suffix;
+        p.ep = ep;
+        p.rule = r;
+        m_pins.push_back(p);
+        return r;
     endfunction
 
     // An input pin held at a constant.
