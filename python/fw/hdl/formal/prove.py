@@ -39,7 +39,21 @@ from . import smt
 from .lift import LiftedTest, Obligation, TestLifter
 
 _REPO = Path(__file__).resolve().parents[4]
-SVUNIT_BASE = _REPO / "packages" / "svunit" / "svunit_base"
+
+
+def _svunit_base() -> Path:
+    """svunit's svunit_base: $SVUNIT_INSTALL, then the checkout's ivpm
+    packages/, then the ivpm workspace fw-hdl is itself a package of."""
+    cands = []
+    if os.environ.get("SVUNIT_INSTALL"):
+        cands.append(Path(os.environ["SVUNIT_INSTALL"]) / "svunit_base")
+    cands.append(_REPO / "packages" / "svunit" / "svunit_base")
+    if _REPO.parent.name == "packages":
+        cands.append(_REPO.parent / "svunit" / "svunit_base")
+    return next((c for c in cands if c.is_dir()), cands[0])
+
+
+SVUNIT_BASE = _svunit_base()
 
 PROVEN, CEX, VACUOUS, UNKNOWN, NOT_FORMAL = (
     "proven", "counterexample", "vacuous", "unknown", "not-formal")
