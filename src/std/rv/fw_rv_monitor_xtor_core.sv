@@ -24,7 +24,11 @@ module fw_rv_monitor_xtor_core #(parameter int W = 32) (
     // only cleared at the first reset edge); e.g. AXI A3.1.2 requires it.
     bit up_valid_q;
     assign up_valid = up_valid_q & !reset;
-    bit pending;    // valid seen and not yet accepted: the next valid cycle is not a first
+    // valid seen and not yet accepted: the next valid cycle is not a first. Cleared
+    // when valid drops without a handshake (a retraction, illegal in e.g. AXI
+    // A3.2.1), so the next valid cycle reports a new first: a rule on the
+    // pre/post events then sees two pres without a post.
+    bit pending;
     always @(posedge clock) begin
         if (reset) begin
             pending <= 1'b0; up_valid_q <= 1'b0; up_data <= '0;
@@ -40,6 +44,8 @@ module fw_rv_monitor_xtor_core #(parameter int W = 32) (
                     up_xfer  <= ready;
                 end
                 pending <= !ready;
+            end else begin
+                pending <= 1'b0;
             end
         end
     end
