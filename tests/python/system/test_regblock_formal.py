@@ -9,6 +9,7 @@ read, and decode does not alias registers.
 import os
 import subprocess
 from pathlib import Path
+from fw_tools import tool
 
 import pytest
 
@@ -16,7 +17,7 @@ from fw.hdl.emit.regblock import emit_regblock
 from fw.hdl.regmap import RegBlock, Register, RegField
 
 REPO = Path(__file__).resolve().parents[3]
-YOSYS_BIN = REPO / "packages" / "yosys" / "bin"
+YOSYS_BIN = tool("yosys").parent
 SBY = YOSYS_BIN / "sby"
 
 

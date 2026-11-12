@@ -6,6 +6,7 @@ a RAM) held to a DEPTH they do not keep, and a table, a token pool and a slot re
 than they have, and dependency trackers that never wait or never release."""
 import dataclasses as dc
 from pathlib import Path
+from fw_tools import tool
 
 import pytest
 
@@ -14,7 +15,7 @@ from zuspec.be.xls.testing.xlstools import codegen_main, opt_main
 
 HERE = Path(__file__).resolve().parent
 SPECS = HERE / "cosim"
-VERILATOR = HERE.parents[1] / "packages" / "verilator" / "bin" / "verilator"
+VERILATOR = tool("verilator")
 SEEDS = (1, 2, 3, 4)
 
 pytestmark = [

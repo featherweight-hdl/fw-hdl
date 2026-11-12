@@ -14,4 +14,13 @@ fragment:
     # A test run, not a build artifact: it has no inputs for dv-flow to hash,
     # so without this it would be reported up to date after the first run.
     uptodate: false
-    run: cd ${{ srcdir }}/../.. && packages/python/bin/pytest -q -p no:cacheprovider tests/xls packages/zuspec-be-xls/tests
+    #
+    # `python` is the environment's (dfm's PATH), not packages/python/bin: in a
+    # project that has fw-hdl as a package there is no fw-hdl/packages. The
+    # be-xls tests are run from where zuspec-be-xls is installed (an editable
+    # ivpm checkout has its tests/ beside src/).
+    run: >-
+      cd ${{ srcdir }}/../.. &&
+      BEXLS=$(python -c 'import pathlib, zuspec.be.xls as m; print(pathlib.Path(m.__file__).resolve().parents[4] / "tests")') &&
+      if [ ! -d "$BEXLS" ]; then echo "zuspec-be-xls tests not found ($BEXLS)" >&2; exit 1; fi &&
+      python -m pytest -q -p no:cacheprovider tests/xls "$BEXLS"

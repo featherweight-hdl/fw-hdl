@@ -6,6 +6,7 @@ then checks the hardware-update + read-to-clear paths against the model.
 """
 import subprocess
 from pathlib import Path
+from fw_tools import tool
 
 import pytest
 
@@ -16,7 +17,7 @@ from fw.hdl.emit.regblock import emit_regblock
 
 REPO = Path(__file__).resolve().parents[3]
 SRC = REPO / "src"
-VERILATOR = REPO / "packages" / "verilator" / "bin" / "verilator"
+VERILATOR = tool("verilator")
 
 
 def _harness(block):

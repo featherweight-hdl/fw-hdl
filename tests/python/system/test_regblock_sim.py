@@ -10,6 +10,7 @@ keys off names.
 import shutil
 import subprocess
 from pathlib import Path
+from fw_tools import tool
 
 import pytest
 
@@ -19,7 +20,7 @@ from fw.hdl.fe.reg_mapper import build_reg_blocks
 from fw.hdl.emit.regblock import emit_regblock
 
 REPO = Path(__file__).resolve().parents[3]
-VERILATOR = REPO / "packages" / "verilator" / "bin" / "verilator"
+VERILATOR = tool("verilator")
 
 
 def _hwif_harness(block):

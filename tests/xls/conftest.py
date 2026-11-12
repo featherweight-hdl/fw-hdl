@@ -14,7 +14,7 @@ def pytest_collection_modifyitems(config, items):
     from xls_harness import have_verilator
     if have_verilator():
         return
-    skip = pytest.mark.skip(reason="verilator not found in packages/verilator")
+    skip = pytest.mark.skip(reason="verilator not found (FW_HDL_VERILATOR, packages/verilator, PATH)")
     for item in items:
         if item.get_closest_marker("verilator") is not None:
             item.add_marker(skip)

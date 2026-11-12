@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from fw_tools import tool, have
 
 import pytest
 
@@ -20,7 +21,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 SRC = REPO / "src"
 RV = SRC / "std" / "rv"
-DFM = REPO / "packages" / "python" / "bin" / "dfm"
+DFM = tool("dfm")
 sys.path.insert(0, str(REPO / "tests" / "xls"))
 from xls_harness import have_verilator, run_verilator  # noqa: E402
 
@@ -77,11 +78,10 @@ def test_kit_through_dfm_fragment(tmp_path):
     assert "[rv_proto] PASS" in out + log, out[-3000:]
 
 
-@pytest.mark.skipif(shutil.which("yosys") is None and not (REPO / "packages" / "yosys").exists(),
-                    reason="needs yosys")
+@pytest.mark.skipif(not have("yosys"), reason="needs yosys")
 @pytest.mark.parametrize("width", [8, 32])
 def test_cores_synthesize(tmp_path, width):
-    yosys = shutil.which("yosys") or str(REPO / "packages" / "yosys" / "bin" / "yosys")
+    yosys = str(tool("yosys"))
     script = "".join(f"read_verilog -sv {c}\n" for c in CORES)
     script += "".join(f"chparam -set W {width} {c.stem}\n" for c in CORES)
     script += "hierarchy -check\nproc\nopt\nstat\n"

@@ -3,6 +3,7 @@ fw.hdl.spl.Partition with a located marker; neither task raises."""
 import os
 import subprocess
 from pathlib import Path
+from fw_tools import tool
 
 import pytest
 
@@ -10,7 +11,7 @@ from xls_harness import REPO
 
 HERE = Path(__file__).resolve().parent
 SRC = HERE / "negative_dfm" / "twice_pkg.sv"
-DFM = REPO / "packages" / "python" / "bin" / "dfm"
+DFM = tool("dfm")
 
 FLOW = """\
 package:

@@ -12,6 +12,7 @@ import json
 import os
 import subprocess
 from pathlib import Path
+from fw_tools import tool
 
 import pytest
 
@@ -26,7 +27,7 @@ EXT = HERE / "extern"
 FILES = [str(HERE / "compose" / "hier_pkg.sv"), str(EXT / "ext_pkg.sv"),
          str(EXT / "fact_pkg.sv")]
 FIFO = REPO / "src" / "rtl" / "fw_rv_fifo.sv"
-DFM = REPO / "packages" / "python" / "bin" / "dfm"
+DFM = tool("dfm")
 needs = pytest.mark.skipif(not DFM.exists() or codegen_main() is None or opt_main() is None,
                            reason="needs dfm, opt_main and codegen_main")
 

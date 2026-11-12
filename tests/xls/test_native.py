@@ -12,6 +12,7 @@ import random
 import shutil
 import subprocess
 from pathlib import Path
+from fw_tools import tool
 
 import pytest
 
@@ -26,7 +27,7 @@ FILES = [str(COMPOSE / "regs_pkg.sv")]
 RTL_LIB = [REPO / "src" / "rtl" / "fw_rv_fifo.sv"]
 needs_xls = pytest.mark.skipif(codegen_main() is None or opt_main() is None,
                                reason="needs opt_main and codegen_main")
-DFM = REPO / "packages" / "python" / "bin" / "dfm"
+DFM = tool("dfm")
 
 K, LO = 0x29, 0x5c
 #: {addr, data} writes: k, then p (hi is not read)

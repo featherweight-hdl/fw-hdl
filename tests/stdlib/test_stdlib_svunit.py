@@ -5,12 +5,13 @@ import os
 import re
 import subprocess
 from pathlib import Path
+from fw_tools import tool
 
 import pytest
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
-DFM = REPO / "packages" / "python" / "bin" / "dfm"
+DFM = tool("dfm")
 
 
 @pytest.mark.skipif(not DFM.exists(), reason="needs the packet's dfm")

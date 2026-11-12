@@ -11,6 +11,7 @@ lint and simulate:
 """
 import subprocess
 from pathlib import Path
+from fw_tools import tool
 
 import pytest
 
@@ -19,7 +20,7 @@ from fw.hdl.errors import ErrorReporter
 from fw.hdl.mmio_synth import synth_mmio_design
 
 REPO = Path(__file__).resolve().parents[3]
-VERILATOR = REPO / "packages" / "verilator" / "bin" / "verilator"
+VERILATOR = tool("verilator")
 MMIO = REPO / "tests" / "mmio"
 
 

@@ -38,9 +38,10 @@ from zuspec.be.xls.testing.typecheck import check_package
 from zuspec.be.xls.signature import CodegenOptions, predict_signature, signature_mismatches
 from zuspec.be.xls.testing.xlstools import (codegen_main, opt_main, run_codegen, run_opt,
                                             xls_eval_calls)
+from fw_tools import tool
 
 REPO = Path(__file__).resolve().parents[2]
-VERILATOR = REPO / "packages" / "verilator" / "bin" / "verilator"
+VERILATOR = tool("verilator")
 SRC = REPO / "src"
 LIB_FILES = [SRC / "fw_hdl_pkg.sv", SRC / "fw_clock_xtor_if.sv",
              SRC / "fw_clock_period_xtor_if.sv", SRC / "std" / "fw_std_pkg.sv",

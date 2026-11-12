@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from fw.hdl.formal import prove
+from fw_tools import tool
 
 _ROOT = Path(__file__).resolve().parents[2]
 _CRC = _ROOT / "examples" / "xls" / "crc32"
@@ -31,8 +32,8 @@ def _solvers():
         [dvs, "--engine=bitblast"] if dvs else None, id="dv-solve",
         marks=[] if dvs else pytest.mark.skip(reason="dv-solve-smt2 not found")))
     for name, cmd in (("z3", ["z3", "-smt2"]), ("boolector", ["boolector", "--smt2"])):
-        exe = shutil.which(cmd[0]) or (str(_ROOT / "packages" / "yosys" / "bin" / cmd[0])
-                                        if (_ROOT / "packages" / "yosys" / "bin" / cmd[0]).is_file()
+        exe = shutil.which(cmd[0]) or (str(tool("yosys").parent / cmd[0])
+                                        if (tool("yosys").parent / cmd[0]).is_file()
                                         else None)
         out.append(pytest.param([exe] + cmd[1:] if exe else None, id=name,
                                 marks=[] if exe else pytest.mark.skip(reason=f"{name} not found")))
@@ -226,7 +227,7 @@ package:
 
 def _e2e_solver():
     for name in ("boolector", "z3"):
-        if shutil.which(name) or (_ROOT / "packages" / "yosys" / "bin" / name).is_file():
+        if shutil.which(name) or (tool("yosys").parent / name).is_file():
             return name
     return None
 
@@ -243,11 +244,11 @@ def test_flow_prove_and_replay(tmp_path):
         crc=_CRC, fixtures=_FIXTURES.parent, solver=_e2e_solver()))
     levels = ["model"] + (["rtl"] if codegen_main() and opt_main() else [])
     env = dict(os.environ)
-    env["PATH"] = os.pathsep.join([str(_ROOT / "packages" / "yosys" / "bin"),
+    env["PATH"] = os.pathsep.join([str(tool("yosys").parent),
                                    env.get("PATH", "")])
     if codegen_main():
         env["PATH"] = os.path.dirname(codegen_main()) + os.pathsep + env["PATH"]
-    dfm = _ROOT / "packages" / "python" / "bin" / "dfm"
+    dfm = tool("dfm")
     for lv in levels:                  # one task per dfm run; the second reuses the first
         r = subprocess.run([str(dfm), "run", f"check-{lv}"], cwd=tmp_path, env=env,
                            capture_output=True, text=True)

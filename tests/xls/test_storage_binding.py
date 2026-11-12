@@ -17,6 +17,7 @@ import random
 import shutil
 import subprocess
 from pathlib import Path
+from fw_tools import tool
 
 import pytest
 
@@ -160,7 +161,7 @@ def test_inside_group_same_stream(tmp_path):
 
 
 # --- through dfm, on the reference design (examples/resp_tracker) ------------
-DFM = REPO / "packages" / "python" / "bin" / "dfm"
+DFM = tool("dfm")
 EXAMPLE = REPO / "examples" / "resp_tracker"
 
 

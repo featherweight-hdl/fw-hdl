@@ -23,8 +23,9 @@ from fw.hdl.formal import codegen_equiv as ce
 from fw.hdl.formal import prove
 
 from test_formal_svunit import _CRC, _FIXTURES, _ROOT, _e2e_solver, solver  # noqa: F401
+from fw_tools import tool
 
-_YOSYS_BIN = _ROOT / "packages" / "yosys" / "bin"
+_YOSYS_BIN = tool("yosys").parent
 
 
 def _yosys():
@@ -265,7 +266,7 @@ def test_flow_chain(tmp_path):
     env = dict(os.environ)
     env["PATH"] = os.pathsep.join([str(_YOSYS_BIN), os.path.dirname(codegen_main()),
                                    env.get("PATH", "")])
-    dfm = _ROOT / "packages" / "python" / "bin" / "dfm"
+    dfm = tool("dfm")
     r = subprocess.run([str(dfm), "run", "all"], cwd=tmp_path, env=env,
                        capture_output=True, text=True)
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]

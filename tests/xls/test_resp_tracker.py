@@ -17,6 +17,7 @@ import random
 import shutil
 import subprocess
 from pathlib import Path
+from fw_tools import tool
 
 import pytest
 
@@ -29,7 +30,7 @@ from zuspec.be.xls.testing.xlstools import codegen_main, opt_main
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 EXAMPLE = REPO / "examples" / "resp_tracker"
-DFM = REPO / "packages" / "python" / "bin" / "dfm"
+DFM = tool("dfm")
 
 needs = pytest.mark.skipif(not DFM.exists() or codegen_main() is None or opt_main() is None,
                            reason="needs dfm, opt_main and codegen_main")

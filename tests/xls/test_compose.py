@@ -7,6 +7,7 @@ import random
 import re
 import zlib
 from pathlib import Path
+from fw_tools import tool
 
 import pytest
 
@@ -261,11 +262,12 @@ def test_t1_through_dv_flow(workdir, task):
     import shutil
     import subprocess
     from xls_harness import REPO, rtl_testbench
-    dfm = REPO / "packages" / "python" / "bin" / "dfm"
+    dfm = tool("dfm")
     root = workdir / "proj"
     shutil.copytree(REPO, root, symlinks=True, ignore=shutil.ignore_patterns(
         "packages", "rundir", ".git", "*.old*", "__pycache__", "examples", "reference", "docs"))
-    os.symlink(REPO / "packages", root / "packages")
+    if (REPO / "packages").is_dir():   # a standalone checkout's ivpm packages
+        os.symlink(REPO / "packages", root / "packages")
     env = dict(os.environ)
     tools = os.path.dirname(codegen_main())
     env["PATH"] = tools + os.pathsep + env.get("PATH", "")
