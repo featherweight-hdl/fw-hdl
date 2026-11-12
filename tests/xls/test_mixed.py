@@ -5,6 +5,7 @@ must lint, simulate and match the reference, two levels deep.
 """
 import random
 from pathlib import Path
+from fw_tools import tool
 
 import pytest
 
@@ -87,7 +88,7 @@ def test_integrated_tops_lint_clean(tmp_path):
     assert bad == [] and errors == [], r.stderr[-3000:]
 
 
-DFM = REPO / "packages" / "python" / "bin" / "dfm"
+DFM = tool("dfm")
 
 
 @needs_xls

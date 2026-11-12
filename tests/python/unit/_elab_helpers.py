@@ -22,6 +22,7 @@ from typing import Dict, List, Optional, Sequence
 
 from fw.hdl.fe.elab.flow import ElabStages, elab_design
 from fw.hdl.fe.parser import FW_LIB_FILES, FW_LIB_INCDIRS
+from fw_tools import tool
 
 _REPO = Path(__file__).resolve().parents[3]
 
@@ -84,12 +85,8 @@ class VerilatorError(Exception):
 
 
 def verilator() -> Optional[str]:
-    ws = _REPO.parent / "verilator" / "bin" / "verilator"     # ivpm workspace
-    own = _REPO / "packages" / "verilator" / "bin" / "verilator"
-    for p in (ws, own):
-        if p.exists():
-            return str(p)
-    return shutil.which("verilator")
+    p = tool("verilator")
+    return str(p) if p.is_file() else None
 
 
 def have_verilator() -> bool:

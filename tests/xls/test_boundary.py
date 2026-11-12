@@ -1,6 +1,7 @@
 """Boundary checks -- one negative per rule, plus the passing forms."""
 import types
 from pathlib import Path
+from fw_tools import tool
 
 import pytest
 
@@ -122,7 +123,7 @@ import subprocess  # noqa: E402
 from zuspec.be.xls.testing.xlstools import codegen_main, opt_main  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
-DFM = HERE.parents[1] / "packages" / "python" / "bin" / "dfm"
+DFM = tool("dfm")
 
 INTEGRATE_FLOW = """\
 package:

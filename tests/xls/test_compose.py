@@ -7,6 +7,7 @@ import random
 import re
 import zlib
 from pathlib import Path
+from fw_tools import tool
 
 import pytest
 
@@ -261,11 +262,12 @@ def test_t1_through_dv_flow(workdir, task):
     import shutil
     import subprocess
     from xls_harness import REPO, rtl_testbench
-    dfm = REPO / "packages" / "python" / "bin" / "dfm"
+    dfm = tool("dfm")
     root = workdir / "proj"
     shutil.copytree(REPO, root, symlinks=True, ignore=shutil.ignore_patterns(
         "packages", "rundir", ".git", "*.old*", "__pycache__", "examples", "reference", "docs"))
-    os.symlink(REPO / "packages", root / "packages")
+    if (REPO / "packages").is_dir():   # a standalone checkout's ivpm packages
+        os.symlink(REPO / "packages", root / "packages")
     env = dict(os.environ)
     tools = os.path.dirname(codegen_main())
     env["PATH"] = tools + os.pathsep + env.get("PATH", "")
@@ -279,8 +281,9 @@ def test_t1_through_dv_flow(workdir, task):
             if fs["filetype"] == "systemVerilogSource" for f in fs["files"]]
     sig_file = [Path(fs["basedir"]) / f for fs in outs
                 if fs["filetype"] == "blockSignature" for f in fs["files"]]
-    assert [p.name for p in srcs] == ["fw_rv_fifo.sv", "rle_enc8_t.sv", "pkt_framer.sv",
-                                      "crc32_stream.sv", "chain_top.sv"]
+    from fw.hdl.dfm_tasks import RTL_LIB      # the channel RTL Integrate always lists
+    assert [p.name for p in srcs] == [p.name for p in RTL_LIB] + [
+        "rle_enc8_t.sv", "pkt_framer.sv", "crc32_stream.sv", "chain_top.sv"]
     assert {fs["filetype"] for fs in outs} == {"systemVerilogSource", "blockSignature"}
     sig = ir.load_signature(str(sig_file[0]))
     xs = stimulus(3, 400)

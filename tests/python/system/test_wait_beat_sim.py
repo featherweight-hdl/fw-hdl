@@ -6,6 +6,7 @@ wait-states actually hold until the condition and then advance.
 """
 import subprocess
 from pathlib import Path
+from fw_tools import tool
 
 import pytest
 import zuspec.ir.core as ir
@@ -17,7 +18,7 @@ from fw.hdl.lower.spl2rtl import lower_context
 from fw.hdl.emit.be_sv import emit_sv
 
 REPO = Path(__file__).resolve().parents[3]
-VERILATOR = REPO / "packages" / "verilator" / "bin" / "verilator"
+VERILATOR = tool("verilator")
 
 
 def _waiter_spl():

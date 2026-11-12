@@ -90,3 +90,67 @@ def test_flatten_absolute_offsets(reg_dma_files):
     assert ch2_ch_en[0].access == "RW"
     # every flattened field has a concrete absolute offset and width
     assert all(ff.width >= 1 for ff in flat)
+
+
+# ---- the constructor forms ----------------------------------------------------
+_FORMS = """
+package forms_pkg;
+    import fw_hdl_pkg::*;
+    typedef struct packed { bit [30:0] rsv; bit go; } ctl_t;
+    class forms_regs extends fw_reg_block #(32);
+        fw_reg #(ctl_t)      ctl;
+        fw_reg #(bit [31:0]) tx, rx, gap;
+        function new(string name);
+            super.new(name);
+            ctl = new("ctl", this, .pulse_mask('{go:1, default:'0}));  // 0x0, cursor
+            tx  = new("tx",  this, 8, .access(FW_REG_WO));              // explicit offset
+            rx  = new("rx",  this, 8, .sw_wmask('0), .hw_wmask('1),
+                      .access(FW_REG_RO));                              // shares 0x8
+            gap = new("gap", this);                                     // cursor: 0xc
+        endfunction
+    endclass
+    class forms_top extends fw_component;
+        forms_regs regs;
+        function new(string name, fw_component parent);
+            super.new(name, parent);
+            regs = new("regs");
+        endfunction
+    endclass
+endpackage
+
+module forms_tb;    // binds fw_root's Tbind so the library elaborates
+    logic clock = 1'b0, reset = 1'b1;
+    fw_root #(.Tbind(fw_hdl_pkg::fw_component_root #(forms_pkg::forms_top))) u_root (
+        .clock(clock), .reset(reset));
+endmodule
+"""
+
+
+def _forms(tmp_path, src):
+    f = tmp_path / "forms_pkg.sv"
+    f.write_text(src)
+    reporter = ErrorReporter()
+    blocks = build_reg_blocks([str(f)], FlowConfig(), reporter)
+    return blocks, reporter
+
+
+def test_self_registering_offsets_access_and_pulse(tmp_path):
+    """`r = new(name, this, ...)` adds r in source order at `offset` (or the
+    cursor); access and pulse_mask are read, and marked unresolved since the RTL
+    emitter does not honour them yet."""
+    blocks, reporter = _forms(tmp_path, _FORMS)
+    assert not reporter.has_errors(), reporter.report()
+    regs = {r.name: r for r in blocks["forms_regs"].registers}
+    assert [r.name for r in blocks["forms_regs"].registers] == ["ctl", "tx", "rx", "gap"]
+    assert {n: r.offset for n, r in regs.items()} == {"ctl": 0, "tx": 8, "rx": 8, "gap": 0xc}
+    assert (regs["tx"].access, regs["rx"].access, regs["gap"].access) == ("WO", "RO", "RW")
+    assert regs["ctl"].pulse_mask == 1 and "pulse_mask" in regs["ctl"].unresolved
+    assert "access" in regs["tx"].unresolved and not regs["gap"].unresolved
+
+
+def test_add_after_self_registering_is_an_error(tmp_path):
+    """fw_reg_block.add() of a register `new(.., this)` already added is a
+    $fatal at run time; the recognizer reports it."""
+    src = _FORMS.replace("gap = new(\"gap\", this);", "gap = new(\"gap\", this); add(gap);")
+    _, reporter = _forms(tmp_path, src)
+    assert reporter.has_errors() and "twice" in reporter.report()

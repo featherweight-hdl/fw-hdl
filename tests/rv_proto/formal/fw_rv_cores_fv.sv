@@ -80,10 +80,10 @@ module fw_rv_cores_fv #(parameter int W = 8) (
 
     // ------------------------------------------------------------------
     // (1) BUS CONTRACT: initiator core holds valid + data stable while the
-    //     target is not ready.
+    //     target is not ready, except into reset (valid is low while reset is high).
     // ------------------------------------------------------------------
     always @(posedge clock)
-        if (f_past_valid && !$past(reset))
+        if (f_past_valid && !$past(reset) && !reset)
             if ($past(bus_valid) && !$past(bus_ready)) begin
                 assert (bus_valid);
                 assert (bus_data == $past(bus_data));
@@ -91,10 +91,10 @@ module fw_rv_cores_fv #(parameter int W = 8) (
 
     // ------------------------------------------------------------------
     // (2) LINK CONTRACT: target core holds up_valid + up_data stable while the
-    //     sink is not ready.
+    //     sink is not ready, except into reset.
     // ------------------------------------------------------------------
     always @(posedge clock)
-        if (f_past_valid && !$past(reset))
+        if (f_past_valid && !$past(reset) && !reset)
             if ($past(t_up_valid) && !$past(snk_ready)) begin
                 assert (t_up_valid);
                 assert (t_up_data == $past(t_up_data));

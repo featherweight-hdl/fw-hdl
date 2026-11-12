@@ -3,6 +3,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from fw_tools import tool
 
 import pytest
 
@@ -171,7 +172,7 @@ def test_cli(tmp_path):
     assert r.returncode == 1 and "bad.yaml:1" in r.stderr
 
 
-DFM = REPO / "packages" / "python" / "bin" / "dfm"
+DFM = tool("dfm")
 
 
 @pytest.mark.skipif(not DFM.exists(), reason="needs the packet's dfm")

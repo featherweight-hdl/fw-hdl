@@ -6,6 +6,7 @@ in the same block still stores/round-trips.
 """
 import subprocess
 from pathlib import Path
+from fw_tools import tool
 
 import pytest
 
@@ -13,7 +14,7 @@ from fw.hdl.emit.regblock import emit_regblock
 from fw.hdl.regmap import RegBlock, Register, RegField, RegUsage
 
 REPO = Path(__file__).resolve().parents[3]
-VERILATOR = REPO / "packages" / "verilator" / "bin" / "verilator"
+VERILATOR = tool("verilator")
 
 
 def _block():

@@ -12,6 +12,7 @@ import json
 import random
 import subprocess
 from pathlib import Path
+from fw_tools import tool
 
 import pytest
 
@@ -231,7 +232,7 @@ def test_map_records_in_simulation(tmp_path):
     assert "bind rv out out style=xls data=out_data" in out
 
 
-DFM = REPO / "packages" / "python" / "bin" / "dfm"
+DFM = tool("dfm")
 
 
 @needs_xls

@@ -210,11 +210,11 @@ def test_lowering_is_seed_independent(tmp_path):
     import subprocess
     import sys
     here = Path(__file__).resolve().parent
-    code = ("import sys; sys.path[:0] = [{h!r}, {p!r}];"
+    code = ("import sys; sys.path[:0] = [{h!r}, {t!r}, {p!r}];"
             "from pathlib import Path;"
             "import test_elab_harness as t, _elab_helpers as h;"
             "print(h.lower_sv(t.FLT, 'flt_top', Path(sys.argv[1])).verilog)").format(
-                h=str(here), p=str(here.parents[2] / "python"))
+                h=str(here), t=str(here.parents[1]), p=str(here.parents[2] / "python"))
     outs = set()
     for seed in ("1", "2"):
         r = subprocess.run([sys.executable, "-c", code, str(tmp_path / seed)],

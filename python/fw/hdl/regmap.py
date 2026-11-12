@@ -56,7 +56,12 @@ class Register:
     sw_wmask: int = 0
     hw_wmask: int = 0
     rclr_mask: int = 0
-    # masks the recognizer could not constant-fold (logged, not silently dropped)
+    # bus directions the block decodes to this register: "RW", "RO" or "WO"
+    access: str = "RW"
+    # sw-written bits that never stay set (single-cycle pulses)
+    pulse_mask: int = 0
+    # what the recognizer could not constant-fold, or the emitter cannot honour
+    # yet (logged, not silently dropped)
     unresolved: Tuple[str, ...] = ()
 
 

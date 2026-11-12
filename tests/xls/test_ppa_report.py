@@ -6,6 +6,7 @@ import csv
 import os
 import subprocess
 from pathlib import Path
+from fw_tools import tool
 
 import pytest
 
@@ -13,7 +14,7 @@ from zuspec.be.xls.testing.xlstools import codegen_main, opt_main
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
-DFM = REPO / "packages" / "python" / "bin" / "dfm"
+DFM = tool("dfm")
 SRC = HERE / "compose" / "crit_pkg.sv"
 
 needs = pytest.mark.skipif(not DFM.exists() or codegen_main() is None or opt_main() is None,

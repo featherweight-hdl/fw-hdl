@@ -3,6 +3,7 @@
 * the kit test (driver -> initiator -> pins -> target -> sink, monitor tapping)
   at a 32-bit, an 8-bit and a struct payload, with backpressure on the pins;
 * the put/get adapters under backpressure: no beat lost or duplicated;
+* the run-time knobs (depth, max_gap) and the monitor's first-valid events;
 * the same test through the dfm fragment (tests/rv_proto/flow.yaml);
 * the synthesizable cores (width W, not `type T`: yosys has no type
   parameters) elaborate in yosys at two widths.
@@ -12,6 +13,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from fw_tools import tool, have
 
 import pytest
 
@@ -19,7 +21,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 SRC = REPO / "src"
 RV = SRC / "std" / "rv"
-DFM = REPO / "packages" / "python" / "bin" / "dfm"
+DFM = tool("dfm")
 sys.path.insert(0, str(REPO / "tests" / "xls"))
 from xls_harness import have_verilator, run_verilator  # noqa: E402
 
@@ -55,6 +57,14 @@ def test_put_get_adapters_under_backpressure(tmp_path):
     assert "[rv_adapter] PASS" in out, "\n".join(out[-40:])
 
 
+@needs_vlt
+def test_runtime_knobs(tmp_path):
+    """depth and max_gap on the initiator and target; the monitor's first-valid events."""
+    out = run_verilator([SRC / "fw_root.sv", *RV_FILES, HERE / "rv_knobs_tb.sv"],
+                        "rv_knobs_tb", tmp_path, extra=[f"+incdir+{RV}"])
+    assert "[rv_knobs] PASS" in out, "\n".join(out[-40:])
+
+
 @pytest.mark.skipif(not DFM.exists(), reason="needs the packet's dfm")
 def test_kit_through_dfm_fragment(tmp_path):
     (tmp_path / "flow.yaml").write_text(
@@ -68,11 +78,10 @@ def test_kit_through_dfm_fragment(tmp_path):
     assert "[rv_proto] PASS" in out + log, out[-3000:]
 
 
-@pytest.mark.skipif(shutil.which("yosys") is None and not (REPO / "packages" / "yosys").exists(),
-                    reason="needs yosys")
+@pytest.mark.skipif(not have("yosys"), reason="needs yosys")
 @pytest.mark.parametrize("width", [8, 32])
 def test_cores_synthesize(tmp_path, width):
-    yosys = shutil.which("yosys") or str(REPO / "packages" / "yosys" / "bin" / "yosys")
+    yosys = str(tool("yosys"))
     script = "".join(f"read_verilog -sv {c}\n" for c in CORES)
     script += "".join(f"chparam -set W {width} {c.stem}\n" for c in CORES)
     script += "hierarchy -check\nproc\nopt\nstat\n"

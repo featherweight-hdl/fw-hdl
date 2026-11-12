@@ -8,10 +8,8 @@ class mmio_regs extends fw_reg_block #(32);
 
     function new(string name);
         super.new(name);
-        ctrl   = new("ctrl",   .sw_wmask('{go:1,   default:'0}));   // sw RW: go only
-        status = new("status", .sw_wmask('0),
-                               .hw_wmask('{flag:1, default:'0}));    // hw owns flag only
-        add(ctrl);     // 0x0
-        add(status);   // 0x4
+        ctrl   = new("ctrl",   this, .sw_wmask('{go:1,   default:'0}));   // sw RW: go only
+        status = new("status", this, .sw_wmask('0),
+                                     .hw_wmask('{flag:1, default:'0}));    // hw owns flag only
     endfunction
 endclass

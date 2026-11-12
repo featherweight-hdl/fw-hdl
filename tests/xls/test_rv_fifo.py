@@ -7,6 +7,7 @@ it is a wire).
 """
 import re
 from pathlib import Path
+from fw_tools import have, tool
 
 import pytest
 
@@ -83,10 +84,7 @@ def test_fw_rv_fifo(workdir, depth):
 
 
 def _yosys():
-    import shutil
-    return shutil.which("yosys") or (
-        str(REPO / "packages" / "yosys" / "bin" / "yosys")
-        if (REPO / "packages" / "yosys" / "bin" / "yosys").exists() else None)
+    return str(tool("yosys")) if have("yosys") else None
 
 
 @pytest.mark.parametrize("depth", [0, 1, 2, 3, 16])

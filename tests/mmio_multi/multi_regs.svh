@@ -10,13 +10,9 @@ class multi_regs extends fw_reg_block #(32);
 
     function new(string name);
         super.new(name);
-        ctrl_a   = new("ctrl_a",   .sw_wmask('{go:1,   default:'0}));
-        status_a = new("status_a", .sw_wmask('0), .hw_wmask('{flag:1, default:'0}));
-        ctrl_b   = new("ctrl_b",   .sw_wmask('{go:1,   default:'0}));
-        status_b = new("status_b", .sw_wmask('0), .hw_wmask('{flag:1, default:'0}));
-        add(ctrl_a);    // 0x0
-        add(status_a);  // 0x4
-        add(ctrl_b);    // 0x8
-        add(status_b);  // 0xc
+        ctrl_a   = new("ctrl_a",   this, .sw_wmask('{go:1,   default:'0}));
+        status_a = new("status_a", this, .sw_wmask('0), .hw_wmask('{flag:1, default:'0}));
+        ctrl_b   = new("ctrl_b",   this, .sw_wmask('{go:1,   default:'0}));
+        status_b = new("status_b", this, .sw_wmask('0), .hw_wmask('{flag:1, default:'0}));
     endfunction
 endclass

@@ -12,6 +12,7 @@ import subprocess
 import pytest
 
 from xls_harness import REPO, run_verilator
+from fw_tools import have, tool
 
 RTL = REPO / "src" / "rtl"
 FILES = [RTL / "fw_rv_fifo.sv", RTL / "fw_sram_fifo.sv", RTL / "fw_ram_1r1w_model.sv"]
@@ -81,9 +82,7 @@ def test_same_handshake_as_rv_fifo(workdir, depth, seed):
 
 
 def _yosys():
-    return shutil.which("yosys") or (
-        str(REPO / "packages" / "yosys" / "bin" / "yosys")
-        if (REPO / "packages" / "yosys" / "bin" / "yosys").exists() else None)
+    return str(tool("yosys")) if have("yosys") else None
 
 
 @pytest.mark.parametrize("depth", [3, 4, 16])

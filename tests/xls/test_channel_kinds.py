@@ -5,6 +5,7 @@ port bound to an end of another kind is rejected at integration.
 import json
 import random
 from pathlib import Path
+from fw_tools import tool
 
 import pytest
 
@@ -178,7 +179,7 @@ endmodule
     assert any("fw_valid_check link: offered while full" in l for l in out), "\n".join(out[-10:])
 
 
-DFM = REPO / "packages" / "python" / "bin" / "dfm"
+DFM = tool("dfm")
 
 
 @needs_xls

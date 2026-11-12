@@ -5,6 +5,7 @@ same design give the same streams.
 """
 import random
 from pathlib import Path
+from fw_tools import tool
 
 import pytest
 
@@ -86,7 +87,7 @@ import os  # noqa: E402
 import shutil  # noqa: E402
 import subprocess  # noqa: E402
 
-DFM = REPO / "packages" / "python" / "bin" / "dfm"
+DFM = tool("dfm")
 EXAMPLE = REPO / "examples" / "resp_tracker"
 
 

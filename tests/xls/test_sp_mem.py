@@ -13,6 +13,7 @@
 """
 import random
 from pathlib import Path
+from fw_tools import tool
 
 import pytest
 
@@ -157,7 +158,7 @@ def test_design_same_stream_any_binding(tmp_path):
         assert got == base, name
 
 
-DFM = REPO / "packages" / "python" / "bin" / "dfm"
+DFM = tool("dfm")
 FLOW = """\
 package:
   name: mm

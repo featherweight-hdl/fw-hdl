@@ -3,10 +3,13 @@
 This is the M5 step of the register-model plan: walk a class that extends
 ``fw_reg_block`` and recover, from its declarations and constructor, the flat
 register/field description (``fw.hdl.regmap``). It handles the straight-line
-construction pattern (member ``fw_reg #(T) r;`` + ``r = new(...)`` + ``add(r)`` /
-``add(r, OFFSET)`` / ``add_block(sub, OFFSET)``) and constant-folds offsets, reset
-values, and the sw/hw/rclr masks — including masks supplied by a single-``return``
-struct-literal helper function (the DMA CSR pattern).
+construction pattern: member ``fw_reg #(T) r;`` + ``r = new(name, this, ...)``,
+which adds the register to this block (at the ``offset`` argument, or the
+cursor), in source order, plus ``add(r)`` / ``add(r, OFFSET)`` for a register
+made with another parent and ``add_block(sub, OFFSET)`` for a nested block. It
+constant-folds offsets, reset values, the sw/hw/rclr masks — including masks
+supplied by a single-``return`` struct-literal helper function (the DMA CSR
+pattern) — the decode ``access`` and the ``pulse_mask``.
 
 Constructs it cannot constant-fold are *recorded* (``Register.unresolved`` / a
 reporter note), never silently dropped.
@@ -24,8 +27,13 @@ from .astdump import collect_user_classes
 from .expr_mapper import const_to_int, parse_int_token
 from .parser import Parser
 
-# fw_reg constructor formal order: new(name, reset, sw_wmask, hw_wmask, rclr_mask)
-_ARG_RESET, _ARG_SW, _ARG_HW, _ARG_RCLR = 1, 2, 3, 4
+# fw_reg constructor formal order:
+#   new(name, parent, offset, reset, sw_wmask, hw_wmask, rclr_mask, access, pulse_mask)
+_ARG_PARENT, _ARG_OFFSET = 1, 2
+_ARG_RESET, _ARG_SW, _ARG_HW, _ARG_RCLR = 3, 4, 5, 6
+_ARG_ACCESS, _ARG_PULSE = 7, 8
+# fw_reg_access_e: bit 0 = sw readable, bit 1 = sw writable
+_ACCESS = {3: "RW", 1: "RO", 2: "WO"}
 
 
 def build_reg_blocks(files: List[str],
@@ -81,7 +89,8 @@ class RegMapper:
             if sub is not None:
                 sub_props[m.name] = sub
 
-        # 2. read the constructor: register ctor args + add()/add_block() order
+        # 2. read the constructor: register ctor args + the order registers are
+        #    added in (by `new(name, this, ...)` or add()) and add_block() order
         ctor = self._find_new(cls_sym)
         ctor_args: Dict[str, object] = {}               # regname -> constructorCall
         add_order: List[Tuple[str, Optional[int]]] = []  # (regname, offset|None)
@@ -171,6 +180,13 @@ class RegMapper:
                 cc = getattr(e.right, "constructorCall", None)
                 if cc is not None:
                     ctor_args[lname] = cc
+                    # `r = new(name, this, ...)`: the register adds itself to
+                    # this block, at `offset` (-1: the cursor)
+                    args = list(getattr(cc, "arguments", []) or [])
+                    if len(args) > _ARG_PARENT and self._is_this(args[_ARG_PARENT]):
+                        off = (self._eval_int(args[_ARG_OFFSET], env)
+                               if len(args) > _ARG_OFFSET else None)
+                        self._add_reg(lname, off, add_order)
         elif e.kind == ast.ExpressionKind.Call:
             name = getattr(e, "subroutineName", None)
             if name in ("add", "add_block"):
@@ -180,9 +196,27 @@ class RegMapper:
                 if target is None:
                     return
                 if name == "add":
-                    add_order.append((target, off))
+                    self._add_reg(target, off, add_order)
                 else:
                     addblk_order.append((target, off))
+
+    def _add_reg(self, rname, off, add_order):
+        if any(n == rname for (n, _) in add_order):
+            # fw_reg_block.add() is $fatal on a register added twice
+            self.reporter.error(
+                f"register {rname!r} is added to its block twice (`new(.., this)` "
+                f"already adds it; drop the add() call)")
+            return
+        add_order.append((rname, off))
+
+    @staticmethod
+    def _is_this(e) -> bool:
+        """True if *e* is ``this`` (possibly converted to the base-class type)."""
+        while e.kind == ast.ExpressionKind.Conversion:
+            e = e.operand
+        if e.kind == ast.ExpressionKind.NamedValue:
+            return getattr(getattr(e, "symbol", None), "name", None) == "this"
+        return str(getattr(e, "syntax", "")).strip() == "this"
 
     @staticmethod
     def _ref_name(e) -> Optional[str]:
@@ -212,6 +246,27 @@ class RegMapper:
 
         reg.reset, reg.sw_wmask, reg.hw_wmask, reg.rclr_mask = \
             reset, sw_wmask, hw_wmask, rclr_mask
+
+        acc = self._int_arg(cc, _ARG_ACCESS)
+        if acc is not None:
+            reg.access = _ACCESS.get(acc, "RW")
+            if acc not in _ACCESS:
+                unresolved.append("access")
+                self.reporter.warning(f"register {name!r}: unknown access value {acc}")
+        pul = self._mask_arg(cc, _ARG_PULSE, fields_layout, W, name, "pulse_mask", unresolved)
+        reg.pulse_mask = pul or 0
+        # Read for the record; the RTL emitter does not implement them yet, so a
+        # register that uses them is marked rather than silently treated as RW.
+        if reg.access != "RW":
+            unresolved.append("access")
+            self.reporter.warning(
+                f"register {name!r}: access {reg.access} is not supported by the "
+                f"RTL emitter yet (emitted as RW)")
+        if reg.pulse_mask:
+            unresolved.append("pulse_mask")
+            self.reporter.warning(
+                f"register {name!r}: pulse_mask is not supported by the RTL "
+                f"emitter yet (bits stay set)")
         reg.unresolved = tuple(unresolved)
 
         for (fname, lsb, width) in fields_layout:
@@ -241,6 +296,12 @@ class RegMapper:
         return out
 
     # -- value / mask evaluation -----------------------------------------
+    def _int_arg(self, cc, idx) -> Optional[int]:
+        if cc is None:
+            return None
+        args = list(getattr(cc, "arguments", []) or [])
+        return self._eval_int(args[idx], {}) if idx < len(args) else None
+
     def _mask_arg(self, cc, idx, fields_layout, W, regname, what, unresolved) -> Optional[int]:
         if cc is None:
             return None

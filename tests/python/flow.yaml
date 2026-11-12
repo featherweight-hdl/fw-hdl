@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+fragment:
+  name: python
+
+  tasks:
+  # The Python suite (pytest's testpaths): the front end, lowering, register
+  # model, MMIO and emitters, plus Verilator/SBY system tests. It is listed
+  # under the root `tests` task so CI gates it; before that it went unrun and
+  # broke unnoticed. `python` is the environment's (dfm's PATH).
+  - name: pytest
+    desc: fw-hdl Python tests (tests/python)
+    # A test run with no inputs for dv-flow to hash: never "up to date".
+    uptodate: false
+    run: cd ${{ srcdir }}/../.. && python -m pytest -q -p no:cacheprovider tests/python
