@@ -107,6 +107,10 @@ SP800_38A_F51_CT = [0x874d6191b620e3261bef6864990db6ce, 0x9806f66b7970fdff861718
 
 
 @pytest.mark.verilator
+# Verilator 5.055 peaks at ~50 GB (then is killed) building the XLS RTL of
+# this design; a 16 GB CI runner dies with it. A tool limit, not ours: run it
+# by hand with FW_HDL_RUN_BIGMEM=1 on a large host.
+@pytest.mark.bigmem
 def test_c4_aes128_ctr(workdir):
     def cmd(key, ctr, n):
         return (key << 136) | (ctr << 8) | n

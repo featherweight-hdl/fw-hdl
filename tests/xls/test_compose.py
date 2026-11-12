@@ -281,8 +281,9 @@ def test_t1_through_dv_flow(workdir, task):
             if fs["filetype"] == "systemVerilogSource" for f in fs["files"]]
     sig_file = [Path(fs["basedir"]) / f for fs in outs
                 if fs["filetype"] == "blockSignature" for f in fs["files"]]
-    assert [p.name for p in srcs] == ["fw_rv_fifo.sv", "rle_enc8_t.sv", "pkt_framer.sv",
-                                      "crc32_stream.sv", "chain_top.sv"]
+    from fw.hdl.dfm_tasks import RTL_LIB      # the channel RTL Integrate always lists
+    assert [p.name for p in srcs] == [p.name for p in RTL_LIB] + [
+        "rle_enc8_t.sv", "pkt_framer.sv", "crc32_stream.sv", "chain_top.sv"]
     assert {fs["filetype"] for fs in outs} == {"systemVerilogSource", "blockSignature"}
     sig = ir.load_signature(str(sig_file[0]))
     xs = stimulus(3, 400)

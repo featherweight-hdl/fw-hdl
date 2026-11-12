@@ -1,5 +1,6 @@
 """B4d: a design outside the static subset fails fw.hdl.xls.IR and
 fw.hdl.spl.Partition with a located marker; neither task raises."""
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -41,5 +42,13 @@ def test_lowering_error_is_a_located_marker(tmp_path, task):
     out = r.stdout + r.stderr
     assert r.returncode != 0, out
     assert "Task threw exception" not in out, out[-3000:]
-    assert "second operation on channel 'out'" in out, out[-3000:]
-    assert "twice_pkg.sv:18" in out, out[-3000:]
+    # The location is checked in the task's recorded markers, not in the
+    # console: dfm's console wraps long paths at the terminal width.
+    data = json.loads((tmp_path / "rundir" / f"neg.{task}" /
+                       f"neg.{task}.exec_data.json").read_text())
+    markers = data["result"]["markers"]
+    m = next((m for m in markers if "second operation on channel 'out'" in m["msg"]),
+             None)
+    assert m is not None, markers
+    assert m["severity"] == "error", m
+    assert Path(m["loc"]["path"]).name == "twice_pkg.sv" and m["loc"]["line"] == 18, m
