@@ -42,6 +42,7 @@ package:
     - reg_smoke.reg-smoke
     - root_param.root-param
     - rv_proto.rv-proto
+    - python.pytest
     - xls.xls-conformance
     - order.selftest
     - stdlib.unit
@@ -71,6 +72,7 @@ package:
   - tests/root_param/flow.yaml
   - tests/rv_proto/flow.yaml
   - tests/formal/flow.yaml
+  - tests/python/flow.yaml
   - tests/xls/flow.yaml
   - tests/xls/compose/flow.yaml
   - tests/order/flow.yaml
