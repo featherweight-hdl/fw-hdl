@@ -251,12 +251,25 @@ The design top describes, in one block, how the root's ports and exports reach p
 {sv:class}`fw_std_pkg::fw_put_xtor_bridge` over `fw_put_xtor_if`) and connects the
 port to it. The component does not know its `put()` reaches a pin.
 
-## Clock domains
+## Domains
 
 Every component has a `clock` port, its clock domain
-({sv:class}`fw_hdl_pkg::fw_clock_domain_if`). It inherits the port from its parent
-unless it is connected explicitly. The root's domain is seated by `fw_root` from its
-`clock` and `reset`. `tick(n)` waits `n` cycles of the component's domain. In timed
-code that is exact. In untimed code it is a minimum: at least `n` cycles separate the
-code before it from the code after it, and an engine may add more ({doc}`timing`). See
-{doc}`../reference/clocking`.
+({sv:class}`fw_hdl_pkg::fw_clock_domain_if`), and a `reset` port, its reset domain
+({sv:class}`fw_hdl_pkg::fw_reset_domain_if`). It inherits both from its parent unless
+they are connected explicitly; `reset` only when the parent's is bound, and an unbound
+`reset` means "never in reset". The root's domains are seated by `fw_root` from its
+`clock` and `reset`. `tick(n)` waits `n` cycles of the component's clock domain. In
+timed code that is exact. In untimed code it is a minimum: at least `n` cycles separate
+the code before it from the code after it, and an engine may add more ({doc}`timing`).
+
+Behavior follows the reset domain. A component in a reset domain other than the root's
+(a soft reset from a register bit, {sv:class}`fw_hdl_pkg::fw_reg_reset_domain`, or a
+combination, {sv:class}`fw_hdl_pkg::fw_reset_combine`) has its `run()` started when the
+domain deasserts and killed, with everything it forked, when it asserts; it puts its
+state back in `reset_state()`. A `step()` keeps running and reads `in_reset()` itself.
+The root reset tears the whole tree down instead, and reset release builds a fresh one.
+
+A binding between components in different domains is a **crossing**. The check run
+after connect reports it: a divided clock at info, a soft-reset boundary as a warning,
+a second clock or an unrelated reset as an error unless it goes through a crossing
+element or is waived with a reason. See {doc}`../reference/clocking`.

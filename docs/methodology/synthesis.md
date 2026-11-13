@@ -134,6 +134,28 @@ block can come from somewhere else as long as it has the same signature.
 :end-before: endpackage
 ```
 
+## Domains
+
+Lowering is single-clock and single-reset. The domains lower as follows
+({doc}`../reference/clocking`):
+
+| Construct | Lowers to |
+|---|---|
+| the root clock and reset domains | the design's clock and reset inputs (what `fw_root` is connected to) |
+| `in_reset()` on the root domain | a read of the design reset |
+| a divided clock domain | more cycles on the one clock |
+| `fw_reg_reset_domain::in_reset()` | logic: `reset \| (reg_q[bit] ^ active_low)` |
+| `fw_reset_combine::in_reset()` | logic: the OR of its sources |
+| `wait_reset_deassert()` / `wait_reset_assert()` | a tick loop on the condition, as written |
+| `step()` in a derived reset domain | as written: it reads `in_reset()` |
+| `run()` in a derived reset domain (restarted with the domain) | not lowered yet: the native flow rejects it, naming the component and the domain |
+| a clock domain unrelated to the root's, a reset domain other than the root's | Partition rejects the instance at the line that bound it |
+
+A derived reset domain does not change which flops have a reset: state is reset by the
+design reset only, and synchronous-level code resets its own state through
+`in_reset()`. The domain crossing check is a simulation check; the front ends do not
+run it.
+
 ## Recognized classes
 
 Some library classes are not mapped from their bodies. Their body is the model, and
