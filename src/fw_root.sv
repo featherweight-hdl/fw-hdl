@@ -15,6 +15,10 @@ module fw_root #(
     // module's clock/reset. Its bridge becomes the root component's clock
     // domain, which every other component inherits by default.
     fw_clock_xtor_if u_clk(.clock(clock), .reset(reset));
+    // The root reset-domain transactor: the root component's reset domain,
+    // inherited like the clock. `reset` is active high; invert an active-low
+    // pin where it enters (`fw_root_begin(top, u_root, aclk, !aresetn)).
+    fw_reset_xtor_if u_rst(.clock(clock), .reset(reset));
 
     always @(posedge clock or posedge reset) begin
         if (reset) begin
@@ -30,12 +34,17 @@ module fw_root #(
             if (in_reset) begin
                 automatic string path = $sformatf("%m");
                 automatic fw_clock_xtor_bridge clk_dom;
+                automatic fw_reset_xtor_bridge rst_dom;
                 in_reset <= 1'b0;
                 root = new(path);
                 // Seat the root component's clock domain before start() so the
                 // whole tree resolves through it.
                 clk_dom = new("clock", root, u_clk);
                 root.clock.connect(clk_dom);
+                // ...and its reset domain, deasserting on that clock.
+                rst_dom = new("reset", root, u_rst);
+                rst_dom.clk.connect(clk_dom);
+                root.reset.connect(rst_dom);
                 fork
                     root.start();
                 join_none

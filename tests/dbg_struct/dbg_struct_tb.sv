@@ -45,6 +45,12 @@ module dbg_struct_tb;
         endfunction
         virtual task tick(int n = 1); #(n); endtask
         virtual function longint root_ticks(int n = 1); return n; endfunction
+        // fw_domain_if: a root clock domain
+        virtual function fw_domain_kind_e domain_kind(); return FW_DOMAIN_CLOCK; endfunction
+        virtual function string domain_name(); return full_name(); endfunction
+        virtual function int domain_nsrc(); return 0; endfunction
+        virtual function fw_domain_if domain_src(int i); return null; endfunction
+        virtual function fw_domain_if domain_equiv(); return this; endfunction
     endclass
 
 `ifdef FW_TRACE_OFF

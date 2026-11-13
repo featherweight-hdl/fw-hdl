@@ -26,20 +26,29 @@ package fw_hdl_pkg;
     `include "fw_steppable.svh"
     // Deferred-binding wrappers and the clock-domain API must precede
     // fw_component, which now holds an fw_port #(fw_clock_domain_if) `clock`.
+    // Domains (clock, reset): the kind-free API and the relation helper come
+    // before fw_endpoint, which records an endpoint's domain associations.
+    `include "fw_domain_if.svh"
+    `include "fw_domains.svh"
     `include "fw_endpoint.svh"
     `include "fw_facts.svh"             // characterization facts a component declares
     `include "fw_if_base.svh"
     `include "fw_clock_domain_if.svh"
     `include "fw_export.svh"
     `include "fw_port.svh"
+    `include "fw_domain_port.svh"       // fw_clock_port
+    `include "fw_reset_domain_if.svh"   // the reset kind; fw_reset_port
     `include "fw_clock_domain.svh"
     `include "fw_clock_xtor_bridge.svh"
     `include "fw_clock_period_xtor_bridge.svh"
+    `include "fw_reset_xtor_bridge.svh"  // the root reset domain (fw_reset_xtor_if)
     `include "fw_quantum_keeper.svh"     // TLM-style temporal decoupling (loosely-timed speedup)
     `include "fw_component.svh"
     `include "fw_atomic_step.svh"       // a cycle step that stalls as a whole on back-pressure
     `include "fw_component_param.svh"
     `include "fw_extern.svh"            // wrapped IP: a Verilog module behind a class
+    `include "fw_crossing.svh"          // a domain crossing (record)
+    `include "fw_crossing_check.svh"    // the crossing check, run after connect
     `include "fw_component_root.svh"
     `include "fw_component_root_param.svh"
     // Bidirectional link pair: an fw_port and an fw_export bound as one,
@@ -70,5 +79,10 @@ package fw_hdl_pkg;
     `include "fw_reg.svh"           // typed register over a packed struct
     `include "fw_reg_set.svh"       // register watch-set (fw_event_set + which)
     `include "fw_reg_block.svh"     // register group: offsets, decode
+
+    // Derived reset domains. After the register model: the register-bit domain
+    // reads an fw_reg_base.
+    `include "fw_reset_combine.svh"     // OR of n reset domains
+    `include "fw_reg_reset_domain.svh"  // a source reset OR a register bit
 
 endpackage

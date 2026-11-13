@@ -17,8 +17,12 @@
 //                    query, resolved by tracing up the tree.
 //
 // Latency-insensitive: in untimed code tick(n) means at least n cycles.
+//
+// A clock domain is one kind of domain (fw_domain_if): implementers also answer
+// domain_kind() (FW_DOMAIN_CLOCK), domain_name(), and the source graph
+// (domain_nsrc/domain_src/domain_equiv) that fw_domains::relate() compares.
 (* fw_latency_insensitive *)
-interface class fw_clock_domain_if;
+interface class fw_clock_domain_if extends fw_domain_if;
     pure virtual task     tick(int n = 1);
     pure virtual function longint root_ticks(int n = 1);
 endclass

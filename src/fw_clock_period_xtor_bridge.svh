@@ -14,6 +14,7 @@ class fw_clock_period_xtor_bridge extends fw_export #(fw_clock_domain_if)
 
     function new(string name, fw_component parent, virtual fw_clock_period_xtor_if vif);
         super.new(name, parent, this);   // register `this` as the export's imp
+        set_ambient();                   // domain plumbing, not a data binding
         this.vif = vif;
     endfunction
 
@@ -24,4 +25,11 @@ class fw_clock_period_xtor_bridge extends fw_export #(fw_clock_domain_if)
     virtual function longint root_ticks(int n = 1);
         return n;                        // I am the root domain
     endfunction
+
+    // --- fw_domain_if: a root clock domain -----------------------------------
+    virtual function fw_domain_kind_e domain_kind();   return FW_DOMAIN_CLOCK; endfunction
+    virtual function string           domain_name();   return full_name();     endfunction
+    virtual function int              domain_nsrc();   return 0;               endfunction
+    virtual function fw_domain_if     domain_src(int i); return null;          endfunction
+    virtual function fw_domain_if     domain_equiv();  return this;            endfunction
 endclass

@@ -25,13 +25,27 @@ class fw_component implements fw_elaboratable;
     // Non-component things that still emit and need a context handed to them --
     // register blocks, principally. See fw_dbg_contextual.
     protected fw_dbg_contextual m_ctxt[$];
+    // Every port and export this component holds, as endpoint objects (sockets
+    // do not withdraw theirs, unlike m_bind). The crossing check walks these.
+    protected fw_endpoint       m_eps[$];
 
     // Every component has a `clock` port: its clock DOMAIN, consumed as the
     // fw_clock_domain_if API. Created here (not in build()) so it exists for
     // wiring before any phase runs. Left unconnected by default; do_connect()
     // auto-inherits it from the parent, or the parent/component overrides it in
     // connect(). The root's clock is seated externally by fw_root.
-    fw_port #(fw_clock_domain_if) clock;
+    //
+    // An fw_clock_port is an fw_port #(fw_clock_domain_if) that also answers its
+    // domain kind (fw_domain_port), so the crossing check can ask any
+    // component's domain of a kind through domain().
+    fw_clock_port clock;
+
+    // ...and a `reset` port: its RESET DOMAIN (fw_reset_domain_if). Same shape
+    // as `clock`, with one difference: it is inherited from the parent only
+    // when the parent's is bound, and an unbound reset is legal -- it means
+    // "never in reset". fw_root seats the root's on the reset pin; a tree whose
+    // root seats only a clock keeps working unchanged.
+    fw_reset_port reset;
 
     // ...and a `dbg` port: its DEBUG CONTEXT, consumed as the listener API.
     // Deliberately the same shape as `clock` -- created in the constructor,
@@ -51,6 +65,12 @@ class fw_component implements fw_elaboratable;
     // The typed handle behind `dbg`, when this component chose its own context.
     // Null means "inherited" -- dbg_domain() then walks up to find it.
     protected fw_dbg_domain     m_dbg_dom;
+
+    // Crossing waivers, "<endpoint>:<kind>" -> reason (waive_crossing()).
+    protected string            m_waivers[string];
+
+    // Never triggered: what wait_reset_assert() waits on with no reset bound.
+    protected event             m_no_reset_ev;
 
     // ----------------------------------------------------------------------
     // The AMBIENT component: who owns whatever is being constructed right now.
@@ -91,7 +111,10 @@ class fw_component implements fw_elaboratable;
         m_name = name;
         m_parent = parent;
         clock = new("clock", this);
+        reset = new("reset", this);
+        reset.set_optional();
         dbg   = new("dbg", this);
+        dbg.set_ambient();
 
         if (parent != null) begin
             parent.add_elaboratable(this);
@@ -163,6 +186,27 @@ class fw_component implements fw_elaboratable;
         return clock.get_if().root_ticks(n);
     endfunction
 
+    // Is this component's reset domain asserted? Always 0 with no reset bound.
+    function bit in_reset();
+        if (!reset.is_connected()) return 1'b0;
+        return reset.get_if().in_reset();
+    endfunction
+
+    // Wait until this component's reset domain is out of reset (returns at
+    // once when it already is, or when no reset is bound).
+    (* fw_timed, fw_latency_insensitive *)
+    task wait_reset_deassert();
+        if (reset.is_connected()) reset.get_if().wait_deassert();
+    endtask
+
+    // Wait until this component's reset domain is in reset. With no reset bound
+    // that never happens, and this never returns.
+    (* fw_timed, fw_latency_insensitive *)
+    task wait_reset_assert();
+        if (reset.is_connected()) reset.get_if().wait_assert();
+        else @(m_no_reset_ev);
+    endtask
+
     // Register an elaboratable (child component, port, or export) with this
     // component so it is walked for build/connect.
     function void add_elaboratable(fw_elaboratable e);
@@ -173,6 +217,72 @@ class fw_component implements fw_elaboratable;
     // Called by fw_port/fw_export alongside add_elaboratable().
     function void add_bindable(fw_dbg_bindable b);
         m_bind.push_back(b);
+    endfunction
+
+    // Register a port/export as an endpoint object (the crossing check). Called
+    // by fw_port/fw_export alongside add_bindable().
+    function void add_endpoint(fw_endpoint e);
+        m_eps.push_back(e);
+    endfunction
+
+    function int num_endpoints();
+        return m_eps.size();
+    endfunction
+
+    function fw_endpoint get_endpoint(int i);
+        return m_eps[i];
+    endfunction
+
+    // This component's domain port of kind k.
+    virtual function fw_domain_ref domain(fw_domain_kind_e k);
+        case (k)
+            FW_DOMAIN_CLOCK: return clock.as_ref();
+            FW_DOMAIN_RESET: return reset.as_ref();
+            default:         return null;
+        endcase
+    endfunction
+
+    // A CROSSING ELEMENT for kind k: a component built to join two domains of
+    // that kind (a synchronizer, an async FIFO), which associates its endpoints
+    // with the domain on each side (fw_endpoint::set_domain). The crossing
+    // check does not report anything inside one.
+    virtual function bit is_crossing(fw_domain_kind_e k);
+        return 0;
+    endfunction
+
+    // Waive the crossing reported for endpoint `ep` (its local name; for a
+    // socket, the socket's name) for domain kind k. The reason is required and
+    // is reported with the crossing, at info. Call it in connect().
+    function void waive_crossing(string ep, fw_domain_kind_e k, string reason);
+        if (reason == "") begin
+            $fatal(1, "fw-hdl: %s: waive_crossing(\"%s\", %s) needs a reason",
+                   get_full_name(), ep, fw_domains::kind_name(k));
+        end
+        m_waivers[{ep, ":", fw_domains::kind_name(k)}] = reason;
+    endfunction
+
+    // The waiver reason for endpoint `ep` and kind k, or "". A socket's inner
+    // port and export (`<sock>.i`, `<sock>.e`) match a waiver on `<sock>`.
+    function string crossing_waiver(string ep, fw_domain_kind_e k);
+        string kn = fw_domains::kind_name(k);
+        string key = {ep, ":", kn};
+        if (m_waivers.exists(key)) return m_waivers[key];
+        for (int i = ep.len() - 1; i > 0; i--) begin
+            if (ep[i] == ".") begin
+                key = {ep.substr(0, i - 1), ":", kn};
+                if (m_waivers.exists(key)) return m_waivers[key];
+                break;
+            end
+        end
+        return "";
+    endfunction
+
+    // The child components, in construction order.
+    function void get_children(ref fw_component kids[$]);
+        foreach (m_elab[i]) begin
+            fw_component c;
+            if ($cast(c, m_elab[i])) kids.push_back(c);
+        end
     endfunction
 
     // Withdraw an endpoint from the bind map. A composite endpoint (an
@@ -305,12 +415,17 @@ class fw_component implements fw_elaboratable;
         // 1. Wire this level: the user may override any child's clock domain
         //    here (child.clock.connect(some_domain)).
         this.connect();
-        // 2. Auto-inherit: any child whose clock was not explicitly bound
-        //    defaults to this component's domain.
+        // 2. Auto-inherit: any child whose clock (reset) was not explicitly
+        //    bound defaults to this component's domain.
         foreach (m_elab[i]) begin
             fw_component c;
-            if ($cast(c, m_elab[i]) && !c.clock.is_connected()) begin
-                c.clock.connect(this.clock);
+            if ($cast(c, m_elab[i])) begin
+                if (!c.clock.is_connected()) c.clock.connect(this.clock);
+                // Reset only when mine is bound: an unbound reset means
+                // "never in reset", and chaining to it would make the child's
+                // resolution walk off the end of the chain.
+                if (!c.reset.is_connected() && this.reset.is_connected())
+                    c.reset.connect(this.reset);
             end
         end
         // 3. Now recurse -- children connect with their clock already seated.
@@ -330,9 +445,18 @@ class fw_component implements fw_elaboratable;
     // Timed library code: it starts the processes, and the step() driver it
     // forks is cycle-exact by construction (one step per rising edge). A run()
     // it starts is a process of its own and keeps its own timing context.
+    //
+    // A component whose reset domain asserts while the tree lives (any bound
+    // reset domain other than the tree root's; see reset_supervised()) does not
+    // fork its run()s here: one supervisor process does, and restarts them with
+    // the domain (run_supervised()). step() is never gated.
     (* fw_timed *)
     virtual task do_run();
-        foreach (m_run[i]) begin
+        if (m_run.size() != 0 && reset_supervised()) begin
+            fork
+                run_supervised();
+            join_none
+        end else foreach (m_run[i]) begin
             automatic fw_runnable r   = m_run[i];
             automatic int unsigned sid = m_sid_run[i];
             // "This process was actually forked." The ABSENCE of this event is
@@ -377,6 +501,75 @@ class fw_component implements fw_elaboratable;
             if ($cast(c, m_elab[i])) begin
                 c.do_run();
             end
+        end
+    endtask
+
+    // ----------------------------------------------------------------------
+    // Behavior follows the reset domain (docs/reference/clocking.md, "The run
+    // lifecycle").
+    // ----------------------------------------------------------------------
+
+    // Restore this component's state to its reset values. Called when its
+    // reset domain asserts, after its run() processes have been killed and
+    // before they start again. Class property initializers do not run again,
+    // so a component whose run() keeps state across a restart puts the initial
+    // values back here -- the class-model side of what the design reset does to
+    // a process's registers. Default: nothing. Not called for the tree root's
+    // reset domain, which fw_root handles by building a fresh tree.
+    virtual function void reset_state();
+    endfunction
+
+    // Is this component's run() supervised by its reset domain? Yes when a
+    // reset is bound and it is not the SAME domain as the tree root's: the
+    // root domain's assertion is the environment's (fw_root tears the tree
+    // down), every other domain's is handled here.
+    function bit reset_supervised();
+        fw_component top = this;
+        fw_domain_if mine, root;
+        if (!reset.is_connected()) return 1'b0;
+        while (top.m_parent != null) top = top.m_parent;
+        if (top == this) return 1'b0;
+        mine = reset.ref_domain();
+        root = top.reset.ref_domain();
+        if (mine == root) return 1'b0;
+        return fw_domains::relate(mine, root) != FW_DOMAIN_SAME;
+    endfunction
+
+    // Full name of this component's reset domain ("" when unbound).
+    function string reset_domain_name();
+        fw_domain_if d;
+        if (!reset.is_connected()) return "";
+        d = reset.ref_domain();
+        return (d != null) ? d.domain_name() : "";
+    endfunction
+
+    // The run lifecycle of a supervised component: on each deassertion fork
+    // every run(); on assertion kill them and everything they forked, then
+    // reset_state(). `disable fork` ends every process this one forked, at any
+    // depth (IEEE 1800 9.6.3) -- the same mechanism fw_component_root uses for
+    // teardown, and free of the race a per-process handle has (a handle is
+    // only known once the forked process has run).
+    (* fw_timed *)
+    protected task run_supervised();
+        forever begin
+            wait_reset_deassert();
+            foreach (m_run[i]) begin
+                automatic fw_runnable  r   = m_run[i];
+                automatic int unsigned sid = m_sid_run[i];
+                `fw_ev_op(dbg_if(), FW_L_VITAL, "fw_component.run_fork", FW_OP_BEGUN)
+                    `fw_field_as("index", i)
+                `fw_ev_end
+                fork
+                    begin
+                        `fw_track_enter(sid)
+                        r.run();
+                        `fw_track_exit
+                    end
+                join_none
+            end
+            wait_reset_assert();
+            disable fork;
+            reset_state();
         end
     endtask
 

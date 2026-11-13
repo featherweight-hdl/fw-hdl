@@ -50,6 +50,10 @@ class fw_component_root #(type Tb=fw_component) extends Tb;
             dbg_domain().apply();
         end
 
+        // Domain crossings (docs/reference/clocking.md, "Crossings"): one walk
+        // over the bound endpoints, before anything runs.
+        fw_crossing_check::check_root(this);
+
         // The bind map is complete exactly here: every port resolved, every
         // export bound, every runnable registered -- and nothing has run yet.
         emit_bind_map();

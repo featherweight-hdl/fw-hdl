@@ -66,7 +66,8 @@ endclass
 - `connect()` wires this level's ports to their providers. **Only wire here**
   (pointer assignment); the actual resolution happens in the connect *phase*
   after all `connect()`s run (see §2).
-- Every component has a built-in `clock` port (a clock DOMAIN — see §4).
+- Every component has built-in `clock` and `reset` ports (its clock and reset
+  DOMAINS — see §4).
 
 ### fw_port and fw_export — deferred binding
 APIs are not called directly between components; they flow over two wrapper
@@ -216,11 +217,13 @@ The phases (`src/fw_component.svh`):
 - **`do_build()`** — TOP-DOWN: run *this* `build()` (which creates children), then
   recurse into the just-created children.
 - **`do_connect()`** — TOP-DOWN: run *this* `connect()` (which only *wires*
-  pointers); then **auto-inherit clock** for any child whose `clock` port wasn't
-  explicitly bound (it defaults to this component's domain); then recurse —
+  pointers); then **auto-inherit clock (and reset)** for any child whose `clock`
+  (`reset`) port wasn't explicitly bound (it defaults to this component's domain;
+  reset only if this component's is bound); then recurse —
   during which each port resolves its provider into `port.t`. Because `connect()`
   only wires and resolution happens in the recursion afterward, ordering is free.
-- **`do_run()`** — fork the `run()` of every registered runnable, then recurse
+- **`do_run()`** — fork the `run()` of every registered runnable (under a reset
+  supervisor when the component's reset domain is not the root's), then recurse
   into child components. It is timed library code; the `step()` driver it forks is
   cycle-exact (one `step()` per rising edge), and each `run()` keeps its own
   timing context.
@@ -310,7 +313,7 @@ the producer.
 
 ---
 
-## 4. Clock domains
+## 4. Clock and reset domains
 
 Every component carries a `clock` port typed `fw_clock_domain_if`
 (`src/fw_clock_domain_if.svh`):
@@ -342,6 +345,27 @@ endclass
   ```
 
 See **`tests/clock_domain/`** for inherit + top-down override + divide-by-N.
+
+**Reset domains** have the same shape. Every component also has a `reset` port
+(`fw_reset_domain_if`: `in_reset()`, `wait_assert()`, `wait_deassert()`, `is_async()`,
+`sync_clock()`), inherited only when the parent's is bound; unbound means "never in
+reset". `fw_root` seats the root's on its `reset` pin (active high). Derived domains:
+`fw_reg_reset_domain #(W)` (source reset OR a register bit: a soft reset) and
+`fw_reset_combine` (OR of n domains). Helpers: `in_reset()`, `wait_reset_deassert()`,
+`wait_reset_assert()`.
+
+- **Behavior follows the reset domain.** A component in a reset domain other than
+  the root's has its `run()` started on deassertion and killed (with everything it
+  forked) on assertion; override `reset_state()` to put state back. `step()` is not
+  gated: read `in_reset()` in it. The root reset tears the tree down instead.
+- **Crossings.** After connect, `fw_component_root::start()` reports bindings
+  between different domains (`fw_crossing_check`): clock related = info, clock
+  unrelated = error ($fatal), reset related = warn, reset unrelated = error, and a
+  reset deasserting on an unrelated clock = error. Fix with a crossing element
+  (`is_crossing(k)` returning 1, endpoints associated with `set_domain(port)`), or
+  `waive_crossing("ep", FW_DOMAIN_RESET, "reason")`. Plusargs: `+fw_crossings_off`,
+  `+fw_crossings_show`, `+fw_crossings[=path]`, `+fw_crossings_nofatal`,
+  `+fw_crossings_sev=reset:related:error`. Reference: `docs/reference/clocking.md`.
 
 ---
 

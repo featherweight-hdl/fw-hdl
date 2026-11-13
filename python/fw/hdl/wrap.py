@@ -42,7 +42,7 @@ _LOW = re.compile(r"(^n|n(_?i)?$|_b$|_l$|_n_i$)", re.I)
 _RESERVED = {"input", "output", "inout", "module", "class", "function", "task", "begin",
              "end", "type", "string", "int", "bit", "logic", "reg", "wire", "byte", "event",
              "new", "this", "super", "null", "build", "connect", "facts", "extern_map",
-             "name", "parent", "clock", "run", "step", "do", "if", "else", "for", "case",
+             "name", "parent", "clock", "reset", "run", "step", "do", "if", "else", "for", "case",
              "default", "assign", "process", "virtual", "static", "local", "protected"}
 
 

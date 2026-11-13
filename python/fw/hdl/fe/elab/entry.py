@@ -6,7 +6,12 @@ does::
     root = new(path);                                   // Tbind
     clk_dom = new("clock", root, u_clk);                // fw_clock_xtor_bridge
     root.clock.connect(clk_dom);
+    rst_dom = new("reset", root, u_rst);                // fw_reset_xtor_bridge
+    rst_dom.clk.connect(clk_dom);
+    root.reset.connect(rst_dom);
     fork root.start(); join_none
+
+(``u_rst`` and the reset seating only when ``fw_root`` has a ``u_rst``.)
 
 :func:`elaborate` does the same through the interpreter, and also starts the
 procedural blocks of every interface instance (their ``initial`` blocks give
@@ -149,8 +154,20 @@ def elaborate(compilation, top_name: Optional[str] = None) -> ElabResult:
     root = _new(it, tbind, [root_inst.hierarchicalPath], top_fr)
     clk = _new(it, bridge_t, ["clock", root, clk_if], top_fr)
     clock_port = root.fields[_prop(tbind, "clock")]
-    it.run_sync(it.call_sub(clock_port.cls.find("connect"), clock_port, None,
+    it.run_sync(it.call_sub(_find_up(it, clock_port.cls, "connect"), clock_port, None,
                             [Val(clk)], top_fr, None))
+    # The root reset domain (design-domains.md §4.3), when this fw_root has one.
+    u_rst = next((m for m in root_inst.body
+                  if m.kind == ast.SymbolKind.Instance and m.name == "u_rst"), None)
+    rbridge_t = hdl_pkg.find("fw_reset_xtor_bridge")
+    if u_rst is not None and rbridge_t is not None:
+        rst = _new(it, rbridge_t, ["reset", root, it.iface_of(u_rst)], top_fr)
+        rclk = rst.fields[_prop(rbridge_t, "clk")]
+        it.run_sync(it.call_sub(_find_up(it, rclk.cls, "connect"), rclk, None,
+                                [Val(clk)], top_fr, None))
+        reset_port = root.fields[_prop(tbind, "reset")]
+        it.run_sync(it.call_sub(_find_up(it, reset_port.cls, "connect"), reset_port, None,
+                                [Val(rst)], top_fr, None))
     start = it._dispatch(root.cls, tbind.find("start") or _find_up(it, tbind, "start"))
     it.spawn(ThreadRoot("call", sub=start, this=root, label=f"{tbind.name}.start"))
     it.run()

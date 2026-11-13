@@ -37,8 +37,16 @@ class fw_port #(type T) extends fw_if_base #(T)
             // ...and bindable, so the bind map can enumerate it without having
             // to know T (see fw_dbg_bindable).
             parent.add_bindable(this);
+            // ...and as an endpoint object, for the crossing check.
+            parent.add_endpoint(this);
         end
     endfunction
+
+    // --- fw_endpoint ends -----------------------------------------------------
+    virtual function fw_component ep_owner();  return m_parent;    endfunction
+    virtual function fw_endpoint  ep_next();   return m_provider;  endfunction
+    virtual function bit          ep_is_port(); return 1;          endfunction
+    virtual function string       ep_full_name(); return full_name(); endfunction
 
     // --- fw_dbg_bindable ------------------------------------------------------
     virtual function string bind_name();      return m_ep_name;          endfunction

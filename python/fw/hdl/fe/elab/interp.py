@@ -525,6 +525,14 @@ class Interpreter:
         evaluated in *caller*."""
         if sub.kind == ast.SymbolKind.MethodPrototype or sub.body is None:
             raise ElabError(f"call to {sub.name} has no body")
+        if sub.name == "run_supervised" and "fw_component::" in (sub.lexicalPath or "") \
+                and this is not None:
+            self._reject_supervised(this, caller)
+        if "fw_crossing_check::" in (sub.lexicalPath or ""):
+            # The domain crossing check is a simulation check
+            # (design-domains.md §7.5); the front ends do their own narrower
+            # rejection (hier.py), so elaboration skips it.
+            return 0
         fr = Frame(sub, this, iface, call=call_expr)
         outs: List[Tuple[Any, Any]] = []
         formals = list(sub.arguments)
@@ -1175,6 +1183,22 @@ class Interpreter:
         if sub.subroutineKind == ast.SubroutineKind.Task:
             raise ElabError(f"task {sub.name} called as an expression")
         return self.run_sync(gen)
+
+    def _call_named(self, this, name: str, caller):
+        m = self._dispatch(this.cls, type("S", (), {"name": name})())
+        if getattr(m, "body", None) is None:
+            return None
+        return self.run_sync(self.call_sub(m, this, None, [], caller, None))
+
+    def _reject_supervised(self, this, caller) -> None:
+        """A component whose run() follows a reset domain other than the tree
+        root's (fw_component::run_supervised, design-domains.md §4.5): its run()
+        restarts with the domain, which no front end lowers yet."""
+        comp = self._call_named(this, "get_full_name", caller)
+        dom = self._call_named(this, "reset_domain_name", caller)
+        raise ElabError(f"{comp}: run() follows reset domain {dom}, which is not the root's: "
+                        "a run() restarted by a derived reset domain is not lowered yet "
+                        "(use step() and in_reset(), or the root reset domain)")
 
     @staticmethod
     def _is_std_process(sub) -> bool:

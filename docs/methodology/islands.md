@@ -178,3 +178,9 @@ island:
 
 `kind` is one of `same_cycle`, `fixed_timing`, `single_value`, `cdc` or `merged`
 (the two sides are really one island).
+
+The island checks read netlists for registered boundaries. Clock and reset domains are
+checked earlier, on the class model: the crossing check run after connect reports a
+binding between two clock domains as an error unless it goes through a crossing element
+({doc}`../reference/clocking`). A `cdc` exception here is the netlist side of such an
+element; the class-model side does not yet produce one automatically.

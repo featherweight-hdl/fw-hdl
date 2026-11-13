@@ -105,6 +105,14 @@ def _declared_sub(ct, name: str):
     return None
 
 
+def _is_domain(ct) -> bool:
+    """A domain object: an export that implements a domain API
+    (design-domains.md §3), held by a component as plumbing."""
+    from ..static_mapper import _implements
+    return ct.kind == SK.ClassType and _derives(ct, "fw_export") and (
+        _implements(ct, "fw_clock_domain_if") or _implements(ct, "fw_reset_domain_if"))
+
+
 def _implements_extern(ct) -> bool:
     from ..static_mapper import _implements
     return _implements(ct, "fw_extern_impl")
@@ -192,6 +200,13 @@ class Node:
     #: What a leaf's facts() declared (:class:`fw.hdl.facts.BlockFact`), ports
     #: by RTL name.
     facts: List[Any] = dc.field(default_factory=list)
+    #: The clock and reset domains this instance is in (design-domains.md
+    #: §7.5): the domain object's path, and whether it is the root's (the
+    #: domain the top's port is seated on, or SAME as it). Reset "" = none.
+    clock_domain: str = ""
+    clock_is_root: bool = True
+    reset_domain: str = ""
+    reset_is_root: bool = True
 
     @property
     def structural(self) -> bool:
@@ -273,8 +288,9 @@ def elaborate_tree(compilation, top_cls, name: Optional[str] = None) -> Node:
     o = it.new_object(top_cls)
     ctor = _sub(top_cls, "new")
     it.run_sync(it.call_sub(ctor, o, None, [Val(name), Val(None)], fr, None))
-    # fw_root seats the root's clock on a bridge before start(); do the same
-    # over a placeholder interface (no thread runs, so it is never read).
+    # fw_root seats the root's clock (and reset) on bridges before start(); do
+    # the same over placeholder interfaces (no thread runs, so they are never
+    # read).
     bridge_t = compilation.getPackage("fw_hdl_pkg").find("fw_clock_xtor_bridge")
     clk = it.new_object(bridge_t)
     it.run_sync(it.call_sub(_sub(bridge_t, "new"), clk, None,
@@ -282,6 +298,18 @@ def elaborate_tree(compilation, top_cls, name: Optional[str] = None) -> Node:
     clock_port = o.fields[_prop(top_cls, "clock")]
     it.run_sync(it.call_sub(_sub(clock_port.cls, "connect"), clock_port, None, [Val(clk)],
                             fr, None))
+    # ...and its reset on a reset bridge, likewise.
+    rbridge_t = compilation.getPackage("fw_hdl_pkg").find("fw_reset_xtor_bridge")
+    if rbridge_t is not None:
+        rst = it.new_object(rbridge_t)
+        it.run_sync(it.call_sub(_sub(rbridge_t, "new"), rst, None,
+                                [Val("reset"), Val(o), Val(Iface(None, f"{name}.u_rst"))],
+                                fr, None))
+        rclk = rst.fields[_prop(rbridge_t, "clk")]
+        it.run_sync(it.call_sub(_sub(rclk.cls, "connect"), rclk, None, [Val(clk)], fr, None))
+        reset_port = o.fields[_prop(top_cls, "reset")]
+        it.run_sync(it.call_sub(_sub(reset_port.cls, "connect"), reset_port, None, [Val(rst)],
+                                fr, None))
     rd = _Reader(it)
     it.run_sync(it.call_sub(it._dispatch(o.cls, _sub(top_cls, "do_build")), o, None, [], fr, None))
     missing = rd.unbuilt(o)
@@ -297,7 +325,86 @@ def elaborate_tree(compilation, top_cls, name: Optional[str] = None) -> Node:
             comp, names, where = missing[0]
             raise HierError(f"build() of {comp!r} does not construct {names}", where) from None
         raise
-    return rd.node(o, name, name, None, None, None)
+    top = rd.node(o, name, name, None, None, None)
+    _Domains(it, compilation, fr).check(top)
+    return top
+
+
+class _Domains:
+    """Each node's clock and reset domain, read from the interpreted objects,
+    and Partition's rejection of what its single-clock, single-reset lowering
+    cannot do (design-domains.md §7.5): a clock domain UNRELATED to the
+    root's, and a reset domain other than the root's."""
+
+    _UNRELATED = 2      # fw_domain_rel_e
+
+    def __init__(self, it, compilation, fr):
+        self.it, self.fr = it, fr
+        self.relate = _sub(compilation.getPackage("fw_hdl_pkg").find("fw_domains"), "relate")
+
+    def _f(self, o, name):
+        return o.fields.get(_prop(o.cls, name))
+
+    def _imp(self, port):
+        """The domain object a port resolves to (None when unbound)."""
+        e, n = port, 0
+        while isinstance(e, Obj) and n < 1000:
+            n += 1
+            if _derives(e.cls, "fw_port"):
+                e = self._f(e, "m_provider")
+                continue
+            imp = self._f(e, "m_imp")
+            if isinstance(imp, Obj):
+                return imp
+            e = self._f(e, "m_fwd")
+        return None
+
+    def _call(self, o, name):
+        return self.it._call_named(o, name, self.fr)
+
+    def _rel(self, a, b) -> int:
+        return int(self.it.run_sync(self.it.call_sub(self.relate, None, None,
+                                                     [Val(a), Val(b)], self.fr, None)))
+
+    def _site(self, port):
+        """The connect() call that bound *port* (None if inherited)."""
+        sites = [site for ep, _p, site in self.it.connects
+                 if isinstance(ep, Obj) and ep.oid == port.oid]
+        return sites[-1] if sites else None
+
+    def check(self, top: Node) -> None:
+        root_clk = self._imp(self._f(top.obj, "clock"))
+        root_rst = self._imp(self._f(top.obj, "reset"))
+        self._walk(top, root_clk, root_rst, None, None, None)
+
+    def _walk(self, n: Node, root_clk, root_rst, pclk, prst, psites) -> None:
+        cport, rport = self._f(n.obj, "clock"), self._f(n.obj, "reset")
+        clk, rst = self._imp(cport), self._imp(rport)
+        # where this node's domain was chosen: its own port's connect() when it
+        # differs from the parent's, else the parent's site
+        csite = self._site(cport) if pclk is not None and clk is not pclk else \
+            (psites[0] if psites else None)
+        rsite = self._site(rport) if prst is not None and rst is not prst else \
+            (psites[1] if psites else None)
+        if isinstance(clk, Obj):
+            n.clock_domain = str(self._call(clk, "domain_name") or "")
+            n.clock_is_root = clk is root_clk or (
+                isinstance(root_clk, Obj) and self._rel(clk, root_clk) == 0)
+            if isinstance(root_clk, Obj) and clk is not root_clk \
+                    and self._rel(clk, root_clk) == self._UNRELATED:
+                raise HierError(f"{n.path}: clock domain {n.clock_domain} is unrelated to the "
+                                f"root clock; Partition lowers one clock (a second clock "
+                                f"domain is not supported yet)", csite)
+        if isinstance(rst, Obj):
+            n.reset_domain = str(self._call(rst, "domain_name") or "")
+            n.reset_is_root = rst is root_rst or (
+                isinstance(root_rst, Obj) and self._rel(rst, root_rst) == 0)
+            if not n.reset_is_root:
+                raise HierError(f"{n.path}: reset domain {n.reset_domain} is not the root's; "
+                                f"derived reset domains are not lowered by Partition yet",
+                                rsite)
+        for c in n.children.values():
+            self._walk(c, root_clk, root_rst, clk, rst, (csite, rsite))
 
 
 class _Reader:
@@ -565,6 +672,8 @@ class _Reader:
             ct = m.type.canonicalType
             et = ct.arrayElementType.canonicalType if hasattr(ct, "arrayElementType") \
                 and ct.arrayElementType is not None else ct
+            if _is_domain(et):
+                continue        # domain plumbing (a derived clock or reset domain)
             if et.kind != SK.ClassType or not (_derives(et, "fw_component")
                                                or _derives(et, "fw_port")):
                 raise HierError(f"property {m.name!r}: a structural component holds only "
