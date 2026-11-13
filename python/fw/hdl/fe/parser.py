@@ -6,7 +6,7 @@ does not exist in this version.
 
 The parser auto-includes the fw-hdl library compilation units (the
 ``fw_hdl_pkg`` / ``fw_std_pkg`` packages plus the ``fw_clock_xtor_if`` /
-``fw_put_xtor_if`` interfaces and the ``fw_root`` module) and their include
+``fw_reset_xtor_if`` (both in ``fw_clock_xtor_if.sv``) / ``fw_put_xtor_if`` interfaces and the ``fw_root`` module) and their include
 directories, so a design that ``import``s ``fw_hdl_pkg`` / ``fw_std_pkg``
 elaborates cleanly.  This set was verified to produce a zero-error compilation
 of the blinky example.

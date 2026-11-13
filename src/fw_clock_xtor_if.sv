@@ -36,3 +36,31 @@ interface fw_clock_xtor_if(
 
 endinterface
 
+
+// The root RESET transactor: the pin side of fw_reset_xtor_bridge (the root
+// reset domain). `reset` is active high. It lives in this file, next to the
+// clock transactor, because fw_hdl_pkg's bridge holds a virtual of it: every
+// file list that compiles the package already lists this file.
+//
+// No parameters, so `virtual fw_reset_xtor_if` stays one type.
+interface fw_reset_xtor_if(
+    input clock,
+    input reset
+    );
+
+    function automatic bit in_reset();
+        return reset;
+    endfunction
+
+    // Returns at once if reset is already asserted.
+    task automatic wait_assert();
+        if (!reset) @(posedge reset);
+    endtask
+
+    // Returns at the first rising clock edge at which reset is low, or at once
+    // if it already is.
+    task automatic wait_deassert();
+        while (reset) @(posedge clock);
+    endtask
+
+endinterface

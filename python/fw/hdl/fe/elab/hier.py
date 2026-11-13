@@ -273,8 +273,9 @@ def elaborate_tree(compilation, top_cls, name: Optional[str] = None) -> Node:
     o = it.new_object(top_cls)
     ctor = _sub(top_cls, "new")
     it.run_sync(it.call_sub(ctor, o, None, [Val(name), Val(None)], fr, None))
-    # fw_root seats the root's clock on a bridge before start(); do the same
-    # over a placeholder interface (no thread runs, so it is never read).
+    # fw_root seats the root's clock (and reset) on bridges before start(); do
+    # the same over placeholder interfaces (no thread runs, so they are never
+    # read).
     bridge_t = compilation.getPackage("fw_hdl_pkg").find("fw_clock_xtor_bridge")
     clk = it.new_object(bridge_t)
     it.run_sync(it.call_sub(_sub(bridge_t, "new"), clk, None,
@@ -282,6 +283,18 @@ def elaborate_tree(compilation, top_cls, name: Optional[str] = None) -> Node:
     clock_port = o.fields[_prop(top_cls, "clock")]
     it.run_sync(it.call_sub(_sub(clock_port.cls, "connect"), clock_port, None, [Val(clk)],
                             fr, None))
+    # ...and its reset on a reset bridge, likewise.
+    rbridge_t = compilation.getPackage("fw_hdl_pkg").find("fw_reset_xtor_bridge")
+    if rbridge_t is not None:
+        rst = it.new_object(rbridge_t)
+        it.run_sync(it.call_sub(_sub(rbridge_t, "new"), rst, None,
+                                [Val("reset"), Val(o), Val(Iface(None, f"{name}.u_rst"))],
+                                fr, None))
+        rclk = rst.fields[_prop(rbridge_t, "clk")]
+        it.run_sync(it.call_sub(_sub(rclk.cls, "connect"), rclk, None, [Val(clk)], fr, None))
+        reset_port = o.fields[_prop(top_cls, "reset")]
+        it.run_sync(it.call_sub(_sub(reset_port.cls, "connect"), reset_port, None, [Val(rst)],
+                                fr, None))
     rd = _Reader(it)
     it.run_sync(it.call_sub(it._dispatch(o.cls, _sub(top_cls, "do_build")), o, None, [], fr, None))
     missing = rd.unbuilt(o)

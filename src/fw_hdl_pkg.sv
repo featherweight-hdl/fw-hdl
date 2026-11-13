@@ -36,10 +36,12 @@ package fw_hdl_pkg;
     `include "fw_clock_domain_if.svh"
     `include "fw_export.svh"
     `include "fw_port.svh"
-    `include "fw_domain_port.svh"       // fw_clock_port (and fw_reset_port)
+    `include "fw_domain_port.svh"       // fw_clock_port
+    `include "fw_reset_domain_if.svh"   // the reset kind; fw_reset_port
     `include "fw_clock_domain.svh"
     `include "fw_clock_xtor_bridge.svh"
     `include "fw_clock_period_xtor_bridge.svh"
+    `include "fw_reset_xtor_bridge.svh"  // the root reset domain (fw_reset_xtor_if)
     `include "fw_quantum_keeper.svh"     // TLM-style temporal decoupling (loosely-timed speedup)
     `include "fw_component.svh"
     `include "fw_atomic_step.svh"       // a cycle step that stalls as a whole on back-pressure

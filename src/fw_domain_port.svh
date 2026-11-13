@@ -29,6 +29,13 @@ class fw_domain_port #(type T = fw_domain_if, fw_domain_kind_e K = FW_DOMAIN_CLO
         m_optional = 1'b1;
     endfunction
 
+    // This port as its kind-free face. (An upcast written here, inside the
+    // specialization, rather than at the caller: Verilator 5.055 mis-types
+    // the conversion when two specializations meet in one expression.)
+    function fw_domain_ref as_ref();
+        return this;
+    endfunction
+
     virtual function fw_domain_kind_e ref_kind();
         return K;
     endfunction

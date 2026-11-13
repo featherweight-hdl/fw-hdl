@@ -236,12 +236,17 @@ def model_harness_sv(api: CompApiSet) -> str:
     o += ["        endfunction", "    endclass", "",
           "    bit clock = 1'b0, reset = 1'b0;",
           "    fw_clock_xtor_if u_clk(.clock(clock), .reset(reset));",
+          "    fw_reset_xtor_if u_rst(.clock(clock), .reset(reset));",
           f"    fw_component_root #({api.name}_top) top;",
           "    initial begin",
           "        automatic fw_clock_xtor_bridge clk_dom;",
+          "        automatic fw_reset_xtor_bridge rst_dom;",
           '        top = new("top");',
           '        clk_dom = new("clock", top, u_clk);',
-          "        top.clock.connect(clk_dom);"]
+          "        top.clock.connect(clk_dom);",
+          '        rst_dom = new("reset", top, u_rst);',
+          "        rst_dom.clk.connect(clk_dom);",
+          "        top.reset.connect(rst_dom);"]
     for c in api.components:
         cid = ident(c.name)
         o.append(f"        {api.pkg}::bind_{cid}(top.{cid}_m);")

@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+fragment:
+  name: reset_domain
+
+  tasks:
+  # Reset domains (docs/reference/clocking.md): the root reset domain fw_root
+  # seats, inheritance and override, an unbound reset (never in reset), and the
+  # derived domains (register bit, combine) over a bench-local signal domain.
+  - name: reset-domain-tb
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      include:
+      - reset_domain_pkg.sv
+      - reset_domain_tb.sv
+      incdirs:
+      - .
+
+  - name: reset-domain-img
+    uses: hdlsim.vlt.SimImage
+    needs: [hdl.sv-src, reset-domain-tb]
+    with:
+      top: [reset_domain_tb]
+
+  - name: reset-domain
+    uses: hdlsim.vlt.SimRun
+    needs: [reset-domain-img]

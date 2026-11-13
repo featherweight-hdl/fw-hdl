@@ -176,6 +176,8 @@ class Structure:
             return
         if m.isInterface:
             if path not in self.bound:
+                if path.rsplit(".", 1)[0] == self.elab.root_inst.hierarchicalPath:
+                    return      # fw_root's own transactor (u_rst) that no code reads
                 raise StructureError(f"{path}: an interface the class side does not use")
             self._connect_ports(m, absorb=True)
             self._flatten(m)
