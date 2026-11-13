@@ -32,6 +32,8 @@ module reset_domain_tb;
         rd_top t;
         fw_clock_xtor_bridge ck2;
         int n0, c0, n_in;
+        rd_derived d;
+        longint t_edge;
 
         repeat (4) @(posedge clock);
         reset = 1'b0;
@@ -90,6 +92,63 @@ module reset_domain_tb;
         chk(t.b.n_start == 2, "b: run() restarted on the next deassertion");
         chk(t.b.n > n0, "b: the new run() ticks");
         chk(t.b.n_reset_state == 1, "b: reset_state() not called on deassertion");
+
+        // --- derived reset domains ----------------------------------------------
+        d = t.d;
+        chk(!d.srst.in_reset() && !d.chain.in_reset(), "srst, chain: out of reset at start");
+        chk(d.en.in_reset(), "en: in reset while ctrl[4] (active low) is 0");
+        chk(fw_domains::relate(d.srst, d.hard) == FW_DOMAIN_RELATED, "relate(srst, hard) RELATED");
+        chk(fw_domains::relate(d.chain, d.hard) == FW_DOMAIN_RELATED, "relate(chain, hard) RELATED");
+        chk(fw_domains::relate(d.one, d.hard) == FW_DOMAIN_SAME, "relate(one, hard) SAME (n = 1)");
+        chk(d.one.domain_equiv() == d.hard, "one: domain_equiv() is its source");
+        chk(fw_domains::relate(d.any, d.srst) == FW_DOMAIN_RELATED, "relate(any, srst) RELATED");
+        chk(d.srst.sync_clock() == d.hard.sync_clock(), "srst: sync_clock() is its source's");
+        chk(d.l_srst.reset_supervised(), "l_srst (srst domain) is supervised");
+        while (d.l_srst.n_start == 0) @(posedge clock);
+
+        // register bit set: srst (and any, chain) assert; probe returns at the
+        // first tick after the write
+        @(posedge clock); #1;
+        d.ctrl.write(32'h8);
+        t_edge = 0;
+        @(posedge clock); t_edge = $time;
+        repeat (2) @(posedge clock);
+        chk(d.srst.in_reset(), "srst: in reset with ctrl[3] set");
+        chk(d.any.in_reset() && d.chain.in_reset(), "any, chain: in reset through srst");
+        chk(!d.hard.in_reset(), "hard: unaffected by the bit");
+        chk(d.probe.t_assert == t_edge, $sformatf("srst.wait_assert() returned at the first tick (%0d vs %0d)", d.probe.t_assert, t_edge));
+        n0 = d.l_srst.n;
+        repeat (3) @(posedge clock);
+        chk(d.l_srst.n == n0 && d.l_srst.n_reset_state == 1, "l_srst: run() killed, reset_state() once");
+
+        // cleared: deasserts at the first tick; run() starts again
+        @(posedge clock); #1;
+        d.ctrl.write(32'h0);
+        @(posedge clock); t_edge = $time;
+        repeat (3) @(posedge clock);
+        chk(!d.srst.in_reset(), "srst: out of reset with ctrl[3] clear");
+        chk(d.probe.t_deassert == t_edge, $sformatf("srst.wait_deassert() returned at the first tick (%0d vs %0d)", d.probe.t_deassert, t_edge));
+        chk(d.l_srst.n_start == 2, "l_srst: run() restarted");
+
+        // the source asserts the derived domain too
+        d.hard.set(1'b1);
+        chk(d.srst.in_reset() && d.chain.in_reset() && d.one.in_reset(), "hard asserts srst, chain, one");
+        d.hard.set(1'b0);
+
+        // active-low enable bit
+        d.ctrl.write(32'h10);
+        chk(!d.en.in_reset(), "en: out of reset with ctrl[4] set");
+        d.ctrl.write(32'h0);
+
+        // combine OR, and a register bit over a combine
+        d.other.set(1'b1);
+        chk(d.any.in_reset() && !d.srst.in_reset(), "any: in reset through other alone");
+        chk(d.chain.in_reset(), "chain: in reset through any");
+        d.other.set(1'b0);
+        chk(!d.chain.in_reset(), "chain: out of reset");
+        d.ctrl.write(32'h20);
+        chk(d.chain.in_reset() && !d.any.in_reset(), "chain: in reset through its own bit");
+        d.ctrl.write(32'h0);
 
         // --- a root with no reset ------------------------------------------------
         bare = new("bare");

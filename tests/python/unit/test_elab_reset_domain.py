@@ -145,3 +145,43 @@ def test_supervised_run_is_rejected(tmp_path):
     from fw.hdl.fe.elab.translate import TranslateError
     with pytest.raises((ElabError, TranslateError), match=r"w.*reset domain.*wr"):
         translate_sv(sup_design(), "rd_top", tmp_path)
+
+
+# A register-bit reset domain read by code in the root domain: in_reset() is
+# logic, `design reset | ctrl[3]` (design-domains.md §8).
+REG_RUN = """            forever begin
+                src.t.get(n);
+                ctrl.write({24'h0, n});
+                if (srst.in_reset()) n = 8'h00;
+                dst.t.put(n);
+            end"""
+
+REG_EXTRA = """        function void connect();
+            srst.src.connect(this.reset);
+        endfunction"""
+
+
+def reg_design():
+    text = comp(REG_RUN, REG_EXTRA).replace("        bit [7:0] n;\n", """        bit [7:0] n;
+        fw_reg_block #(32)        rf;
+        fw_reg #(bit [31:0])      ctrl;
+        fw_reg_reset_domain #(32) srst;
+""", 1)
+    return text.replace("""            dst = new("dst", this);
+        endfunction""", """            dst = new("dst", this);
+            rf = new("rf", this);
+            ctrl = new("ctrl", rf);
+            srst = new("srst", this, ctrl, 3);
+        endfunction""")
+
+
+def test_reg_bit_reset_lowers_to_logic(tmp_path):
+    st = translate_sv(reg_design(), "rd_top", tmp_path)
+    run = str(next(p for p in st.design.procs if p.name == "root_run").body)
+    # in_reset() = src (the root domain: the design reset pin) || ctrl[3]
+    assert "origin='fw_reg_reset_domain.in_reset'" in run
+    assert "value=u_root_u_rst_reset" in run
+    assert "value=root_ctrl_m_val" in run and "_v[3:3]" in run
+    assert _src(st.design, "u_root_u_rst_reset") == "reset"
+    low = lower_sv(reg_design(), "rd_top", tmp_path / "low")
+    assert low.verilog

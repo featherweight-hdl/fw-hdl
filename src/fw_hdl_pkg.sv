@@ -78,4 +78,9 @@ package fw_hdl_pkg;
     `include "fw_reg_set.svh"       // register watch-set (fw_event_set + which)
     `include "fw_reg_block.svh"     // register group: offsets, decode
 
+    // Derived reset domains. After the register model: the register-bit domain
+    // reads an fw_reg_base.
+    `include "fw_reset_combine.svh"     // OR of n reset domains
+    `include "fw_reg_reset_domain.svh"  // a source reset OR a register bit
+
 endpackage

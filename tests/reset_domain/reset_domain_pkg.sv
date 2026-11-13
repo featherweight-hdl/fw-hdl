@@ -5,5 +5,7 @@ package reset_domain_pkg;
     `include "rd_sig_reset.svh"
     `include "rd_leaf.svh"
     `include "rd_stepper.svh"
+    `include "rd_probe.svh"
+    `include "rd_derived.svh"
     `include "rd_top.svh"
 endpackage
