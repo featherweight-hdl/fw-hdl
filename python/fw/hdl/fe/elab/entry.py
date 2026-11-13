@@ -149,7 +149,7 @@ def elaborate(compilation, top_name: Optional[str] = None) -> ElabResult:
     root = _new(it, tbind, [root_inst.hierarchicalPath], top_fr)
     clk = _new(it, bridge_t, ["clock", root, clk_if], top_fr)
     clock_port = root.fields[_prop(tbind, "clock")]
-    it.run_sync(it.call_sub(clock_port.cls.find("connect"), clock_port, None,
+    it.run_sync(it.call_sub(_find_up(it, clock_port.cls, "connect"), clock_port, None,
                             [Val(clk)], top_fr, None))
     start = it._dispatch(root.cls, tbind.find("start") or _find_up(it, tbind, "start"))
     it.spawn(ThreadRoot("call", sub=start, this=root, label=f"{tbind.name}.start"))

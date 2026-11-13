@@ -6,6 +6,8 @@ class cd_top extends fw_component;
     cd_leaf          a;      // inherits root (1:1)
     cd_sub           b;      // overridden to /2
     fw_clock_domain  div2;
+    fw_clock_domain  div1;   // a named pass-through of the root (relate(): SAME)
+    cd_root2         root2;  // a second root clock (relate(): UNRELATED)
 
     function new(string name, fw_component parent);
         super.new(name, parent);
@@ -15,10 +17,13 @@ class cd_top extends fw_component;
         a    = new("a", this);
         b    = new("b", this);
         div2 = new("div2", this, 2);
+        div1 = new("div1", this, 1);
+        root2 = new("root2", this);
     endfunction
 
     function void connect();
         div2.src.connect(this.clock);  // /2 of root
+        div1.src.connect(this.clock);  // /1 of root
         b.clock.connect(div2);         // override b's subtree to /2
         // a is left unbound -> auto-inherits root (1:1)
     endfunction

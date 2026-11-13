@@ -68,6 +68,28 @@ module clock_domain_tb;
         check("b.c span == 2*a", u_root.root.b.c.span, 2 * u_root.root.a.span, errors);
         check("b.e span == 6*a", u_root.root.b.e.span, 6 * u_root.root.a.span, errors);
 
+        // Domain relations (fw_domains::relate).
+        begin
+            fw_domain_if rt;
+            rt = u_root.root.clock.t;
+            check("relate(root, /2) RELATED",
+                  int'(fw_domains::relate(rt, u_root.root.div2)), int'(FW_DOMAIN_RELATED), errors);
+            check("relate(/1, root) SAME",
+                  int'(fw_domains::relate(u_root.root.div1, rt)), int'(FW_DOMAIN_SAME), errors);
+            check("relate(root2, root) UNRELATED",
+                  int'(fw_domains::relate(u_root.root.root2, rt)), int'(FW_DOMAIN_UNRELATED), errors);
+            check("relate(b.e /6, b.c /2) RELATED",
+                  int'(fw_domains::relate(u_root.root.b.e.clock.t, u_root.root.b.c.clock.t)),
+                  int'(FW_DOMAIN_RELATED), errors);
+            check("relate(b.c, b) SAME",
+                  int'(fw_domains::relate(u_root.root.b.c.clock.t, u_root.root.b.clock.t)),
+                  int'(FW_DOMAIN_SAME), errors);
+            check("a.domain(clock) is a.clock",
+                  longint'(u_root.root.a.domain(FW_DOMAIN_CLOCK).ref_domain() == u_root.root.a.clock.t),
+                  1, errors);
+            check("clock port is ambient", longint'(u_root.root.a.clock.m_ambient), 1, errors);
+        end
+
         if (errors == 0)
             $display("[clock_domain] PASS");
         else

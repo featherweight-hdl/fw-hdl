@@ -26,12 +26,17 @@ package fw_hdl_pkg;
     `include "fw_steppable.svh"
     // Deferred-binding wrappers and the clock-domain API must precede
     // fw_component, which now holds an fw_port #(fw_clock_domain_if) `clock`.
+    // Domains (clock, reset): the kind-free API and the relation helper come
+    // before fw_endpoint, which records an endpoint's domain associations.
+    `include "fw_domain_if.svh"
+    `include "fw_domains.svh"
     `include "fw_endpoint.svh"
     `include "fw_facts.svh"             // characterization facts a component declares
     `include "fw_if_base.svh"
     `include "fw_clock_domain_if.svh"
     `include "fw_export.svh"
     `include "fw_port.svh"
+    `include "fw_domain_port.svh"       // fw_clock_port (and fw_reset_port)
     `include "fw_clock_domain.svh"
     `include "fw_clock_xtor_bridge.svh"
     `include "fw_clock_period_xtor_bridge.svh"

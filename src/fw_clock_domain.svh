@@ -26,6 +26,7 @@ class fw_clock_domain extends fw_export #(fw_clock_domain_if)
 
     function new(string name, fw_component parent, int div = 1);
         super.new(name, parent, this);   // register `this` as the export's imp
+        set_ambient();                   // domain plumbing, not a data binding
         src   = new("src", null);
         m_div = div;
     endfunction
@@ -38,5 +39,28 @@ class fw_clock_domain extends fw_export #(fw_clock_domain_if)
     // Fold this level's divisor into the count and recurse toward the root.
     virtual function longint root_ticks(int n = 1);
         return src.get_if().root_ticks(n * m_div);
+    endfunction
+
+    // --- fw_domain_if ---------------------------------------------------------
+    // One source, `src`. A divide-by-1 domain is a named pass-through: it
+    // behaves as (is SAME as) its source.
+    virtual function fw_domain_kind_e domain_kind(); return FW_DOMAIN_CLOCK; endfunction
+    virtual function string           domain_name(); return full_name();     endfunction
+    virtual function int              domain_nsrc(); return 1;               endfunction
+    virtual function fw_domain_if     domain_src(int i);
+        fw_clock_domain_if s;
+        if (i != 0 || !src.is_connected()) return null;
+        s = src.get_if();
+        return s;
+    endfunction
+    virtual function fw_domain_if     domain_equiv();
+        fw_domain_if s;
+        if (m_div != 1) return this;
+        s = domain_src(0);
+        return (s != null) ? s.domain_equiv() : this;
+    endfunction
+
+    function int div();
+        return m_div;
     endfunction
 endclass

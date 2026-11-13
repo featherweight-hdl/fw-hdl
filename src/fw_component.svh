@@ -25,13 +25,20 @@ class fw_component implements fw_elaboratable;
     // Non-component things that still emit and need a context handed to them --
     // register blocks, principally. See fw_dbg_contextual.
     protected fw_dbg_contextual m_ctxt[$];
+    // Every port and export this component holds, as endpoint objects (sockets
+    // do not withdraw theirs, unlike m_bind). The crossing check walks these.
+    protected fw_endpoint       m_eps[$];
 
     // Every component has a `clock` port: its clock DOMAIN, consumed as the
     // fw_clock_domain_if API. Created here (not in build()) so it exists for
     // wiring before any phase runs. Left unconnected by default; do_connect()
     // auto-inherits it from the parent, or the parent/component overrides it in
     // connect(). The root's clock is seated externally by fw_root.
-    fw_port #(fw_clock_domain_if) clock;
+    //
+    // An fw_clock_port is an fw_port #(fw_clock_domain_if) that also answers its
+    // domain kind (fw_domain_port), so the crossing check can ask any
+    // component's domain of a kind through domain().
+    fw_clock_port clock;
 
     // ...and a `dbg` port: its DEBUG CONTEXT, consumed as the listener API.
     // Deliberately the same shape as `clock` -- created in the constructor,
@@ -92,6 +99,7 @@ class fw_component implements fw_elaboratable;
         m_parent = parent;
         clock = new("clock", this);
         dbg   = new("dbg", this);
+        dbg.set_ambient();
 
         if (parent != null) begin
             parent.add_elaboratable(this);
@@ -173,6 +181,44 @@ class fw_component implements fw_elaboratable;
     // Called by fw_port/fw_export alongside add_elaboratable().
     function void add_bindable(fw_dbg_bindable b);
         m_bind.push_back(b);
+    endfunction
+
+    // Register a port/export as an endpoint object (the crossing check). Called
+    // by fw_port/fw_export alongside add_bindable().
+    function void add_endpoint(fw_endpoint e);
+        m_eps.push_back(e);
+    endfunction
+
+    function int num_endpoints();
+        return m_eps.size();
+    endfunction
+
+    function fw_endpoint get_endpoint(int i);
+        return m_eps[i];
+    endfunction
+
+    // This component's domain port of kind k.
+    virtual function fw_domain_ref domain(fw_domain_kind_e k);
+        case (k)
+            FW_DOMAIN_CLOCK: return clock;
+            default:         return null;
+        endcase
+    endfunction
+
+    // A CROSSING ELEMENT for kind k: a component built to join two domains of
+    // that kind (a synchronizer, an async FIFO), which associates its endpoints
+    // with the domain on each side (fw_endpoint::set_domain). The crossing
+    // check does not report anything inside one.
+    virtual function bit is_crossing(fw_domain_kind_e k);
+        return 0;
+    endfunction
+
+    // The child components, in construction order.
+    function void get_children(ref fw_component kids[$]);
+        foreach (m_elab[i]) begin
+            fw_component c;
+            if ($cast(c, m_elab[i])) kids.push_back(c);
+        end
     endfunction
 
     // Withdraw an endpoint from the bind map. A composite endpoint (an

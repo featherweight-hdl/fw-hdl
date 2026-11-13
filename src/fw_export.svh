@@ -29,8 +29,19 @@ class fw_export #(type T) extends fw_if_base #(T)
         if (parent != null) begin
             parent.add_elaboratable(this);
             parent.add_bindable(this);
+            parent.add_endpoint(this);
         end
     endfunction
+
+    // --- fw_endpoint ends -----------------------------------------------------
+    virtual function fw_component ep_owner();  return m_parent;  endfunction
+    // The forwarded-to export; null when this export holds the imp (it is the
+    // terminal of a binding).
+    virtual function fw_endpoint  ep_next();
+        return (m_imp != null) ? null : m_fwd;
+    endfunction
+    virtual function bit          ep_is_port(); return 0;        endfunction
+    virtual function string       ep_full_name(); return full_name(); endfunction
 
     // --- fw_dbg_bindable ------------------------------------------------------
     virtual function string bind_name(); return m_ep_name;  endfunction

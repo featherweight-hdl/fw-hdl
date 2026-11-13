@@ -6,6 +6,7 @@ package clock_domain_pkg;
     import fw_hdl_pkg::*;
 
     `include "cd_leaf.svh"
+    `include "cd_root2.svh"
     `include "cd_sub.svh"   // uses cd_leaf
     `include "cd_top.svh"   // uses cd_leaf, cd_sub
 

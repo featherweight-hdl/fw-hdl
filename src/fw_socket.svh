@@ -80,6 +80,12 @@ class fw_socket #(type I = int, type E = int) implements fw_elaboratable, fw_dbg
         exp_x.set_imp(imp);
     endfunction
 
+    // Associate both directions of this link with a domain (fw_endpoint).
+    function void set_domain(fw_domain_ref d);
+        imp_p.set_domain(d);
+        exp_x.set_domain(d);
+    endfunction
+
     // --- fw_elaboratable ------------------------------------------------------
     virtual function void do_build();
     endfunction
@@ -141,6 +147,11 @@ class fw_mirror #(type I = int, type E = int) implements fw_elaboratable, fw_dbg
 
     function void set_imp(I imp);
         exp_x.set_imp(imp);
+    endfunction
+
+    function void set_domain(fw_domain_ref d);
+        imp_p.set_domain(d);
+        exp_x.set_domain(d);
     endfunction
 
     virtual function void do_build();
