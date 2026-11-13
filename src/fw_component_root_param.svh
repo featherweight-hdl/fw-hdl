@@ -33,6 +33,7 @@ class fw_component_root_param #(type Tb=fw_component_param) extends Tb;
         m_proc = std::process::self();
         do_build();
         do_connect();
+        fw_crossing_check::check_root(this);
         do_run();
     endtask
 

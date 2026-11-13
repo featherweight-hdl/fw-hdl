@@ -1,0 +1,28 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+fragment:
+  name: crossing
+
+  tasks:
+  # Domain crossing analysis (fw_crossing_check) on built trees: clock
+  # related/unrelated, reset related (warn, waived), crossing elements,
+  # sockets, forwarding parents, reset-sync. The start()/$fatal/JSON path is
+  # checked by tests/python/system/test_crossing_sim.py.
+  - name: crossing-tb
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      include:
+      - xc_pkg.sv
+      - crossing_tb.sv
+      incdirs:
+      - .
+
+  - name: crossing-img
+    uses: hdlsim.vlt.SimImage
+    needs: [hdl.sv-src, crossing-tb]
+    with:
+      top: [crossing_tb]
+
+  - name: crossing
+    uses: hdlsim.vlt.SimRun
+    needs: [crossing-img]

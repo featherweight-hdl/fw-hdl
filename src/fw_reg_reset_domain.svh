@@ -82,8 +82,13 @@ class fw_reg_reset_domain #(int W = 32) extends fw_export #(fw_reset_domain_if)
         return src.is_connected() ? src.get_if().is_async() : 1'b0;
     endfunction
 
+    // The source's; with no source, the owner's clock (the register is written
+    // on it).
     virtual function fw_clock_domain_if sync_clock();
-        return src.is_connected() ? src.get_if().sync_clock() : null;
+        fw_component o;
+        if (src.is_connected()) return src.get_if().sync_clock();
+        o = ep_owner();
+        return (o != null && o.clock.is_connected()) ? o.clock.get_if() : null;
     endfunction
 
     // --- fw_domain_if: derived from src --------------------------------------

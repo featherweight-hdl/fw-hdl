@@ -41,6 +41,7 @@ class fw_export #(type T) extends fw_if_base #(T)
         return (m_imp != null) ? null : m_fwd;
     endfunction
     virtual function bit          ep_is_port(); return 0;        endfunction
+    virtual function bit          ep_is_terminal(); return m_imp != null; endfunction
     virtual function string       ep_full_name(); return full_name(); endfunction
 
     // --- fw_dbg_bindable ------------------------------------------------------

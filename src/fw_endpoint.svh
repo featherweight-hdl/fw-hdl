@@ -42,6 +42,11 @@ virtual class fw_endpoint;
         return 0;
     endfunction
 
+    // An export holding the imp: where a binding ends.
+    virtual function bit ep_is_terminal();
+        return 0;
+    endfunction
+
     // Full path (owner path + name).
     virtual function string ep_full_name();
         return m_ep_name;

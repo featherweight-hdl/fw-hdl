@@ -528,6 +528,11 @@ class Interpreter:
         if sub.name == "run_supervised" and "fw_component::" in (sub.lexicalPath or "") \
                 and this is not None:
             self._reject_supervised(this, caller)
+        if "fw_crossing_check::" in (sub.lexicalPath or ""):
+            # The domain crossing check is a simulation check
+            # (design-domains.md §7.5); the front ends do their own narrower
+            # rejection (hier.py), so elaboration skips it.
+            return 0
         fr = Frame(sub, this, iface, call=call_expr)
         outs: List[Tuple[Any, Any]] = []
         formals = list(sub.arguments)

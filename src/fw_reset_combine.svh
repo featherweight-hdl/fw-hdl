@@ -16,14 +16,16 @@ typedef class fw_component;
 // in_reset() lowers to the OR of the sources' in_reset().
 class fw_reset_combine extends fw_export #(fw_reset_domain_if)
         implements fw_reset_domain_if;
-    fw_port #(fw_reset_domain_if) src[];   // parentless: wired in the owner's connect()
+    fw_port #(fw_reset_domain_if) src[$];  // parentless: wired in the owner's connect()
     protected event               m_any;   // a source asserted (wait_assert, no common clock)
 
     function new(string name, fw_component parent, int n = 2);
         super.new(name, parent, this);   // register `this` as the export's imp
         set_ambient();                   // domain plumbing, not a data binding
-        src = new[n];
-        foreach (src[i]) src[i] = new($sformatf("src[%0d]", i), null);
+        for (int i = 0; i < n; i++) begin
+            fw_port #(fw_reset_domain_if) p = new($sformatf("src[%0d]", i), null);
+            src.push_back(p);
+        end
     endfunction
 
     virtual function bit in_reset();

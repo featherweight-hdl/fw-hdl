@@ -47,6 +47,8 @@ package fw_hdl_pkg;
     `include "fw_atomic_step.svh"       // a cycle step that stalls as a whole on back-pressure
     `include "fw_component_param.svh"
     `include "fw_extern.svh"            // wrapped IP: a Verilog module behind a class
+    `include "fw_crossing.svh"          // a domain crossing (record)
+    `include "fw_crossing_check.svh"    // the crossing check, run after connect
     `include "fw_component_root.svh"
     `include "fw_component_root_param.svh"
     // Bidirectional link pair: an fw_port and an fw_export bound as one,

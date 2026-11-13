@@ -66,6 +66,9 @@ class fw_component implements fw_elaboratable;
     // Null means "inherited" -- dbg_domain() then walks up to find it.
     protected fw_dbg_domain     m_dbg_dom;
 
+    // Crossing waivers, "<endpoint>:<kind>" -> reason (waive_crossing()).
+    protected string            m_waivers[string];
+
     // Never triggered: what wait_reset_assert() waits on with no reset bound.
     protected event             m_no_reset_ev;
 
@@ -245,6 +248,33 @@ class fw_component implements fw_elaboratable;
     // check does not report anything inside one.
     virtual function bit is_crossing(fw_domain_kind_e k);
         return 0;
+    endfunction
+
+    // Waive the crossing reported for endpoint `ep` (its local name; for a
+    // socket, the socket's name) for domain kind k. The reason is required and
+    // is reported with the crossing, at info. Call it in connect().
+    function void waive_crossing(string ep, fw_domain_kind_e k, string reason);
+        if (reason == "") begin
+            $fatal(1, "fw-hdl: %s: waive_crossing(\"%s\", %s) needs a reason",
+                   get_full_name(), ep, fw_domains::kind_name(k));
+        end
+        m_waivers[{ep, ":", fw_domains::kind_name(k)}] = reason;
+    endfunction
+
+    // The waiver reason for endpoint `ep` and kind k, or "". A socket's inner
+    // port and export (`<sock>.i`, `<sock>.e`) match a waiver on `<sock>`.
+    function string crossing_waiver(string ep, fw_domain_kind_e k);
+        string kn = fw_domains::kind_name(k);
+        string key = {ep, ":", kn};
+        if (m_waivers.exists(key)) return m_waivers[key];
+        for (int i = ep.len() - 1; i > 0; i--) begin
+            if (ep[i] == ".") begin
+                key = {ep.substr(0, i - 1), ":", kn};
+                if (m_waivers.exists(key)) return m_waivers[key];
+                break;
+            end
+        end
+        return "";
     endfunction
 
     // The child components, in construction order.

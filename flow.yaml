@@ -15,6 +15,7 @@ package:
     - blinky.blinky
     - clock_domain.clock-domain
     - reset_domain.reset-domain
+    - crossing.crossing
     - dbg_smoke.dbg-smoke
     - dbg_smoke.dbg-smoke-off
     - dbg_listener.dbg-listener
@@ -66,6 +67,7 @@ package:
   - tests/blinky/flow.yaml
   - tests/clock_domain/flow.yaml
   - tests/reset_domain/flow.yaml
+  - tests/crossing/flow.yaml
   - tests/intf_pc/flow.yaml
   - tests/fifo/flow.yaml
   - tests/socket/flow.yaml
