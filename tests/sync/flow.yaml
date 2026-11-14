@@ -1,0 +1,52 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+# The synchronous-logic classes (src/sync/, in fw_hdl_pkg) on SVUnit.
+fragment:
+  name: sync
+
+  tasks:
+  - name: svunit
+    uses: hdltest.svunit.Lib
+  - name: src
+    uses: std.FileSet
+    with:
+      type: systemVerilogSource
+      base: ../../src
+      include:
+      - fw_hdl_pkg.sv
+      - fw_clock_xtor_if.sv
+      - fw_clock_period_xtor_if.sv
+      - fw_clock_period_xtor.sv
+      - fw_root.sv
+      - fw_rv_pin_in.sv
+      - fw_rv_pin_out.sv
+      incdirs:
+      - .
+  - name: std
+    uses: std.FileSet
+    needs: [src]
+    with:
+      type: systemVerilogSource
+      base: ../../src/std
+      include: [fw_std_pkg.sv]
+      incdirs:
+      - .
+  - name: unit-tests
+    uses: std.FileSet
+    with:
+      type: svunitTest
+      include: [fw_sync_holder_unit_test.sv, fw_sync_sem_unit_test.sv, fw_sync_conn_unit_test.sv, fw_sync_kernel_unit_test.sv, fw_sync_pin_unit_test.sv, fw_rv_slice_unit_test.sv]
+  - name: runner
+    uses: hdltest.svunit.TestRunner
+    needs: [unit-tests]
+  - name: img
+    uses: hdlsim.vlt.SimImage
+    needs: [svunit, src, std, runner]
+    with: {top: [testrunner]}
+  - name: run
+    uses: hdlsim.vlt.SimRun
+    needs: [img]
+    with: {mode: test}
+  - name: selftest
+    uses: hdltest.svunit.Check
+    needs: [run]
+    with: {name: fw-sync, gate: true}

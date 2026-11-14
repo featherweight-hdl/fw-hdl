@@ -1,0 +1,30 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+package:
+  name: fw.hdl.sync
+  desc: Emit fw-hdl sync classes (step()/comb()) as Verilog modules
+  doc: |
+    The top is a module that declares one variable per class
+    specialization (``fw_rv_slice #(bit [36:0]) fw_rv_slice_w37;``). Each
+    variable becomes a module named after it: the front end
+    (fw.hdl.fe.elab.sync) builds the IR, zuspec-be-sv writes the Verilog.
+    Sync processes are always_ff on ``clock`` with active-high ``reset``;
+    comb processes are always_comb.
+
+  tasks:
+  - name: Emit
+    scope: export
+    desc: Emit the sync classes of a top module as Verilog modules
+    passthrough: none
+    consumes:
+    - filetype: systemVerilogSource
+    - filetype: verilogSource
+    with:
+      top:
+        doc: The top module that declares the class variables
+        type: str
+      vars:
+        doc: Emit only these variables (default every class variable of the top)
+        type: list
+        value: []
+    shell: pytask
+    run: fw.hdl.dfm_tasks.SyncEmit

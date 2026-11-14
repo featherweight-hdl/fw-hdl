@@ -50,5 +50,7 @@ package fw_std_pkg;
     `include "match/fw_match_set.svh"   // equality over the valid slots of a set (functions)
     `include "mem/fw_sp_mem.svh"        // an array in a single-port RAM, 1-cycle read
     `include "fw_resource.svh"          // a hazard lock: reserve / block / release (PDL)
+    `include "sync/fw_rv_slice.svh"     // register slice, step() only (design-sync-rtl §3.4)
+    `include "sync/fw_rv_pass.svh"      // passthrough, comb() only
 
 endpackage

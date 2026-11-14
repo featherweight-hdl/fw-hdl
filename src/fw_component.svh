@@ -1,4 +1,7 @@
 
+typedef class fw_sync_port;
+typedef class fw_sync_bridge;
+
 class fw_component implements fw_elaboratable;
     protected string            m_name;
     protected fw_component      m_parent;
@@ -13,6 +16,12 @@ class fw_component implements fw_elaboratable;
     // Things to step -- each gets one process in do_run() that calls step()
     // on every rising edge of this component's clock domain.
     protected fw_steppable      m_step[$];
+    // Comb logic -- settled by the sync kernel at each edge (fw_combinational).
+    protected fw_combinational  m_comb[$];
+    // Set by the root around do_run() when its sync kernel is active: the
+    // kernel then calls every step() (after commit and settle), so do_run()
+    // forks no step process.
+    static bit                  m_kernel_steps;
     // Parallel to m_run: the catalog site naming each forked process, pushed onto
     // the live op stack by the forked thread so fw_dbg_dump() can say which
     // component's run() a blocked thread is in.
@@ -28,6 +37,11 @@ class fw_component implements fw_elaboratable;
     // Every port and export this component holds, as endpoint objects (sockets
     // do not withdraw theirs, unlike m_bind). The crossing check walks these.
     protected fw_endpoint       m_eps[$];
+    // The struct-port ends (sync/fw_sync_port) this component owns, for the
+    // connection check and freeze().
+    protected fw_sync_port      m_sync[$];
+    // Views of this component bound to a holder owned elsewhere (sync/fw_sync_bridge).
+    protected fw_sync_bridge    m_bridges[$];
 
     // Every component has a `clock` port: its clock DOMAIN, consumed as the
     // fw_clock_domain_if API. Created here (not in build()) so it exists for
@@ -68,6 +82,7 @@ class fw_component implements fw_elaboratable;
 
     // Crossing waivers, "<endpoint>:<kind>" -> reason (waive_crossing()).
     protected string            m_waivers[string];
+    protected string            m_comb_loop_waiver;   // waive_comb_loop()
 
     // Never triggered: what wait_reset_assert() waits on with no reset bound.
     protected event             m_no_reset_ev;
@@ -225,6 +240,25 @@ class fw_component implements fw_elaboratable;
         m_eps.push_back(e);
     endfunction
 
+    // Register a struct-port end. Called by fw_sync_port's constructor.
+    function void add_sync_port(fw_sync_port p);
+        m_sync.push_back(p);
+    endfunction
+
+    function void get_sync_ports(ref fw_sync_port ps[$]);
+        foreach (m_sync[i]) ps.push_back(m_sync[i]);
+    endfunction
+
+    // Register a bridge of one of this component's ends. Called by
+    // fw_sync_bridge's constructor.
+    function void add_sync_bridge(fw_sync_bridge b);
+        m_bridges.push_back(b);
+    endfunction
+
+    function void get_sync_bridges(ref fw_sync_bridge bs[$]);
+        foreach (m_bridges[i]) bs.push_back(m_bridges[i]);
+    endfunction
+
     function int num_endpoints();
         return m_eps.size();
     endfunction
@@ -259,6 +293,18 @@ class fw_component implements fw_elaboratable;
                    get_full_name(), ep, fw_domains::kind_name(k));
         end
         m_waivers[{ep, ":", fw_domains::kind_name(k)}] = reason;
+    endfunction
+
+    // A comb loop through this component's comb() is not an error: the
+    // settle scheduler iterates it (and reports it under +fw_settle_show).
+    function void waive_comb_loop(string reason);
+        if (reason == "")
+            $fatal(1, "fw-hdl: %s: waive_comb_loop() needs a reason", get_full_name());
+        m_comb_loop_waiver = reason;
+    endfunction
+
+    function string comb_loop_waiver();
+        return m_comb_loop_waiver;
     endfunction
 
     // The waiver reason for endpoint `ep` and kind k, or "". A socket's inner
@@ -327,6 +373,20 @@ class fw_component implements fw_elaboratable;
     // a run() process.
     function void add_steppable(fw_steppable s);
         m_step.push_back(s);
+    endfunction
+
+    // Register comb logic: the sync kernel calls its comb() at each edge of
+    // this component's clock domain until the comb fields settle.
+    function void add_comb(fw_combinational c);
+        m_comb.push_back(c);
+    endfunction
+
+    function void get_combs(ref fw_combinational cs[$]);
+        foreach (m_comb[i]) cs.push_back(m_comb[i]);
+    endfunction
+
+    function void get_steppables(ref fw_steppable ss[$]);
+        foreach (m_step[i]) ss.push_back(m_step[i]);
     endfunction
 
     virtual function void build();
@@ -477,7 +537,7 @@ class fw_component implements fw_elaboratable;
                 end
             join_none
         end
-        foreach (m_step[i]) begin
+        if (!m_kernel_steps) foreach (m_step[i]) begin
             automatic fw_steppable s = m_step[i];
             automatic fw_atomic_steppable a;
             void'($cast(a, s));

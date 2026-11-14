@@ -1,10 +1,12 @@
 
 typedef class fw_component;
+typedef class fw_sync_kernel;   // sync/, later in the package
 typedef class fw_dbg_console;   // declared later in the package (needs the domain)
 
 
 class fw_component_root #(type Tb=fw_component) extends Tb;
     std::process            m_proc;
+    fw_sync_kernel          m_kernel;   // commit, settle, step (sync/)
 
     // Set once build and connect are complete and the run phase is being
     // launched: the point from which a testbench may use the tree's API
@@ -34,7 +36,12 @@ class fw_component_root #(type Tb=fw_component) extends Tb;
 
         // Run build, connect across the whole tree.
         do_build();
+        // Struct-port field semantics are fixed from here (set_comb is in
+        // build()); after connect, the sync kernel checks the connections.
+        fw_sync_kernel::freeze_tree(this);
         do_connect();
+        m_kernel = new(get_full_name());
+        m_kernel.elaborate(this);
 
         // Elaboration is over. Close the ambient-ownership window (see
         // fw_component) so nothing created during the run adopts a stale owner:
@@ -62,7 +69,12 @@ class fw_component_root #(type Tb=fw_component) extends Tb;
 
         // Launch every runnable in the tree -- including the root's own run() if
         // the root component is itself a runnable (fork happens inside do_run).
+        // With the sync kernel active, it calls the step()s (after commit and
+        // settle), so do_run() forks none.
+        fw_component::m_kernel_steps = m_kernel.active;
         do_run();
+        fw_component::m_kernel_steps = 0;
+        if (m_kernel.active) m_kernel.launch();
 
         // Every run() was forked from THIS process, so they and anything they
         // fork in turn are its descendants. Stay here until kill() asks, then

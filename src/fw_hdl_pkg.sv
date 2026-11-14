@@ -24,6 +24,7 @@ package fw_hdl_pkg;
     `include "fw_elaboratable.svh"
     `include "fw_runnable.svh"
     `include "fw_steppable.svh"
+    `include "fw_combinational.svh"    // comb(): settled by the sync kernel
     // Deferred-binding wrappers and the clock-domain API must precede
     // fw_component, which now holds an fw_port #(fw_clock_domain_if) `clock`.
     // Domains (clock, reset): the kind-free API and the relation helper come
@@ -84,5 +85,27 @@ package fw_hdl_pkg;
     // reads an fw_reg_base.
     `include "fw_reset_combine.svh"     // OR of n reset domains
     `include "fw_reg_reset_domain.svh"  // a source reset OR a register bit
+
+    // Synchronous logic: value-carrying struct ports with sync/comb fields
+    // (design-sync-rtl §3.2). After the reset domains: reset-force reads one.
+    `include "sync/fw_sync_field.svh"   // field metadata
+    `include "sync/fw_sig_holder.svh"   // shared value holder: cur/nxt, commit
+    `include "sync/fw_rv_sig.svh"       // ready/valid channel holder
+    `include "sync/fw_sync_net.svh"     // one connection: shared holder, driver check
+    `include "sync/fw_sync_port.svh"    // one end of a connection (view base)
+    `include "sync/fw_rv_sp_out.svh"    // producer view
+    `include "sync/fw_rv_sp_in.svh"     // consumer view
+    `include "sync/fw_sig.svh"          // one-field port
+    `include "sync/fw_sync_conn.svh"    // the connection check over a tree
+    `include "sync/fw_sync_bridge.svh"  // a view bound to a holder owned elsewhere
+    `include "sync/fw_settle_match.svh" // is a comb() object of a class (woven)
+    `include "sync/fw_settle_is.svh"    // ...for one class C
+    `include "sync/fw_settle_table.svh" // per-class comb()/step() field tables (woven)
+    `include "sync/fw_settle_node.svh"  // one comb() in a domain's settle graph
+    `include "sync/fw_settle_sched.svh" // a domain's settle schedule (SCCs, order)
+    `include "sync/fw_sp_comb.svh"      // woven fw_sp_comb declarations (set_comb)
+    `include "sync/fw_sync_dom.svh"   // one clock domain's holders, comb()s, step()s
+    `include "sync/fw_sync_kernel.svh"  // commit, settle, step at each edge
+    `include "sync/fw_rv_pin.svh"       // class half of a ready/valid pin bridge
 
 endpackage
