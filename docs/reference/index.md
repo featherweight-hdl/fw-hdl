@@ -12,6 +12,8 @@ components
 std
 lib
 rv
+struct-ports
+settle
 clocking
 registers
 debug

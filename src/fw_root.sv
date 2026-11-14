@@ -29,6 +29,10 @@ module fw_root #(
             if (root != null) begin
                 root.kill();
                 root = null;
+                // Wake the pin bridges (fw_rv_pin_in/_out): they redrive
+                // from the dead tree's holders, whose valid and ready now
+                // read their reset-force value.
+                fw_sig_holder::gen++;
             end
         end else begin
             if (in_reset) begin

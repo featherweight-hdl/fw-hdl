@@ -1,5 +1,6 @@
 
 typedef class fw_component;
+typedef class fw_sync_kernel;   // sync/, later in the package
 
 // The ROOT clock domain: the base case of the domain chain.
 //
@@ -21,6 +22,7 @@ class fw_clock_xtor_bridge extends fw_export #(fw_clock_domain_if)
 
     virtual task tick(int n = 1);
         vif.tick(n);                     // tick(0) -> #0, handled by the xtor if
+        if (n != 0) fw_sync_kernel::after_tick();   // after the sync kernel
     endtask
 
     virtual function longint root_ticks(int n = 1);

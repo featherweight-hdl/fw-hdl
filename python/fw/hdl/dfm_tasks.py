@@ -1185,3 +1185,32 @@ async def SchedSource(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult
             msg="no fwSchedSource input (set emit_sched on the Lower task)",
             severity=SeverityE.Error)])
     return TaskDataResult(status=0, changed=True, output=out)
+
+
+async def SyncEmit(ctxt: TaskRunCtxt, input: TaskDataInput) -> TaskDataResult:
+    """Emit the sync classes of a top module as Verilog, one module per variable
+    (fw.hdl.emit.sync)."""
+    from fw.hdl.emit.sync import emit_sync
+    p = input.params
+    files, incdirs = _sv_inputs(input)
+    defines = {}
+    for fs in getattr(input, "inputs", []) or []:
+        for dname in getattr(fs, "defines", []) or []:
+            k, _, v = str(dname).partition("=")
+            defines[k] = v or "1"
+    rundir = input.rundir
+    os.makedirs(rundir, exist_ok=True)
+    try:
+        mods = emit_sync(files, p.top, incdirs=incdirs, defines=defines,
+                         vars=list(getattr(p, "vars", []) or []))
+    except Exception as e:   # report any front-end or emit failure
+        return TaskDataResult(status=1, changed=True, output=[],
+                              markers=[TaskMarker(msg=f"{type(e).__name__}: {e}",
+                                                  severity=SeverityE.Error)])
+    out = []
+    for name, text in mods.items():
+        with open(os.path.join(rundir, f"{name}.sv"), "w") as f:
+            f.write(text)
+        out.append(f"{name}.sv")
+    return TaskDataResult(status=0, changed=True, output=[
+        FileSet(src=input.name, filetype="systemVerilogSource", basedir=rundir, files=out)])

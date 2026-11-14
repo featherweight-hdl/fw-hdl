@@ -5,6 +5,7 @@
 
 overview
 components
+sync-logic
 synthesis
 timing
 knobs

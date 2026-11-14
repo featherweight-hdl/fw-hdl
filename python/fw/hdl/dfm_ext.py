@@ -11,4 +11,5 @@ def dvfm_packages():
             "fw.hdl.lower": os.path.join(d, "lower.dv"),
             "fw.hdl.knobs": os.path.join(d, "knobs.dv"),
             "fw.hdl.report": os.path.join(d, "report.dv"),
-            "fw.hdl.check": os.path.join(d, "check.dv")}
+            "fw.hdl.check": os.path.join(d, "check.dv"),
+            "fw.hdl.sync": os.path.join(d, "sync.dv")}

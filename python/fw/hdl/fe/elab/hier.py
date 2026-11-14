@@ -207,6 +207,10 @@ class Node:
     clock_is_root: bool = True
     reset_domain: str = ""
     reset_is_root: bool = True
+    #: On the top only: every sync wiring call of the tree, in call order, as
+    #: ``(method, receiver path, [arg path or value])`` (paths from this node,
+    #: such as ``top.a.out``).
+    sync_connects: List[Tuple[str, str, List[Any]]] = dc.field(default_factory=list)
 
     @property
     def structural(self) -> bool:
@@ -231,6 +235,17 @@ class Node:
         return f"{base or _generic(self.cls)}__{h}"
 
 
+@dc.dataclass
+class SyncConnect:
+    """One sync wiring call made by build()/connect(): ``recv.method(*args)``.
+    ``args`` are the evaluated values (an :class:`Obj` for a port, a str for
+    a bind_view channel name); ``site`` is the SV call to point at."""
+    method: str                 # connect, connect_up, bind_view or link
+    recv: Obj
+    args: List[Any]
+    site: Any
+
+
 class _Recorder(Interpreter):
     """The interpreter, noting where each object was constructed and every
     port/export ``connect`` call, for diagnostics."""
@@ -241,6 +256,21 @@ class _Recorder(Interpreter):
         self.connects: List[Tuple[Obj, Any, Any]] = []   # (endpoint, provider, call)
         #: fw_extern_map / fw_facts oid -> [(method, call site)], in call order.
         self.map_calls: Dict[int, List[Tuple[str, Any]]] = {}
+        #: Sync-port and role-port wiring, in call order (static lowering of
+        #: composites, plan-sync-rtl E10).
+        self.sync_connects: List[SyncConnect] = []
+
+    @staticmethod
+    def _sync_call(sub, this) -> bool:
+        """``connect``/``connect_up`` on an fw_sync_port, or ``bind_view``/
+        ``link`` on an fw_proto role port (fw_sp_base)."""
+        if not isinstance(this, Obj):
+            return False
+        if sub.name in ("connect", "connect_up"):
+            return _derives(this.cls, "fw_sync_port")
+        if sub.name in ("bind_view", "link"):
+            return _derives(this.cls, "fw_sp_base")
+        return False
 
     def construct(self, cls, call_expr, caller: Frame):
         o = super().construct(cls, call_expr, caller)
@@ -259,7 +289,15 @@ class _Recorder(Interpreter):
                 or (sub.name in _FACT_CALLS and _derives(this.cls, "fw_facts"))):
             site = caller.pos[-1] if caller is not None and caller.pos else call_expr
             self.map_calls.setdefault(this.oid, []).append((sub.name, site))
+        sync = self._sync_call(sub, this)
+        if sync:
+            # Arguments of these are member paths and strings: evaluating them
+            # once more here has no effect on the design.
+            vals = [a.v if isinstance(a, Val) else self.eval(a, caller) for a in args]
         res = yield from super().call_sub(sub, this, iface, args, caller, call_expr)
+        if sync:
+            site = caller.pos[-1] if caller is not None and caller.pos else call_expr
+            self.sync_connects.append(SyncConnect(sub.name, this, vals, site))
         if sub.name == "connect" and isinstance(this, Obj) and args \
                 and (_derives(this.cls, "fw_port") or _derives(this.cls, "fw_export")):
             site = caller.pos[-1] if caller is not None and caller.pos else call_expr
@@ -327,7 +365,26 @@ def elaborate_tree(compilation, top_cls, name: Optional[str] = None) -> Node:
         raise
     top = rd.node(o, name, name, None, None, None)
     _Domains(it, compilation, fr).check(top)
+    paths = _obj_paths(top)
+    p = lambda v: paths.get(v.oid, "?") if isinstance(v, Obj) else v      # noqa: E731
+    top.sync_connects = [(c.method, p(c.recv), [p(a) for a in c.args])
+                         for c in it.sync_connects]
     return top
+
+
+def _obj_paths(top: Node) -> Dict[int, str]:
+    """oid -> path for every node and every object a node's property holds."""
+    out: Dict[int, str] = {}
+
+    def walk(n: Node):
+        out[n.obj.oid] = n.path
+        for c in n.children.values():
+            walk(c)
+        for prop, v in n.obj.fields.items():
+            if isinstance(v, Obj) and hasattr(prop, "name"):
+                out.setdefault(v.oid, f"{n.path}.{prop.name}")
+    walk(top)
+    return out
 
 
 class _Domains:
@@ -674,6 +731,9 @@ class _Reader:
                 and ct.arrayElementType is not None else ct
             if _is_domain(et):
                 continue        # domain plumbing (a derived clock or reset domain)
+            if et.kind == SK.ClassType and (_derives(et, "fw_sync_port")
+                                            or _derives(et, "fw_sp_base")):
+                continue        # a sync or role port (wiring in Node.sync_connects)
             if et.kind != SK.ClassType or not (_derives(et, "fw_component")
                                                or _derives(et, "fw_port")):
                 raise HierError(f"property {m.name!r}: a structural component holds only "

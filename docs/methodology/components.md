@@ -139,6 +139,10 @@ both. `tests/xls/test_step.py` checks a step counter and a round-robin arbiter
 against XLS's RTL cycle for cycle. `examples/resp_tracker` builds its two blocks in
 either form (`-D form=rt_step_pkg`).
 
+A component with value ports can also have a `comb()` (`add_comb()`), which drives
+comb port fields, and may mix `run()` and `step()` in SV simulation;
+{doc}`sync-logic` has that model.
+
 ### All-or-nothing steps
 
 A step whose output is a stream, which the receiver may back-pressure, extends
