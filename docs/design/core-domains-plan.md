@@ -101,15 +101,387 @@ up from this file.
 
 | Step | Status | Notes |
 |---|---|---|
-| D0 Plan | done | This file (2026-11-15). Open questions in §10 need confirming before D1. |
-| D1 Spec API and semantics | not started | |
-| D2 rt-sv | not started | |
-| D3 Z6 IR shapes | not started | |
-| D4 fe-sv elaboration | not started | |
-| D5 Zuspec domain passes | not started | |
-| D6 Emission | not started | |
-| D7 Extensibility, options, docs | not started | |
-| D8 IR reconciliation with zdc | not started, gated | Touches zuspec-dataclasses and zuspec-synth users; start only on a go-ahead. |
+| D0 Plan | done | This file (2026-11-15). §10 Q1–Q9 confirmed 2026-11-15, with the D1 refinements noted there. |
+| D1 Spec API and semantics | done | 2026-11-15. fw-hdl-spec: the API (`fw_domain*.svh`, `fw_clock_kind.svh`, `fw_reset_kind.svh`, enums and typedefs in `fw_hdl_api.svh`, the macro), `semantics/domains.md`, diagnostics, netlist schema, 29 scenarios (`dom_*`, `kind_user`, feature `domains`), `docs/api/domains.rst`, `tools/fw_conformance_schema.py`. All 66 scenarios compile; schema check, spec lint, docs `-W` pass. rt-sv has placeholder bodies (`sv/fw_rt_domain.svh`) and passes the API check; rt-sv and fe-sv skip `domains` scenarios until D2/D4. See "D1 outcomes" below. |
+| D2 rt-sv | done | 2026-11-15. fw-hdl-rt-sv: `sv/fw_rt_dom.svh` (the domain runtime), `sv/fw_rt_domain.svh` (the bodies, replacing the placeholders), hooks in `sv/fw_rt.svh` (domain records, extern domain pins, the crossing check per net, end-of-elaboration checks, netlist members); `FEATURES = {"domains"}`. rt-sv conformance 59 passed, 7 skipped (static-only, as before); API check passes. See "D2 outcomes" below. |
+| D3 Z6 IR shapes | done | 2026-11-15. zuspec-ir-core: `domain.py` (the §6.2 shapes), the new `DataTypeComponent` lists and `ExternPin` fields, exports, CHANGELOG; `tests/test_domain_ir.py` (a component and an extern with every shape round-trip; anchors). ir-core 225 passed, 3 skipped; fe-sv, struct_flatten and be-sv structural tests unchanged. See "D3 outcomes" below. |
+| D4 fe-sv elaboration | done | 2026-11-15. fw-hdl-fe-sv: `domains.py` (domain objects, associations and lookup, drivers, extern domain pins, waivers recorded, the end-of-elaboration checks), the `fw_domain` intrinsics in `rt.py`, domain pins in the pin map and header checks (`resolve.py`), the netlist members (`netlist.py`), the Z6 shapes in `ir_map.py`, `fw_domain_kind_utils` in fe-sv's macros. zuspec-synth: `passes/domains/relation.py` (the relation, used by fe-sv's `relate`), and `struct_flatten` refusing domain pins until D6. Conformance: `FEATURES = {"domains"}`; 24 of 29 domain scenarios pass, equal to rt-sv's expectations; 5 wait (`PENDING` in `test_conformance.py`). fe-sv 129 passed, 5 skipped (was 93 passed, 29 skipped); zuspec-synth struct_flatten, CDC and relation 25 passed; be-sv structural 12 passed. See "D4 outcomes" below. |
+| D5 Zuspec domain passes | done | 2026-11-15. zuspec-synth `passes/domains/`: `resolve.py` (`Resolution`: the instance tree of a concrete IR, lookup, `DomainRef` resolution; the relation's `DomainGraph`), `crossing.py` (`check_crossings`, with waivers and the severity option), `realize.py` (`realize`: realized domains, `FW-E-DOM-NODRIVER`, each class's generated domain ports, `FW-E-DOM-PORTNAME`). ir-core: `DomainPortName`, `DomainProvides` (`DataTypeComponent.domain_port_names`, `domain_provides`), `DataTypeDomainKind.pin_default`, `port_names` keyed by `port_name_key`. fe-sv: `domains.passes` runs them at the end of elaboration over `to_ir(parameterize=False)`; `ir_map` fills the kinds' port names, `port_name()` and `provides()`; fe-sv's own NODRIVER check removed. Conformance: all 29 domain scenarios pass, `PENDING` empty. fe-sv 136 passed (was 129 passed, 5 skipped); zuspec-synth domain, relation, struct_flatten, CDC 46 passed; ir-core 225 passed, 3 skipped; be-sv structural 12 passed. See "D5 outcomes" below. |
+| D6 Emission | done | 2026-11-15. zuspec-synth: `passes/domains/ports.py` (`DomainPorts`: per-class domain ports and wiring, over concrete or parameterized IR); `realize.py` takes its ports from it; `struct_flatten` adds domain ports, local and inverted nets, driver assigns and child connections in both forms. ir-core: `DataTypeDomainKind.polarity`. fe-sv: domain-handle provenance (`get` returns a traced handle; `set`, `pin`, sources and `provides` record the `DomainRef`), an extern's own associations written to the IR, associations of a child made under a branch on parameters placed in its generate arm, explore runs seeded with the instance's domains. Examples: `examples/wrap_rtl` migrated; `examples/domains` new (`soc`, `soc_bad`). Spec: the `active_low` polarity convention, the per-class realization rule. fe-sv 140 passed; zuspec-synth domain, flatten and CDC tests 53 passed; ir-core 225 passed, 3 skipped; be-sv structural 12 passed; spec lint PASS; `dfm run sim` PASS for both examples. See "D6 outcomes" below. |
+| D7 Extensibility, options, docs | done | 2026-11-15. The toy kind end to end: `kind_user` passes on both tools (netlist, `FW-I-DOM-CROSS`), and fe-sv emits nothing for it (`test_user_kind_emits_nothing`). Severity option: zuspec-synth `severity_option` (map or `kind.relation=severity,...`, checked); fe-sv `elaborate(domain_severity=)` and the dfm `Elaborate` parameter `domain_severity` (a map); rt-sv `+fw_dom_sev`, a malformed one `FW-E-RT-OPT`. Docs: fw-hdl-spec `docs/domains.rst` (the user guide), `docs/wrapping.rst` on domain pins, index; rt-sv README (plusargs, the user-kind handle limit). fe-sv 143 passed; rt-sv 6 passed (conformance included); zuspec-synth domain, flatten and CDC tests 54 passed; spec lint PASS; spec docs `-W` pass; `dfm run sim` PASS for both examples. The §1 criterion is met. See "D7 outcomes" below. |
+| D8 IR reconciliation with zdc | done | 2026-11-15. zuspec-dataclasses: `domain_ir.py` (the library kinds; a class's clock and reset as a created, self-associated, driven domain), called by the factory. ir-core: `clock_domain`/`reset_domain` not serialized (`serialize: False` metadata, honoured by the serializers). zuspec-synth: `DomainBinding` reads only Z6 (`has_clock`, `has_reset`), used by `component_fields.py`, `synth/__init__.py` and `CDCAnalysisPass`. CDCAnalysisPass kept for zdc (by-name clocks). Tests: zdc `test_factory_domain_ir.py` (6), synth `test_domain_binding_ir.py` (3), ir-core `test_source_domain_objects_not_serialized`, fe-sv `test_zdc_kinds_match`. ir-core 226 passed, 3 skipped; fe-sv 144 passed; zdc, synth and be-sw: no new failures against the pre-existing ones (see "D8 outcomes"). |
+
+### D1 outcomes
+
+Where the spec now differs from §3 and §4 of this plan, the spec
+(`semantics/domains.md`, `netlist.schema.json`, `bindings/sv`) wins:
+
+- **Q7 is `provides`**, not `implements`: `implements` is an SV keyword.
+- **Netlist shape** (replaces §3.11): a domain is an object of kind
+  `domain` (type `fw_domain#(fw_clock_kind)`) with `params` and `drivers`;
+  associations are listed on the object they were set on (`assoc`: kind ->
+  name -> domain path); the extern has a `domain_pins` map; the component
+  has `waivers`, `port_names`, `provides`. Every new key is present only
+  when non-empty, so layer-1 expectations are unchanged. A domain's params
+  are written like a component's (enums as numbers), handles as paths.
+  There is no separate `deriv` object: every kind's `params_t` has
+  `deriv` and `from`.
+- **Crossings** (refines Q2): one diagnostic per pair of interfaces (a
+  port, or its outermost bundle) and kind, on the lesser path, whichever
+  nets the pair spans. Reporting on the driver would split a bundle
+  crossing into one diagnostic per direction.
+- `FW-E-DOM-UNUSED` is checked at the end of elaboration, after the extern
+  maps, which read named associations (`pin_out(m, .., get(this, "out"))`).
+- `FW-E-DOM-NONE` also covers a null derivation source (on the domain);
+  `relate(null, x)` reports on the calling component. `FW-E-DOM-PIN` also
+  covers a pin or driver on a marker kind.
+- `fw_domain_kind` declares every kind static for a marker kind, so a user
+  kind redeclares only what it changes (the toy kind is 4 lines).
+- Clock `period_ns` dropped (delays are layer 2). Reset derivations:
+  `root(style, clock)`, `synced(from, clock, style)`, `combined(from[],
+  style, clock)`, `software(from, clock, style)`.
+- **Tool notes.** Verilator takes default arguments from an out-of-block
+  body, not the prototype: every tool's bodies repeat the defaults
+  (`tools/fw_hdl_bodies.py` does; rt-sv's must). The library kinds write
+  out `get_type()` rather than use the macro, because the API check
+  compares expanded text.
+- Scenario set: `dom_create_bad` replaces `dom_create_late` (adds a name
+  clash); new `dom_pin_bad` and `dom_deriv`. `meta.json` gained
+  `features`; runners skip scenarios needing a feature they lack.
+
+### D2 outcomes
+
+- **Scenario fix.** `dom_phase` waived `u0.o` and `u1.i` in `top.build()`,
+  but children build after their parent, so both handles were still null.
+  It now waives two of top's own ports, and expects `FW-E-DOM-PHASE` on
+  `top.d_i`. No other expectation changed.
+- **Handles in params (rt-sv limit).** Verilator's `%p` prints a handle
+  nested in a struct as its class name, not its identity. rt-sv writes the
+  handles it can reach by name as paths: `from` in every kind, and
+  `fw_reset_kind`'s `clock` (through a typed box downcast). A user kind with
+  a domain handle in another field gets its class name in the netlist. fe-sv
+  (D4) reads the declarations, so it has no such limit. Closing it in rt-sv
+  needs a kind hook that lists a params value's handles; decide in D7.
+- `+fw_dom_sev` (the severity option) is not in rt-sv yet; it stays in D7
+  with `domain_severity`.
+- rt-sv's `dfm run tests` took `api-check` and `conformance` from its
+  cache after the SV sources changed; both were run directly.
+
+### D3 outcomes
+
+Refinements of the §6.2 table, which is updated to match:
+- **`DomainAssoc.assoc`, not `name`.** ir-core's anchor pass treats any
+  named node in a component's lists as a member, so a named association
+  `wr` would have claimed the anchor `top.wr` and could clash with a field.
+  Domain objects (`DomainDecl.name`) are members, in the component's name
+  space, and keep `name`.
+- **`DomainRef` is an `Expr`, and has a `target`.** A domain of another
+  kind in a derivation's arguments or a params value (a reset's `clock`)
+  is then an ordinary `Expr`. `target` (`[]` = the component itself) lets
+  a resolution be read through an own interface or a child, as `get(obj)`
+  allows; `(kind, assoc)` alone covered only `get(this)`.
+- **Paths** are lists whose elements are a field name or an
+  `ExprHierarchicalElem` (a name with a subscript), the element type of
+  layer 1's bind paths. A statement under a loop or a branch sits in
+  `generates`, like a `Bind`.
+- Severities are keyed by the relation's lower-case name (`"unrelated"`),
+  as the option spells it: the serializer writes dict keys as strings, so
+  `DomainRel` keys would not round-trip. `DomainRel` exists for the
+  relation pass (D5).
+
+### D4 outcomes
+
+- **What waits.** The exit criterion is every scenario that needs no
+  crossing check. Four need the crossing pass (D5): `dom_cross_clock`,
+  `dom_cross_reset`, `dom_waive` (`FW-W-DOM-WAIVE` is a waiver matching no
+  crossing) and `kind_user` (its expectation has a crossing).
+  `dom_portname` needs the realization pass (D6). They are listed in
+  `PENDING` in fe-sv's `test_conformance.py`, with the step each needs.
+  `dom_cross_elem` expects no crossing, so it passes already.
+- **The relation is written once.** `passes/domains/relation.py` in
+  zuspec-synth takes a `DomainGraph` (`sources(d)`, `key(d)`); fe-sv's
+  `relate()` and `FW-W-DOM-RSTSYNC` call it on fe-sv's objects. D5's passes
+  call it on the IR. Waivers are recorded in D4, and matched by D5's
+  crossing pass.
+- **What ir_map writes.** A domain the component's code reached is
+  written as the component can reach it:
+  - its own domain object, as `decl`;
+  - else a resolution that gives it: the component's default, one of its
+    named associations, or the association of an interface or a child.
+  So a child that derives from `get(this)` is written over its resolution,
+  not over a domain of its parent, and one IR type serves every instance.
+  - A kind's derivations are its `deriv_e` members, lower case; every
+    non-root derivation's sources are `from`.
+  - `DomainDecl.params` holds the params value's fields other than `deriv`
+    and `from` (`from` is `sources`): integers as constants, domain handles
+    as `DomainRef`, and null handles left out.
+  - `args` stays empty: fe-sv sees the params value the derivation call
+    returned, not the call's arguments.
+- **Parameterized cases wait for D6.** A domain object, association or
+  driver under a loop or branch on parameters makes the component a
+  specialization (`FW-I-EMIT-SPEC`). A component whose domain statements
+  are all outside control flow stays general.
+- **Gaps in Z6 for D6.** `port_name()` and `provides()` are statements a
+  class makes about itself, and Z6 has no field for them yet. They are in
+  the netlist, but not in the IR.
+  `DataTypeDomainKind.port_names` is left empty, because a reset's port
+  name depends on the polarity the class settles on, which is
+  realization. D6 adds both.
+- **Emission refuses domain pins.** `struct_flatten` would have left a
+  domain pin open, so both of its extern paths now raise
+  `NotImplementedError` until D6. Domain objects, associations and drivers
+  add nothing to the emitted RTL until then.
+- fe-sv's own `fw_hdl_macros.svh` needed `fw_domain_kind_utils`, which
+  `dom_pin_bad` and `kind_user` use.
+
+### D5 outcomes
+
+- **The passes read a concrete IR.** `Resolution` walks the IR from its
+  top type, one instance per child field, and refuses a type with
+  template parameters or generate blocks. fe-sv hands it
+  `to_ir(parameterize=False)`, so every design is covered now; resolving
+  over the parameterized IR (evaluating loops and conditions per
+  instance) comes with D6's parameterized cases.
+- **fe-sv runs the passes in elaboration** (`domains.passes`, after the
+  end-of-elaboration checks), when the design used any domain kind, even
+  after earlier errors: `dom_waive` expects `FW-E-DOM-WAIVE` and a
+  crossing together. If the IR cannot be built after an earlier error,
+  the passes are skipped; with no earlier error, that is `FW-E-ELAB`.
+  The realization is kept on `rt.dom.realization` for emission.
+- **Crossings** follow rt-sv's rule exactly: per net of each scope,
+  sources against every port endpoint; local signals transparent; one
+  diagnostic per pair of interfaces and kind, on the lesser path; a
+  waiver matches when it was made by the connecting scope, for that
+  kind and that pair of interfaces. `check_crossings` takes the
+  severity option already; the dfm parameter and the rt-sv plusarg stay
+  in D7.
+- **NODRIVER moved** to the realization pass; fe-sv no longer checks it
+  itself. `FW-E-DOM-DRIVER`, `-DERIV`, `-UNUSED` and `FW-W-DOM-RSTSYNC`
+  stay in fe-sv's end-of-elaboration checks: they are about what the
+  code said, not about realization.
+- **Port names without SV.** A kind's `port_name(assoc, attr)` is SV
+  code, so fe-sv tabulates it: `DataTypeDomainKind.port_names` holds the
+  name for every association name of the kind and every attribute value
+  its pins, drivers and `pin_default()` have, keyed by
+  `port_name_key(assoc, attr)` (`"/active_low=1,style=2" -> "rst_n"`).
+  An input port's attributes are the ones its subtree's sinks agree on,
+  compared by the port name they give (so a reset's style does not
+  matter), else `pin_default`. That is §3.8's polarity rule, without
+  the pass knowing about resets.
+- **Z6 gaps closed.** `DomainPortName` and `DomainProvides` hold
+  `port_name()` and `provides()`; an extern class's `provides` is
+  written too (the divider wrapper's case).
+- **Output ports.** An association driven inside a class's subtree is an
+  output port whether the driver is a `pin_out` or a `drive`; §3.8 names
+  only `pin_out`, but a `drive` of an outer domain inside a class needs
+  the same port.
+- The conformance scenarios are flat, so they produce one generated
+  port (`dom_portname`). The ports of hierarchical classes are covered
+  by zuspec-synth's `test_domain_passes.py` and fe-sv's
+  `test_realization_through_fe_sv`.
+- The rest of zuspec-synth's suite has failures unrelated to domains:
+  example modules not installed (`rotate`, `blink`, ...), a `pyslang`
+  API change, missing `docs/rationale/`, and `zuspec.cli`.
+
+### D6 outcomes
+
+- **Realization is per class, over the IR types** (`DomainPorts`), not over
+  an instance tree. Emission is one module per class, and the
+  parameterized IR has no instance tree; a static analysis reads both
+  forms, every generate arm and iteration included. Within a class each
+  domain reference resolves to a symbol: a domain the class creates, an
+  association its parent gives (`ext`), a domain a child creates (refused
+  by emission), or nothing. D5's `realize` now takes its ports from it, so
+  `FW-E-DOM-PORTNAME` and emission agree.
+- **The rule is refined** (`semantics/domains.md`, Emission): an
+  association is realized in a class when something in its subtree
+  realizes a domain *through it*. D5 asked whether the domain it resolved
+  to was realized there, so an association that only resolved to the same
+  domain as a realized one got a port nothing used. A named association a
+  class reads and no parent sets is now a port too; its parent connects it
+  to the default it falls back to.
+- **Provenance in fe-sv.** Two associations can give the same domain at an
+  instance (`xfer`'s `wr` and `rd`, both `clk_a`), and D4's ir_map found a
+  ref by looking up the domain, so `set(sf, wr)` came out as the default.
+  Port names then followed the instance, and two instances that should
+  share a class did not. Now `get` returns its handle traced
+  (`Sym(handle, DomainRef)`); `set`, `pin`, `create` sources and
+  `provides` sources record the ref when the component that read it uses
+  it, and ir_map writes it. The lookup is the fallback.
+- **Polarity.** Inversion needs to know which pin attribute is polarity,
+  and the kind API has no function for it. The convention is a 1-bit
+  `pin_attr_t` member `active_low` (spec text in `fw_domain_kind.svh` and
+  `semantics/domains.md`); fe-sv writes it as
+  `DataTypeDomainKind.polarity`. A sink of the other polarity reads
+  `<net>_inv` (`assign rst_inv = ~rst`), one per net, in the module that
+  makes the connection.
+- **What emission writes.** Domain ports come first in a module's ports,
+  sorted by kind and association. A domain the class creates and realizes
+  is a net named after it. A driver is `assign <net> = <signal>`; a child
+  output read only by a driver gets a net named after it, not `_unused`.
+  A child output domain port drives its association's net, or the class's
+  output port. Collisions are `FW-E-DOM-PORTNAME` (generated ports) or
+  `FW-E-NAME-FLAT` (nets).
+- **A class does not know it is the top.** A top whose subtree drives its
+  own default association, unset, gets an output port for it, as any class
+  would. fe-sv's instance checks (`FW-E-DOM-NONE`) report the design
+  error; emission keeps the class rule.
+- **Parameterized cases (§6.1).** An association of a child created under
+  a branch on parameters (no loop) goes in that child's `GenerateIf` arm,
+  as Z6 allows, and the class stays general: a parameter that picks a
+  single- or dual-clock FIFO is one module. The class's ports are those of
+  both arms. A domain port or net read only in some arms also drives a
+  `<name>_unused` net, so it lints clean at values that take the other
+  arm. Still specializations: domain objects, drivers and associations in
+  loops, and associations under a branch on anything but a child made in
+  the same arm. To cover the untaken arm, ir_map re-elaborates the class
+  on its own (`FeRt.explore`); that run now starts with the instance's
+  associations and defaults, so the arm sees the domains the instance
+  sees.
+- **Externs' own associations.** `_extern_type` wrote only `provides`, so
+  `cdc_fifo`'s `set(in, wr)` and `set(out, rd)` were lost and fe-sv
+  reported crossings that are not there. It now writes all of an extern's
+  domain statements.
+- **Examples.**
+  - `examples/wrap_rtl`: the wrappers have no `clk`/`rst` ports; `chain`
+    creates `clk` and `rst`, sets them as defaults and drives them from
+    `clk_i`/`rst_i`. The slice's `aresetn` reads the generated `rst_inv`.
+    The reference has one reset input and its own inverter. The README is
+    updated.
+  - `examples/domains`: `soc` takes a stream from `clk_a`, through `slow`
+    (`clk_a` divided by 2, from a wrapped divider's `pin_out`), to the
+    unrelated `clk_b`. `xfer` picks a single-clock FIFO when
+    `relate(wr, rd)` is `SAME`, else the dual-clock wrapper (named
+    associations `wr`/`rd`, interfaces in each). The reset is active low;
+    the single-clock FIFO's is active high. `soc_bad` fails with
+    `FW-E-DOM-CROSS`. RTL, reference, testbench, `flow.yaml`, README.
+  - Both emit Verilog that is lint-clean under `verilator -Wall` and
+    matches the reference in simulation: pytest (`tests/e2e/`) and
+    `dfm run sim`.
+- **Open.**
+  - `xfer`'s two structures come from `relate` in `build()`, not from a
+    parameter, so they are two classes (`xfer`, `xfer__1`, with
+    `FW-I-EMIT-SPEC`). The info message names constructor factories, which
+    is the general cause but not this one.
+  - be-sv's full suite has 14 failing performance tests (zdc behavioral
+    components in the simulation backend); they do not reach
+    `struct_flatten` or the domain passes.
+
+### D7 outcomes
+
+- **The toy kind needed no core change.** `kind_user` already passed on
+  both tools after D5; D7 adds the emission side: the kind is in the IR
+  (`DataTypeDomainKind`, not physical, its severities), its domains and
+  associations are in the class, and the emitted module has no domain
+  port or net.
+- **The severity option** is checked in one place, zuspec-synth's
+  `severity_option`, which takes the map form (dfm, Python) or the text
+  form (`fw_reset_kind.unrelated=warning,fw_clock_kind.related=none`).
+  A bad relation or severity is a `ValueError` in fe-sv (the dfm task
+  reports it as an error marker). rt-sv parses `+fw_dom_sev` itself, the
+  same text form; a malformed item is `FW-E-RT-OPT`, a tool diagnostic,
+  reported even when no crossing is checked. A kind name the design does
+  not use is ignored, so one option can serve several designs. rt-sv has
+  no dfm runner task of its own: the plusarg goes through
+  `hdlsim.vlt.SimRun`'s `plusargs`.
+- **Tests.** zuspec-synth `test_severity_option_forms`; fe-sv
+  `test_domain_severity_option` (map, text, bad), `test_user_kind_emits_nothing`,
+  and `test_domain_severity_through_dfm` (a flow elaborates `soc_bad` with
+  its crossing made a warning); rt-sv `test_severity_option` (three
+  plusargs on `dom_cross_reset`; the conformance runner's `run_one` takes
+  `plusargs` and an `expect`).
+- **Docs.** `docs/domains.rst` is the user guide: create and set, derivations
+  and relations, drivers, wrapper pins and polarity, named associations,
+  `pin_out` and `provides`, `relate` to choose structure, crossings,
+  waivers and the severity options, what emission writes, and writing a
+  kind (the toy `macro_kind`). Its Verilog excerpt is the emitted
+  `examples/domains` top. `docs/wrapping.rst` maps clock and reset as domain
+  pins and drops their hand connections. The `wrap_rtl` README was
+  updated in D6.
+- **D2's open question** (a domain handle in a user kind's params, other
+  than `from`, written as a class name by rt-sv): left as a documented
+  rt-sv limit (README, Notes). A kind hook to list a params value's
+  handles can come when a kind needs one; no library kind does.
+
+### D8 design
+
+The two models differ, so D8 maps zdc's onto Z6 rather than making them
+one:
+
+- **zdc identifies a clock by name, Z6 by object.** Each zdc class
+  declares its own `ClockDomain`; two classes that both name `fast_clk`
+  are in one clock, and `CDCAnalysisPass` compares names. In Z6 each class
+  would create its own root domain, and two root domains are unrelated.
+- **zdc puts polarity on the domain, Z6 on the net.** A zdc `ResetDomain`
+  has a polarity; in Z6 the polarity is an attribute of a driver or pin.
+- **zdc has a period, Z6 does not.** `fw_clock_kind`'s params have no period.
+
+The mapping (zuspec-dataclasses `domain_ir.py`, called by the factory):
+
+- **Kinds.** zdc uses the library kinds `fw_clock_kind` and
+  `fw_reset_kind`, defined the same way fe-sv builds them from the spec
+  (an fe-sv test compares the two).
+- **A class-level domain** (the one the factory already picks, most derived
+  first) is what a Z6 top does: the class creates a root domain named after
+  the attribute (`DomainDecl`), makes it its own default (`DomainAssoc`,
+  `target=[]`), and drives it from the port synthesis gives it
+  (`DomainDriver`, `signal=[port]`). The port is `ClockDomain.name` or
+  `clk` for a clock; `rst_n` or `rst` for a reset, after its polarity.
+  - A clock's params are `div`, `mul` and `phase_deg`, plus `period` in
+    femtoseconds when the period is known. `period` is the one param
+    outside `fw_clock_kind`'s params_t; passes ignore it.
+  - A `DerivedClockDomain` is `derived` with its `div`, `mul` and phase.
+    Its source is not recorded: zdc's `super()` means "the parent's
+    domain", which has no `DomainRef` form, and a lambda source names a
+    class attribute the factory does not otherwise read.
+  - A reset's params are `style` (0 async, 1 sync). The driver's
+    attributes are `active_low` and `style` 2 (any), as fe-sv writes
+    `rst.drive(rst_ni, active_low())`.
+  - A reset with style `none` (a class with no reset pin) is a reset
+    domain with no driver. Its `style` is 1, so synthesis treats it as it
+    did before, as a sync reset.
+- **Not mapped:** zdc `__bind__` domain overrides
+  (`{self.child.clock_domain: self.fast_clk}`). The factory has never read
+  them; only the Python runtime applies them.
+
+The readers:
+
+- **ir-core.** `DataTypeComponent.clock_domain` and `reset_domain` stay as
+  the front end's source objects, for be-sw's `c_emit.py`, but are no longer
+  serialized (field metadata `serialize: False`, honoured by `Serializer`
+  and `JsonConverter`). Z6 is what a serialized component has.
+- **zuspec-synth.** `DomainBinding.from_component_ir` reads only Z6: the
+  class's default clock and reset declarations and their drivers. It gains
+  `has_clock` and `has_reset`, which `component_fields.py` and
+  `synth/__init__.py` use in place of `clock_domain is not None`.
+  `CDCAnalysisPass` reads domains through `DomainBinding`, so it no longer
+  needs zdc's classes for them.
+- **CDCAnalysisPass is kept**, not replaced by the Z6 crossing pass. With
+  zdc's by-name identity, the crossing pass would report two classes that
+  both name `fast_clk` as unrelated. Using it for zdc needs zdc to create
+  its clocks once at the top and associate them down (a zdc front-end
+  change), so it is left for later.
+
+
+### D8 outcomes
+
+- Implemented as designed above. be-sw is untouched: `c_emit.py` still
+  reads `reset_domain`, which the factory still sets in memory.
+- **Exit criterion.** A zdc component's domains serialize as Z6, and
+  `DomainBinding` gives the same binding after a round trip
+  (`test_same_after_serialization`). The zdc, synth and be-sw suites have
+  failures that predate D8 (environment: missing `zuspec.cli`, `uvloop`
+  and benchmark modules; solver tests). D8 was compared against them:
+  - zuspec-synth: 1276 passed (1273 + 3 new), the same 53 failed and 97 errors.
+  - be-sw: 526 passed, the same 6 failed and 43 errors.
+  - zuspec-dataclasses: 2017 passed (+6 new), the same failures except in
+    `tests/solver/test_zdc_builtins.py`. That file fails between 16 and 18
+    tests per run with or without D8's changes (checked with them
+    stashed), so it is flaky, not a regression.
+- **Left for later:** zdc `__bind__` domain overrides in the IR; a
+  `DerivedClockDomain`'s source; the Z6 crossing pass for zdc designs
+  (needs zdc clocks created once and associated down);
+  `BlockSignature`/`Function.metadata` clock and reset (layer 2).
 
 ---
 
@@ -333,14 +705,15 @@ every domain of a marker kind, stays a marker.
 ### 3.8 Emission
 
 One module per class (`core-layer1.md` §6.6). For each class:
-- An **association is realized in the class** when its resolved domain is
-  realized inside the class's subtree, over every generated arm and
-  iteration.
+- An **association is realized in the class** when something in the
+  class's subtree realizes a domain through it (an extern pin, a driver, a
+  child's port or pin resolved through it), over every generated arm and
+  iteration (D6 refinement; see "D6 outcomes").
 - Each realized association whose driver is outside the subtree is an
   **input port**, named by `K::port_name(assoc, attr)`: `clk`, `wr_clk`,
   `rst`, `rst_n`, `wr_rst_n`.
-- Each association driven inside the subtree, by a `pin_out` there, is an
-  **output port** of the class (§10 Q4).
+- Each association driven inside the subtree, by a `pin_out` or a `drive`
+  there, is an **output port** of the class (§10 Q4).
 - Two associations that resolve to the same domain at an instance stay
   two ports. The parent connects both to the same net.
 - A domain created in the class and realized only inside it is a local
@@ -376,8 +749,9 @@ One module per class (`core-layer1.md` §6.6). For each class:
 - **Severities are configurable** per kind and relation by an
   elaboration option: dfm `Elaborate` parameter `domain_severity`
   (`{"fw_reset_kind": {"unrelated": "warning"}}`), and the rt-sv
-  `fw_elab` plusarg `+fw_dom_sev=fw_reset_kind.unrelated=warning`.
-  `none` silences.
+  `fw_elab` plusarg `+fw_dom_sev=fw_reset_kind.unrelated=warning`
+  (comma-separated for several). `none` silences. (D7: a malformed
+  option is a `ValueError` in fe-sv, `FW-E-RT-OPT` in rt-sv.)
 - An interface whose domain of `K` resolves to `null` is not checked for
   `K`.
 - **Crossing elements.** A component whose interfaces are in different
@@ -576,23 +950,25 @@ in D6, and goes into `semantics/domains.md` and the user guide.
 - `resolve.py`: the checks of §3.3 to §3.7 that need no IR.
 - `netlist.py`: §3.11.
 - Tracing (§6.6 of `core-layer1.md`): `create` and `set` record their
-  traced frames like `create` and `connect` do. A domain created, or an
-  association whose target or domain differs, under a loop or a branch on
-  parameters is first emitted as a specialization (`FW-I-EMIT-SPEC`).
-  Associations that are the same in every iteration and arm are general.
+  traced frames like `create` and `connect` do. An association of a child
+  created under a branch on parameters goes in the child's generate arm
+  (D6). Any other domain statement under a loop or a branch on parameters
+  is emitted as a specialization (`FW-I-EMIT-SPEC`).
 
 ### 6.2 Z6: IR shapes (ir-core)
 
 | Shape | Fields |
 |---|---|
-| `DataTypeDomainKind` | `name`, `physical: bool`, `derivations: Dict[str, DomainDerivDecl(sources: List[str])]` (which arguments are same-kind sources), `severities: Dict[rel, sev]`, `port_names: Dict[str, str]` (computed by fe-sv per used association) |
+| `DataTypeDomainKind` | `name`, `physical: bool`, `derivations: Dict[str, DomainDerivDecl(sources: List[str])]` (which arguments are same-kind sources), `severities: Dict[str, DomainSeverity]` (keyed `"same"`, `"related"`, `"unrelated"`), `port_names: Dict[str, str]` (`K::port_name`, tabulated by fe-sv, keyed by `port_name_key(assoc, attr)`; D5), `pin_default` (D5), `polarity` (the attribute that is a net's polarity, `"active_low"`; D6) |
 | `DataTypeDomain` | `kind`: the kind's name in `type_m` |
 | `DomainDecl` | `name`, `kind`, `deriv: str`, `sources: List[DomainRef]`, `args: Dict[str, Expr]`, `params: Dict[str, Expr]` |
-| `DomainRef` | either a `DomainDecl` of this component by name, or a resolution `(kind, assoc name)` of this component |
-| `DomainAssoc` | `target: List[str]` (field path, `[]` = self, may hold index expressions), `kind`, `name`, `domain: DomainRef` |
+| `DomainRef` | an `Expr`: either a `DomainDecl` of this component by name (`decl`), or a resolution `(kind, assoc, target)`: the domain `target` (`[]` = this component, or an own interface or child) resolves to |
+| `DomainAssoc` | `target: List[str]` (field path, `[]` = self, may hold index expressions), `kind`, `assoc` (the association's name, `""` = default), `domain: DomainRef` |
 | `DomainDriver` | `domain: DomainRef`, `signal: List[str]`, `attr: Dict[str, Expr]` |
 | `DomainWaiver` | `kind`, `a`, `b`: paths; `reason` |
-| `DataTypeComponent` | gains `domains: List[DomainDecl]`, `domain_assocs`, `domain_drivers`, `domain_waivers` |
+| `DomainPortName` | `kind`, `assoc`, `port`: `port_name(this, assoc, port)` (D5) |
+| `DomainProvides` | `kind`, `assoc`, `deriv`, `sources`, `params`: `provides(this, assoc, p)` (D5) |
+| `DataTypeComponent` | gains `domains: List[DomainDecl]`, `domain_assocs`, `domain_drivers`, `domain_waivers`; `domain_port_names`, `domain_provides` (D5) |
 | `ExternPin` | gains `domain: Optional[DomainRef]`, `domain_kind`, `domain_attr`, `output: bool` |
 
 - All of it round-trips through the serializer; kinds are stored once in
@@ -601,6 +977,9 @@ in D6, and goes into `semantics/domains.md` and the user guide.
   needs no IR change.
 - Nothing existing changes in D3: `clock_domain`, `reset_domain`,
   `BlockSignature` and `Function.metadata` are left alone until D8.
+  (D8: zdc writes Z6 too; `clock_domain`/`reset_domain` are no longer
+  serialized; `BlockSignature` and `Function.metadata` are still for
+  layer 2.)
 
 ### 6.3 Zuspec passes (zuspec-synth `passes/domains/`)
 
@@ -611,7 +990,7 @@ in D6, and goes into `semantics/domains.md` and the user guide.
 - **Crossing.** Over the connections of every component (`bind_map`
   after Z3's resolution of nets), by §3.9, with the severity option.
   It returns diagnostics; fe-sv reports them. It replaces
-  `CDCAnalysisPass` for fw-hdl designs; for zdc designs, see D8.
+  `CDCAnalysisPass` for fw-hdl designs; zdc designs keep it (D8 design).
 - **Realization.** Per class (§3.8): the realized associations, their
   directions, the per-class reset polarity, `NODRIVER` and
   `PORTNAME`. Its result is a list of domain ports per class, which
@@ -633,12 +1012,16 @@ appear in the conformance results. It runs realization before
   signal's net is used directly; `pin_out` connects the output pin to the
   domain's net.
 - be-sv should need nothing new: domain ports and nets are ordinary
-  ports, nets and assigns by then.
+  ports, nets and assigns by then. (D6: it needed nothing.)
+- The ports and wiring come from `DomainPorts` (`passes/domains/ports.py`),
+  computed per class on the structural form before any rewrite.
 
 ### 6.5 dfm
 
 - `Elaborate` gains `domain_severity` (a map, §3.9).
-- The rt-sv runner passes `+fw_dom_sev`.
+- The rt-sv runner passes `+fw_dom_sev`. (D7: rt-sv has no runner task;
+  `hdlsim.vlt.SimRun`'s `plusargs` carries it, and the conformance
+  runner's `run_one` takes `plusargs`.)
 
 ---
 
@@ -694,10 +1077,10 @@ scenario format has no options.
 | `src/fw_domain_port.svh` | nothing: named associations replace domain ports | — |
 | `src/fw_clock_domain*.svh`, `fw_reg_reset_domain`, `fw_reset_combine` | the derivations of `fw_clock_kind`/`fw_reset_kind`; drivers become library components, later | D1; later |
 | `src/fw_crossing*.svh` | the crossing pass (§6.3) | D5 |
-| zuspec-synth `CDCAnalysisPass` | replaced by the crossing pass for fw-hdl; for zdc in D8 | D5, D8 |
-| ir-core `DataTypeComponent.clock_domain`/`reset_domain` | derived from the Z6 shapes | D8 |
-| `BlockSignature.clock`/`reset`/`reset_active_low`, `Function.metadata['clock'/'reset']` | reconciled with Z6 (layer 2 and engines) | D8 or layer 2 |
-| zuspec-be-py `model/domain.py` | unchanged; zdc maps its classes to Z6 in D8 | D8 |
+| zuspec-synth `CDCAnalysisPass` | replaced by the crossing pass for fw-hdl; for zdc it stays, reading Z6 through `DomainBinding` | D5, D8 |
+| ir-core `DataTypeComponent.clock_domain`/`reset_domain` | the front end's source objects, not serialized; Z6 is the IR (read by `DomainBinding`; be-sw's `c_emit.py` still reads `reset_domain`) | D8 |
+| `BlockSignature.clock`/`reset`/`reset_active_low`, `Function.metadata['clock'/'reset']` | reconciled with Z6 (layer 2 and engines) | layer 2 |
+| zuspec-be-py `model/domain.py` | unchanged; zdc maps its classes to Z6 (`zuspec.dataclasses.domain_ir`) | D8 |
 
 ---
 
@@ -760,8 +1143,9 @@ Each step ends with its exit criterion met. Update §0 as steps finish.
 
 ## 10. Open questions
 
-Planning raised these. Each has a recommendation; D1 starts once they are
-confirmed. Several refine a decision in `core-domains.md` §10, as noted.
+Planning raised these. *Confirmed 2026-11-15 as recommended*, with Q2 and
+Q7 refined in D1 (see "D1 outcomes" under §0). Several refine a decision in
+`core-domains.md` §10, as noted.
 
 1. **How a kind defines relations** (refines decision 2, "a kind defines
    `relate(a, b)`"). A relation written as SV code in each kind would have
