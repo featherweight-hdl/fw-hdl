@@ -20,8 +20,10 @@ package:
       url: https://github.com/featherweight-hdl/fw-hdl-spec.git
     - name: fw-hdl-fe-sv
       url: https://github.com/featherweight-hdl/fw-hdl-fe-sv.git
+      dep-set: default
     - name: fw-hdl-rt-sv
       url: https://github.com/featherweight-hdl/fw-hdl-rt-sv.git
+      dep-set: default
     - name: fw-hdl-dv
       url: https://github.com/featherweight-hdl/fw-hdl-dv.git
 
