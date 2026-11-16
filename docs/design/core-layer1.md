@@ -1463,6 +1463,31 @@ closes.
 |---|---|---|
 | `Elaborate` | SV sources, top class and parameters, extern RTL filesets | Zuspec IR bundle (`.zir`), netlist JSON |
 | `EmitSV` | `.zir` | Verilog and filelist, by composing the Zuspec be-sv task (or adding one there if it doesn't exist) |
+| `Scan` *(added 2026-11-15, not built)* | SV sources | Zuspec IR bundle (`.zir`) of the types found; no netlist |
+
+**Two modes.** fe-sv does two jobs. Layer 1 needed, and built, only the
+second:
+- **Scan:** parse a collection of SV, map its types to IR, and find the
+  fw-hdl types in it.
+- **Elaborate:** elaborate a given specification from a top class.
+
+`Scan` was added by
+[core-protocol-kit-prep.md](core-protocol-kit-prep.md) (§7, Q-A). Its kit
+stage reads a protocol kit's sources and generates the derived classes
+from the types it finds. How `Scan` works:
+- **Type mapping** uses zuspec-fe-sv's `SVMapper`, which maps classes,
+  structs and methods from parsed source without elaborating them.
+- **fw-hdl types** are found by their registration macros:
+  - components and extern wrappers (`` `fw_component_utils ``,
+    `` `fw_extern_utils ``);
+  - domain kinds (`` `fw_domain_kind_utils ``);
+  - bundles;
+  - protocols and their parts (`` `fw_protocol_utils ``,
+    `` `fw_bundle_protocol ``, `` `fw_xtor_utils ``).
+- **Registrations** are evaluated by the interpreter as intrinsics (§6.2),
+  as `build()` is, but no component is constructed.
+- **`Elaborate` gains an optional input:** a scanned `.zir`, plus a choice
+  of top, in place of re-parsing the sources.
 
 ---
 
