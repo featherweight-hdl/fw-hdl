@@ -8,6 +8,13 @@
 // into = 1: the pins are the producer (they drive valid and data, the tree
 // drives ready). into = 0: the pins are the consumer.
 //
+// comb_pins = 1: the fields the pins drive are comb. Use it when those pins are
+// register outputs (or wires) in module code: left sync, the tree would see
+// each value an edge late, and with a comb field on the tree's side the
+// pins and the tree would disagree about when a beat moved. It is declared
+// on the pins' end and joins the tree's net in connect(), as a peer's
+// comb declaration does.
+//
 // From the pins (put_fwd/put_bwd): a comb field is written in the comb
 // phase and the kernel settles the domain at once (settle_now), so a comb
 // path through the tree reaches the other pins in the same time step. A
@@ -19,6 +26,7 @@
 class fw_rv_pin #(type T = bit);
     string            name;
     bit               into;
+    bit               comb_pins;
     fw_rv_sp_out #(T) o;     // into: the pins' end in the tree
     fw_rv_sp_in  #(T) i;     // !into
 
@@ -28,9 +36,10 @@ class fw_rv_pin #(type T = bit);
 
     static fw_rv_pin #(T) m_reg[string];
 
-    function new(string name, bit into);
+    function new(string name, bit into, bit comb_pins = 0);
         this.name = name;
         this.into = into;
+        this.comb_pins = comb_pins;
         if (m_reg.exists(name)) $fatal(1, "fw-hdl: pin bridge \"%s\" made twice", name);
         m_reg[name] = this;
     endfunction
@@ -44,6 +53,7 @@ class fw_rv_pin #(type T = bit);
     function void connect_in(fw_rv_sp_in #(T) p);
         if (!into) $fatal(1, "fw-hdl: pin bridge \"%s\" is a consumer: use connect_out()", name);
         o = new(null, name);
+        if (comb_pins) o.sig.set_comb("valid, data");
         p.connect(o);
         m_fresh = 1;
     endfunction
@@ -52,6 +62,7 @@ class fw_rv_pin #(type T = bit);
     function void connect_out(fw_rv_sp_out #(T) p);
         if (into) $fatal(1, "fw-hdl: pin bridge \"%s\" is a producer: use connect_in()", name);
         i = new(null, name);
+        if (comb_pins) i.sig.set_comb("ready");
         p.connect(i);
         m_fresh = 1;
     endfunction

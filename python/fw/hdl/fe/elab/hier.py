@@ -383,6 +383,11 @@ def _obj_paths(top: Node) -> Dict[int, str]:
         for prop, v in n.obj.fields.items():
             if isinstance(v, Obj) and hasattr(prop, "name"):
                 out.setdefault(v.oid, f"{n.path}.{prop.name}")
+            elif isinstance(v, list) and hasattr(prop, "name"):
+                # A fixed array of ports, `in[N]` (declared [0:N-1]).
+                for i, e in enumerate(v):
+                    if isinstance(e, Obj):
+                        out.setdefault(e.oid, f"{n.path}.{prop.name}[{i}]")
     walk(top)
     return out
 

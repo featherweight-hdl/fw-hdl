@@ -1,7 +1,8 @@
 """The fw_sp_comb weaver (python/fw/hdl/weave/sp_comb.py, plan S6.1b): weave
 sp_comb_pkg, build sp_comb_tb.sv with Verilator and check the declared fields
 are comb after freeze_tree (one-channel views, a port of channels, an inherited
-declaration, a generic class), that nothing is comb when the woven package is
+declaration, a generic class, an array of ports, a generic reached through a
+generic's member; freeze_tree twice applies them once), that nothing is comb when the woven package is
 not registered (teeth), and the weave-time errors."""
 import os
 import re
@@ -67,12 +68,14 @@ def test_flags(sim):
     # valid, ready, data
     assert sim["woven"] == {"a.o": "101", "a.i": "000", "a.p": "[a.*,b.valid]",
                             "s.o": "101", "s.j": "111", "s.p": "[a.*,b.valid]",
-                            "g.g": "010"}
+                            "g.g": "010", "ar.v0": "010", "ar.v1": "010",
+                            "o6.g.g": "010"}
 
 
 def test_teeth_unregistered(sim):
     assert sim["bare"] == {"a.o": "000", "a.i": "000", "a.p": "[]", "s.o": "000",
-                           "s.j": "000", "s.p": "[]", "g.g": "000"}
+                           "s.j": "000", "s.p": "[]", "g.g": "000", "ar.v0": "000",
+                           "ar.v1": "000", "o6.g.g": "000"}
 
 
 def test_woven_calls(sim):
@@ -80,6 +83,8 @@ def test_woven_calls(sim):
     assert 't.o.holder().set_comb("valid,data");' in t, t
     assert 't.p.set_comb("a.*,b.valid");' in t, t
     assert "t.j.holder().set_comb(\"*\");" in t, t
+    assert 'foreach (t.v[i]) t.v[i].holder().set_comb("ready");' in t, t
+    assert "sp_comb_pkg::c_gen#(sp_comb_pkg::c6_t) t;" in t, t
     assert "t.o.holder()" not in t.split("class fw_sp_comb__c_sub")[1].split("endclass")[0]
 
 
@@ -105,6 +110,8 @@ endpackage
     ('(* fw_sp_comb = " , " *) fw_rv_sp_out #(cbyte_t) o;', "c_bad.o: empty field list"),
     ('(* fw_sp_comb = "*" *) local fw_rv_sp_out #(cbyte_t) o;', "must be public"),
     ('(* fw_sp_comb = "*" *) int n;', "int is not a struct port"),
+    ('(* fw_sp_comb = "ready" *) fw_rv_sp_in #(cbyte_t) q[];',
+     "c_bad.q: an array of ports must be fixed-size"),
 ])
 def test_errors(tmp_path, decl, msg):
     src = tmp_path / "bad_pkg.sv"

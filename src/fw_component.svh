@@ -1,6 +1,7 @@
 
 typedef class fw_sync_port;
 typedef class fw_sync_bridge;
+typedef class fw_view_ctx;
 
 class fw_component implements fw_elaboratable;
     protected string            m_name;
@@ -87,6 +88,14 @@ class fw_component implements fw_elaboratable;
     // Never triggered: what wait_reset_assert() waits on with no reset bound.
     protected event             m_no_reset_ev;
 
+    // The factory (fw_factory.svh): the view rules this component creates its
+    // children under, and how it was itself created (the type asked for, and
+    // the origin of the rule that picked its class; "" when none did).
+    protected fw_view_ctx       m_view_ctx;
+    protected bit               m_inited;      // m_init() has run
+    string                      m_create_type;
+    string                      m_create_origin;
+
     // ----------------------------------------------------------------------
     // The AMBIENT component: who owns whatever is being constructed right now.
     //
@@ -122,7 +131,23 @@ class fw_component implements fw_elaboratable;
         m_ambient      = null;
     endfunction
 
-    function new(string name, fw_component parent);
+    // Two ways in. new(name, parent) attaches the component at once. The
+    // factory (fw_factory.svh) calls new() with no arguments and then
+    // m_init(name, parent), so a class created only through
+    // T::type_id::create() needs no constructor of its own: the implicit one
+    // calls new() with no arguments. Such a class makes its ports and children
+    // in build(). A class that does declare a constructor and is created by
+    // the factory gives it the same defaults.
+    function new(string name = "", fw_component parent = null);
+        if (name != "") m_init(name, parent);
+    endfunction
+
+    // Name the component, attach it to parent, and make its domain and debug
+    // ports. Once only.
+    function void m_init(string name, fw_component parent);
+        if (m_inited)
+            $fatal(1, "fw-hdl: component %s initialized twice", get_full_name());
+        m_inited = 1;
         m_name = name;
         m_parent = parent;
         clock = new("clock", this);
@@ -136,7 +161,7 @@ class fw_component implements fw_elaboratable;
         end
 
         // Anything this component's constructor builds from here on belongs to
-        // it. Last statement in the constructor, deliberately.
+        // it. Last statement, deliberately.
         m_ambient      = this;
         m_ambient_live = 1'b1;
     endfunction
@@ -151,6 +176,18 @@ class fw_component implements fw_elaboratable;
 
     function fw_component get_parent();
         return m_parent;
+    endfunction
+
+    // The view rules for the children this component creates: a copy of the
+    // parent's (the root's: of fw_view_ctx::get_global()), taken when do_build()
+    // starts, so a rule added in build() reaches only this subtree.
+    function fw_view_ctx view_ctx();
+        if (m_view_ctx == null) m_view_ctx = m_view_ctx_from_parent();
+        return m_view_ctx;
+    endfunction
+
+    protected function fw_view_ctx m_view_ctx_from_parent();
+        return (m_parent != null) ? m_parent.view_ctx().copy() : fw_view_ctx::get_global().copy();
     endfunction
 
     // This component's debug context, or null when unbound. Reached through `.t`
@@ -371,14 +408,28 @@ class fw_component implements fw_elaboratable;
     // Register a steppable so its step() is called once per clock edge during
     // do_run(). The opt-in for cycle-step behavior, as add_runnable() is for
     // a run() process.
+    // Registering the same object twice has no effect (do_build() registers
+    // the component itself; see m_add_self()).
     function void add_steppable(fw_steppable s);
+        foreach (m_step[i]) if (m_step[i] == s) return;
         m_step.push_back(s);
     endfunction
 
     // Register comb logic: the sync kernel calls its comb() at each edge of
     // this component's clock domain until the comb fields settle.
     function void add_comb(fw_combinational c);
+        foreach (m_comb[i]) if (m_comb[i] == c) return;
         m_comb.push_back(c);
+    endfunction
+
+    // A component that implements fw_combinational or fw_steppable is
+    // registered for its own comb() and step(); calling add_comb(this) or
+    // add_steppable(this) as well is harmless.
+    protected function void m_add_self();
+        fw_combinational c;
+        fw_steppable     st;
+        if ($cast(c, this)) add_comb(c);
+        if ($cast(st, this)) add_steppable(st);
     endfunction
 
     function void get_combs(ref fw_combinational cs[$]);
@@ -416,6 +467,8 @@ class fw_component implements fw_elaboratable;
         // 1. Resolve my own context. The parent bound it before recursing (or,
         //    for the root, the environment bound it before start()).
         dbg.do_connect();
+        m_view_ctx = m_view_ctx_from_parent();
+        m_add_self();
 
         // 2. Build self -- this is what creates the children. Own the ambient
         //    across it: the build walk is a recursion, so the last component

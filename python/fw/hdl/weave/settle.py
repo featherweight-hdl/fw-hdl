@@ -164,7 +164,9 @@ class SettleWeaver(Weaver):
     def _type(c) -> Optional[str]:
         """How ``<pkg>_woven`` names c. A type argument that is a typedef outside
         any package (``$unit``, a module) is spelled as its integral type
-        (``logic[36:0]``); None if it is not integral. A value argument the
+        (``logic[36:0]``); None if it is not integral. A type argument that
+        is another class's type parameter is spelled as what it stands for. A
+        value argument the
         model can only abbreviate (a wide struct parameter such as fw_proto's
         ``axi4_param_t P``: ``320'd1591...e50``) is named by a typedef of the
         specialization in the generic's package; None if there is none."""
@@ -172,20 +174,29 @@ class SettleWeaver(Weaver):
         if "..." in t:
             return SettleWeaver._alias(c)
         if c.generic is not None and c.slang is not None and "#" in t:
-            vals, local = [], False
+            vals, respell = [], False
             for m in c.slang:
                 if m.kind == m.kind.Parameter and m.isPortParam:
                     vals.append(str(m.value))
                 elif m.kind == m.kind.TypeParameter and m.isPortParam:
-                    a = m.targetType.type
+                    a, scoped = m.targetType.type, False
+                    # A class-scoped alias (another class's type parameter,
+                    # reached through a member: rr_merge's ``T`` in
+                    # ``rr_arbiter #(T, N) arb``) is not visible from the woven
+                    # package: name what it stands for.
+                    while a.isAlias and (a.lexicalPath or "").count("::") >= 2:
+                        a, scoped = a.targetType.type, True
                     if a.isAlias and "::" not in (a.lexicalPath or a.name):
                         if not a.canonicalType.isIntegral:
                             return None
-                        local = True
+                        respell = True
                         vals.append(str(a.canonicalType))
+                    elif scoped:
+                        respell = True
+                        vals.append(a.lexicalPath if a.isAlias else str(a))
                     else:
                         vals.append(None)
-            if local:
+            if respell:
                 # Splice: keep the model's spelling for every other argument.
                 head, args = t.split("#", 1)
                 orig = _split_args(args.strip()[1:-1])

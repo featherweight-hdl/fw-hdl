@@ -16,6 +16,11 @@ with a pin preset (``(* fw_pins = "s_axi_" *)``) also gets a pin shell module
 (:func:`fw.hdl.fe.elab.hier.elaborate_tree`) and emitted with its children's
 modules (:func:`fw.hdl.fe.elab.sync_tree.composite_components`). The ``fw.hdl.sync.Emit`` dfm task wraps
 :func:`emit_sync`.
+
+With ``parameterized=True`` each class is one module with the class's
+parameters (:mod:`fw.hdl.fe.elab.sync_param`): ``rr_fifo #(type T, int DEPTH)``,
+named after the class, port arrays as packed array ports; the packed structs it
+uses go in a package ``<var>_types`` at the head of the text.
 """
 from __future__ import annotations
 
@@ -28,6 +33,7 @@ from fw.hdl.config import FlowConfig
 from fw.hdl.errors import ErrorReporter
 from fw.hdl.fe.elab import hier
 from fw.hdl.fe.elab.sync import SyncElabError, _sub, find_class_var, sync_component
+from fw.hdl.fe.elab.sync_param import _Types, composite_param, sync_component_param
 from fw.hdl.fe.elab.sync_tree import composite_components
 from fw.hdl.fe.parser import Parser
 
@@ -46,7 +52,8 @@ def class_vars(compilation, module: str) -> List[str]:
 
 def emit_sync(files: List[str], top: str, *, incdirs: Optional[List[str]] = None,
               defines: Optional[Dict[str, str]] = None,
-              vars: Optional[List[str]] = None) -> Dict[str, str]:
+              vars: Optional[List[str]] = None,
+              parameterized: bool = False) -> Dict[str, str]:
     """Parse ``files`` and emit each class variable of ``top`` (or only
     ``vars``). Returns ``{module name: SystemVerilog text}``, with a
     ``<var>_pins`` shell where the class has pin presets."""
@@ -62,6 +69,16 @@ def emit_sync(files: List[str], top: str, *, incdirs: Optional[List[str]] = None
     out = {}
     for var in names:
         ct = find_class_var(p.compilation, top, var)
+        if parameterized:
+            types = _Types(f"{var}_types")
+            if _sub(ct, "step") is None and _sub(ct, "comb") is None:
+                tree = hier.elaborate_tree(p.compilation, ct, var)
+                comps = composite_param(tree, types)
+            else:
+                comp = sync_component_param(ct, None, types)
+                comps = {comp.name: comp}
+            out[var] = emit_sv(ir.Context(type_m={**types.structs, **comps}))
+            continue
         if _sub(ct, "step") is None and _sub(ct, "comb") is None:
             # A composite: its children's modules, then the composite.
             tree = hier.elaborate_tree(p.compilation, ct, var)

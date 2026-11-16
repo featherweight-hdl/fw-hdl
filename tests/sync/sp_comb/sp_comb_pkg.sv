@@ -53,4 +53,25 @@ package sp_comb_pkg;
     // The specialization the weaver sees (one in the tb module alone is not in
     // the woven sources, so it would get no applier).
     typedef c_gen #(logic [3:0]) c_gen4_t;
+
+    // A fixed array of ports: the declaration covers every element.
+    class c_arr extends fw_component;
+        (* fw_sp_comb = "ready" *) fw_rv_sp_in #(cbyte_t) v[2];
+        function new(string name, fw_component parent);
+            super.new(name, parent);
+            foreach (v[i]) v[i] = new(null, $sformatf("v[%0d]", i), this);
+        endfunction
+    endclass
+
+    // A generic reached only through a generic's member: the weaver sees
+    // c_gen #(T), where T is c_outer's parameter, and must name c6_t.
+    typedef logic [5:0] c6_t;
+    class c_outer #(type T = bit) extends fw_component;
+        c_gen #(T) g;
+        function new(string name, fw_component parent);
+            super.new(name, parent);
+            g = new("g", this);
+        endfunction
+    endclass
+    typedef c_outer #(c6_t) c_outer6_t;
 endpackage

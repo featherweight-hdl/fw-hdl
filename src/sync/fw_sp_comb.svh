@@ -7,6 +7,7 @@
 // freezes the holders, so the setting is fixed at the end of build.
 virtual class fw_sp_comb;
     static fw_sp_comb m_all[$];
+    static bit        m_applied[fw_component];
 
     static function void add(fw_sp_comb a);
         m_all.push_back(a);
@@ -15,8 +16,13 @@ virtual class fw_sp_comb;
     // 1 if c is an instance of the class (its set_comb calls were made).
     pure virtual function bit apply(fw_component c);
 
+    // Once per component: the root freezes after build and again after
+    // connect (fw_sync_kernel::elaborate), and the second set_comb would hit
+    // a frozen holder.
     static function void apply_tree(fw_component c);
         fw_component kids[$];
+        if (m_applied.exists(c)) return;
+        m_applied[c] = 1;
         foreach (m_all[i]) void'(m_all[i].apply(c));
         c.get_children(kids);
         foreach (kids[i]) apply_tree(kids[i]);

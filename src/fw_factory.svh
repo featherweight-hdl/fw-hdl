@@ -9,13 +9,19 @@
 //   // in a parent's build():
 //   m_q = q::type_id::create("m_q", this);
 //
-// A class with a parameter object uses `fw_component_param_utils(T) and
+// A class with a parameter object uses `fw_component_obj_param_utils(T) and
 // `T::type_id::create(name, this, params)`; its param_t must extend fw_params,
 // so a substitute can be handed the object (and must accept it: create stops
 // with both class names when it does not). An abstract (virtual) class uses
 // `fw_component_abstract_utils(T)`: it can be created only when a rule picks a
 // realization. Creating with `new(...)` still works; nothing can substitute
 // for a child created that way.
+//
+// A parameterized class declares `typedef <class> #(<params>) this_t;` and
+// uses `fw_component_param_utils(this_t). Each specialization registers on
+// its own, named "this_t#<n>" in registration order; refer to one by its
+// type_id::get() rather than by name. (Simulators do not agree on $typename
+// of a specialization, so the name cannot carry the parameters.)
 //
 // Registration happens when a class's type_id is first used, which in a
 // simulator is time 0 (its static `m_inst`). Names are the class names as
@@ -38,6 +44,13 @@ endclass
 class fw_factory;
     protected static fw_component_proxy m_types[string];
     protected static string             m_views[string];     // "tag|base" -> realization
+    protected static int unsigned       m_n_generic[string]; // specializations named so far
+
+    // The name of the next specialization of generic class tn: "tn#1", ...
+    static function string generic_name(string tn);
+        m_n_generic[tn] = m_n_generic.exists(tn) ? m_n_generic[tn] + 1 : 1;
+        return $sformatf("%s#%0d", tn, m_n_generic[tn]);
+    endfunction
 
     static function void register(fw_component_proxy p);
         m_types[p.type_name()] = p;
@@ -77,7 +90,7 @@ class fw_factory;
     // Create `base` (or what the rules pick) as `name` under `parent`.
     static function fw_component create(string base, string name, fw_component parent,
                                         fw_params p);
-        fw_view_ctx  ctx = (parent != null) ? parent.view_ctx() : fw_view_ctx::global();
+        fw_view_ctx  ctx = (parent != null) ? parent.view_ctx() : fw_view_ctx::get_global();
         string       path = path_of(name, parent);
         fw_view_rule why;
         string       t = ctx.resolve(base, path, why);
@@ -92,13 +105,19 @@ class fw_factory;
     endfunction
 endclass
 
-// A class constructed as new(name, parent).
-class fw_component_registry #(type T = fw_component, string TN = "") extends fw_component_proxy;
-    typedef fw_component_registry #(T, TN) this_t;
+// A class constructed as new() and then attached with m_init(name, parent):
+// it needs no constructor, or one whose arguments all have defaults (see
+// fw_component::new). GENERIC: T is one
+// specialization of generic class TN, registered as "TN#<n>".
+class fw_component_registry #(type T = fw_component, string TN = "", bit GENERIC = 0)
+        extends fw_component_proxy;
+    typedef fw_component_registry #(T, TN, GENERIC) this_t;
     static this_t m_inst = get();
+    static string m_name;
 
     static function this_t get();
         if (m_inst == null) begin
+            m_name = GENERIC ? fw_factory::generic_name(TN) : TN;
             m_inst = new;
             fw_factory::register(m_inst);
         end
@@ -106,7 +125,7 @@ class fw_component_registry #(type T = fw_component, string TN = "") extends fw_
     endfunction
 
     virtual function string type_name();
-        return TN;
+        return m_name;
     endfunction
 
     virtual function fw_component create_obj(string name, fw_component parent, fw_params p);
@@ -114,7 +133,8 @@ class fw_component_registry #(type T = fw_component, string TN = "") extends fw_
         if (p != null)
             $fatal(1, "fw_factory: %s takes no parameter object, but %s was created with one",
                    TN, name);
-        o = new(name, parent);
+        o = new();
+        o.m_init(name, parent);
         return o;
     endfunction
 
@@ -122,10 +142,10 @@ class fw_component_registry #(type T = fw_component, string TN = "") extends fw_
         fw_component c;
         T o;
         void'(get());
-        c = fw_factory::create(TN, name, parent, p);
+        c = fw_factory::create(m_name, name, parent, p);
         if (!$cast(o, c))
             $fatal(1, "fw_factory: %s was picked for %s, but is not a %s", c.m_create_type,
-                   name, TN);
+                   name, m_name);
         return o;
     endfunction
 endclass

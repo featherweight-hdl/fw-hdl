@@ -263,7 +263,7 @@ def test_unsupported_body_is_an_error(parsed, var, msg):
 
 # SSA (plan S5.2b): a state read after a write in the same step() reads the
 # written value; writes stay in place (nonblocking, last write wins). Loops
-# are rejected by the front end (bad_loop above).
+# with a non-static bound are rejected by the front end (bad_loop above).
 @pytest.mark.parametrize("var,body", [
     ("sr", ["y = x", "x = Add(x, 1)"]),
     ("sa", ["x = Add(x, 1)", "y = Add(x, 1)", "x = Add(Add(x, 1), 2)",
@@ -276,9 +276,16 @@ def test_ssa(parsed, var, body):
     assert _body(comp, comp.sync_processes[0].body) == body
 
 
+def test_function_inlined(parsed):
+    # A function of the class (bad_fn's f(), once rejected) is inlined; its
+    # value is a comb wire named after it.
+    comp = sync_component(find_class_var(parsed.compilation, "t", "bf"))
+    assert _body(comp, comp.sync_processes[0].body) == ["n = f"]
+    assert _body(comp, comp.comb_processes[0].body) == ["f = Add(n, 1)"]
+
+
 # Static checks (plan S5.2c): each fires on a negative case.
 @pytest.mark.parametrize("var,msg", [
-    ("bf", "unsupported call"),                     # no opaque calls
     ("bs", "writes state 't'"),                     # comb() has no state
     ("bt", r"output\(s\) out_valid not assigned on every path"),
 ])

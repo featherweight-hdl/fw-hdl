@@ -1,0 +1,9 @@
+# fw-hdl's weavers over the rr_merge package:
+#   fw_sp_comb  - (* fw_sp_comb = "..." *) on a port member becomes its set_comb() call
+#   fw_settle   - a settle table per comb()/step() class: a static comb order
+sv-weave:
+  binding: fw.hdl.weave.binding:FwHdlBinding
+  plugin-path: [../../python]
+  weavers:
+  - name: fw.hdl.weave.sp_comb:SpCombWeaver
+  - name: fw.hdl.weave.settle:SettleWeaver

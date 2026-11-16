@@ -45,6 +45,8 @@ package fw_hdl_pkg;
     `include "fw_reset_xtor_bridge.svh"  // the root reset domain (fw_reset_xtor_if)
     `include "fw_quantum_keeper.svh"     // TLM-style temporal decoupling (loosely-timed speedup)
     `include "fw_component.svh"
+    `include "fw_factory.svh"           // create by type: T::type_id::create(name, this)
+    `include "fw_view_ctx.svh"          // the rules that pick the class created
     `include "fw_atomic_step.svh"       // a cycle step that stalls as a whole on back-pressure
     `include "fw_component_param.svh"
     `include "fw_extern.svh"            // wrapped IP: a Verilog module behind a class

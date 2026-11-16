@@ -5,7 +5,8 @@
 // holder write, settle and edge (fw_sig_holder::gen).
 module fw_rv_pin_in #(
     parameter type   T    = bit,
-    parameter string NAME = ""
+    parameter string NAME = "",
+    parameter bit    COMB = 0    // valid and data are comb in the tree (fw_rv_pin comb_pins)
 ) (
     input  logic valid,
     input  T     data,
@@ -13,7 +14,7 @@ module fw_rv_pin_in #(
 );
     import fw_hdl_pkg::*;
 
-    fw_rv_pin #(T) pin = new(NAME, 1);
+    fw_rv_pin #(T) pin = new(NAME, 1, COMB);
     logic ready_c = 0, ready_s = 0, ready_comb = 0;
 
     assign ready = ready_comb ? ready_c : ready_s;

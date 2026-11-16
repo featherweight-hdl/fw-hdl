@@ -13,7 +13,7 @@
 // Each component holds a context: a copy of its parent's, taken when its
 // do_build() starts, so a rule added in build() applies to the children that
 // component creates after adding it, and to their subtrees, and nowhere else.
-// The root's context is a copy of fw_view_ctx::global(), where a testbench (or
+// The root's context is a copy of fw_view_ctx::get_global(), where a testbench (or
 // the knob package's fw_knob_views()) puts design-wide rules before start().
 //
 // Paths are below the root: `q`, `sub.q[2]`. Globs use `*` and `?`.
@@ -40,7 +40,7 @@ class fw_view_ctx;
     protected static fw_view_ctx m_global;
 
     // The rules every root starts from.
-    static function fw_view_ctx global();
+    static function fw_view_ctx get_global();
         if (m_global == null) m_global = new;
         return m_global;
     endfunction

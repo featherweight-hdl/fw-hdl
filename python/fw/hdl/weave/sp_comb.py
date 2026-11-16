@@ -8,7 +8,8 @@ gets a subclass of ``fw_hdl_pkg::fw_sp_comb`` whose ``apply(c)`` ``$cast``\\s c 
 the class and calls, per member, ``m.holder().set_comb(..)`` (a one-channel view,
 ``fw_sync_port``; items are ``f``, ``*`` or ``<member>.f``) or ``m.set_comb(..)``
 (a port of channels with its own ``set_comb``, e.g. fw_proto ``fw_sp_base``; items
-are ``ch.f`` or ``ch.*``). Its registration adds it to ``fw_sp_comb::m_all``;
+are ``ch.f`` or ``ch.*``); on a fixed array of ports, the call is made on
+each element (``foreach``). Its registration adds it to ``fw_sp_comb::m_all``;
 ``fw_sync_kernel::freeze_tree`` applies them to the tree. A subclass instance
 matches its base's ``$cast`` too, so it inherits the declarations.
 
@@ -21,6 +22,7 @@ import re
 from typing import List, Optional
 
 from sv_weave.frontend.model import Visibility
+from sv_weave.frontend.types import ArrayKind
 from sv_weave.plugin import Weaver
 
 from .settle import SettleWeaver
@@ -91,7 +93,15 @@ class SpCombWeaver(Weaver):
         if f.visibility != Visibility.PUBLIC or f.static:
             d.error("%s: the member must be public and not static" % where, f.loc)
             return None
-        pc = by_name.get(_base(f.type.spelling))
+        # A fixed array of ports: the call is made on every element.
+        ty, ref, loop = f.type, "t.%s" % f.name, ""
+        if f.type.array_kind is not None:
+            if f.type.array_kind != ArrayKind.FIXED or f.type.elem is None:
+                d.error("%s: an array of ports must be fixed-size" % where, f.loc)
+                return None
+            ty, ref = f.type.elem, "t.%s[i]" % f.name
+            loop = "foreach (t.%s[i]) " % f.name
+        pc = by_name.get(_base(ty.spelling))
         if pc is not None and pc.is_a(VIEW):
             out = []
             for it in items:
@@ -101,11 +111,11 @@ class SpCombWeaver(Weaver):
                             % (where, it, f.name), f.loc)
                     return None
                 out.append(fld)
-            return "t.%s.holder().set_comb(%s)" % (f.name, _q(",".join(out)))
+            return "%s%s.holder().set_comb(%s)" % (loop, ref, _q(",".join(out)))
         # A class the model does not hold (e.g. generated in another weave run):
         # assume a port of channels; its set_comb checks the names at run time.
         if (pc is not None and pc.find_method("set_comb") is not None) or \
-                (pc is None and f.type.class_qname):
+                (pc is None and ty.class_qname):
             chans = set() if pc is None else {g.name for g in pc.all_fields()
                      if g.name and (by_name.get(_base(g.type.spelling)) is not None
                                     and by_name[_base(g.type.spelling)].is_a(HOLDER))}
@@ -114,10 +124,10 @@ class SpCombWeaver(Weaver):
                 if not dot or (chans and ch not in chans):
                     d.error('%s: "%s": no channel "%s" in %s (write ch.f or ch.*; '
                             "channels: %s)" % (where, it, ch if dot else "",
-                                               f.type.spelling if pc is None else pc.qname,
+                                               ty.spelling if pc is None else pc.qname,
                                                ", ".join(sorted(chans)) or "none"), f.loc)
                     return None
-            return "t.%s.set_comb(%s)" % (f.name, _q(",".join(items)))
+            return "%s%s.set_comb(%s)" % (loop, ref, _q(",".join(items)))
         d.error("%s: %s is not a struct port (an %s view, or a port with set_comb)"
-                % (where, f.type.spelling, VIEW), f.loc)
+                % (where, ty.spelling, VIEW), f.loc)
         return None

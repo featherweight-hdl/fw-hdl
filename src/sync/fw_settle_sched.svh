@@ -103,6 +103,9 @@ class fw_settle_sched;
 
     // n's comb fields from its table. A table path is "<port>.<field>",
     // where <port> may be prefixed by child component names ("sub.in.f").
+    // A <port> that is an array member names every element: "in.ready" is
+    // the ready field of ports in[0], in[1], ... (the table does not tell
+    // the elements apart, so neither do the dependences).
     protected function void m_resolve(fw_settle_node n);
         fw_component comp;
         n.tbl = fw_settle_table::find_for(n.c);
@@ -128,70 +131,80 @@ class fw_settle_sched;
             return;
         end
         foreach (n.tbl.comb_dep_w[i]) begin
-            fw_sync_field w = m_find(n, comp, n.tbl.comb_dep_w[i]);
-            fw_sync_field r;
-            if (w == null) return;
-            r = m_find(n, comp, n.tbl.comb_dep_r[i]);
-            if (r == null) return;
-            if (w.comb && r.comb) begin
-                n.dep_w.push_back(w);
-                n.dep_r.push_back(r);
+            fw_sync_field ws[$], rs[$];
+            if (m_find(n, comp, n.tbl.comb_dep_w[i], ws)) return;
+            if (m_find(n, comp, n.tbl.comb_dep_r[i], rs)) return;
+            foreach (ws[j]) foreach (rs[k]) begin
+                if (ws[j].comb && rs[k].comb) begin
+                    n.dep_w.push_back(ws[j]);
+                    n.dep_r.push_back(rs[k]);
+                end
             end
         end
     endfunction
 
-    // Resolve one path and add its field to fs if comb. Returns 1 (and
-    // makes n a fallback) if it does not resolve.
+    // Resolve one path and add its comb fields to fs. Returns 1 (and makes
+    // n a fallback) if it does not resolve.
     protected function bit m_path(fw_settle_node n, fw_component comp,
                                   string path, ref fw_sync_field fs[$]);
-        fw_sync_field f = m_find(n, comp, path);
-        if (f == null) return 1;
-        if (f.comb) fs.push_back(f);
+        fw_sync_field found[$];
+        if (m_find(n, comp, path, found)) return 1;
+        foreach (found[i]) if (found[i].comb) fs.push_back(found[i]);
         return 0;
     endfunction
 
-    // The field of one path; null (and n a fallback) if it does not resolve.
-    protected function fw_sync_field m_find(fw_settle_node n, fw_component comp,
-                                            string path);
-        string        segs[$];
-        string        fname;
-        fw_sync_field f = null;
+    // The fields of one path into fs. Returns 1 (and makes n a fallback) if
+    // it does not resolve.
+    protected function bit m_find(fw_settle_node n, fw_component comp,
+                                  string path, ref fw_sync_field fs[$]);
+        string segs[$];
+        string fname;
+        string pre = "";    // the child components walked so far, "a.b."
         m_split(path, segs);
         fname = segs.pop_back();
-        while (segs.size() != 0 && comp != null && f == null) begin
+        while (segs.size() != 0 && comp != null && fs.size() == 0) begin
             fw_sync_port ps[$];
             fw_component kids[$];
             string       pname = m_join(segs);
             comp.get_sync_ports(ps);
             foreach (ps[i]) begin
-                if (ps[i].name == pname && ps[i].holder() != null) begin
-                    f = ps[i].holder().field(fname);
-                    break;
+                fw_sync_field f;
+                if (ps[i].holder() == null || !m_is_port(ps[i].name, pname)) continue;
+                f = ps[i].holder().field(fname);
+                if (f == null) continue;
+                fs.push_back(f);
+                if (m_fid(f, 0, m_fl) < 0) begin
+                    m_fl.push_back(f);
+                    m_fn.push_back({n.name, ".", pre, ps[i].name, ".", fname});
                 end
             end
-            if (f != null) break;
+            if (fs.size() != 0) break;
             comp.get_children(kids);
             begin
                 fw_component next = null;
                 foreach (kids[i]) if (kids[i].get_name() == segs[0]) next = kids[i];
                 comp = next;
             end
+            pre = {pre, segs[0], "."};
             void'(segs.pop_front());
         end
-        if (f == null) begin
+        if (fs.size() == 0) begin
             n.fallback = 1;
             n.why      = {"path ", path, " does not resolve"};
             n.reads.delete();
             n.writes.delete();
             n.dep_w.delete();
             n.dep_r.delete();
-            return null;
+            return 1;
         end
-        if (m_fid(f, 0, m_fl) < 0) begin
-            m_fl.push_back(f);
-            m_fn.push_back({n.name, ".", path});
-        end
-        return f;
+        return 0;
+    endfunction
+
+    // Port name is member, or an element of member ("in[2]" of "in").
+    protected static function bit m_is_port(string name, string member);
+        int l = member.len();
+        if (name == member) return 1;
+        return name.len() > l + 1 && name.substr(0, l - 1) == member && name[l] == "[";
     endfunction
 
     // f's index in fl (add: appending it if absent); -1 if absent.

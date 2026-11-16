@@ -25,28 +25,31 @@ from zuspec.ir.core.data_type import DataTypeComponent
 from zuspec.ir.core.fields import Field, FieldInOut
 
 from . import hier
-from .sync import (SyncElabError, _derives, _generic_name, _holder_fields, _int,
-                   _members, _prop, sync_component)
+from .sync import (SyncElabError, _derives, _elems, _ename, _generic_name,
+                   _holder_fields, _int, _members, _prop, sync_component)
 
 _JOIN = ("connect", "connect_up")
 
 
-def _sync_ports(ct) -> Dict[str, Tuple[bool, list]]:
-    """``{prop: (is_out_view, [(field, width, dir, force)])}`` for the sync
-    ports of class ``ct``."""
+def _sync_ports(ct) -> Dict[str, Tuple[bool, list, str]]:
+    """``{port: (is_out_view, [(field, width, dir, force)], prefix)}`` for the
+    sync ports of class ``ct``. An element of a port array is the port
+    ``in[0]``, with fields named ``in_0_<field>``."""
     out = {}
     for p in _members(ct, ast.SymbolKind.ClassProperty):
-        t = p.type.canonicalType
-        if t.kind != ast.SymbolKind.ClassType or not _derives(t, "fw_sync_port"):
-            continue
-        view = _generic_name(t)
-        if not (view.endswith("_sp_out") or view.endswith("_sp_in")):
-            raise SyncElabError(f"{ct.name}.{p.name}: view {view} is neither "
-                                f"*_sp_in nor *_sp_out")
-        sig = _prop(t, "sig")
-        if sig is None:
-            raise SyncElabError(f"{view}: no 'sig' holder")
-        out[p.name] = (view.endswith("_sp_out"), _holder_fields(sig.type.canonicalType))
+        for ix, t in _elems(p):
+            if t.kind != ast.SymbolKind.ClassType or not _derives(t, "fw_sync_port"):
+                continue
+            view = _generic_name(t)
+            if not (view.endswith("_sp_out") or view.endswith("_sp_in")):
+                raise SyncElabError(f"{ct.name}.{p.name}: view {view} is neither "
+                                    f"*_sp_in nor *_sp_out")
+            sig = _prop(t, "sig")
+            if sig is None:
+                raise SyncElabError(f"{view}: no 'sig' holder")
+            port = p.name if ix is None else f"{p.name}[{ix}]"
+            out[port] = (view.endswith("_sp_out"), _holder_fields(sig.type.canonicalType),
+                         _ename(p.name, ix))
     return out
 
 
@@ -55,7 +58,7 @@ def composite_components(top: hier.Node) -> Dict[str, DataTypeComponent]:
     composite (named ``top.name``) last."""
     out: Dict[str, DataTypeComponent] = {}
     mods: Dict[str, str] = {}           # node key -> module name
-    child_ports: Dict[str, Dict[str, Tuple[bool, list]]] = {}
+    child_ports: Dict[str, Dict[str, Tuple[bool, list, str]]] = {}
     for cname, n in top.children.items():
         if n.children:
             raise SyncElabError(f"{n.path}: nested composites are not lowered yet")
@@ -99,30 +102,31 @@ def composite_components(top: hier.Node) -> Dict[str, DataTypeComponent]:
         comp.fields.append(FieldInOut(name="clock", datatype=_int(1), is_out=False))
         comp.fields.append(FieldInOut(name="reset", datatype=_int(1), is_out=False))
     names: Dict[str, str] = {}          # net root -> signal name
-    for pname, (is_out, fields) in own.items():
+    for pname, (is_out, fields, pre) in own.items():
         drives = "FW_SYNC_FWD" if is_out else "FW_SYNC_BWD"
         for fname, w, d, _ in fields:
             r = find(f".{pname}.{fname}")
             if r in names:
                 raise SyncElabError(f"{top.path}: ports {names[r]} and "
-                                    f"{pname}_{fname} are joined")
-            names[r] = f"{pname}_{fname}"
+                                    f"{pre}_{fname} are joined")
+            names[r] = f"{pre}_{fname}"
             comp.fields.append(FieldInOut(name=names[r], datatype=_int(w),
                                           is_out=(d == drives)))
     for cname, ports in child_ports.items():
-        for pname, (_, fields) in ports.items():
+        for pname, (_, fields, pre) in ports.items():
             for fname, w, _, _ in fields:
                 r = find(f"{cname}.{pname}.{fname}")
                 if r not in names:
-                    names[r] = f"{cname}_{pname}_{fname}"
+                    names[r] = f"{cname}_{pre}_{fname}"
                     comp.fields.append(Field(name=names[r], datatype=_int(w)))
     for cname, n in top.children.items():
         leaf = out[mods[n.key()]]
         conns = [PortConnection(port=f, signal=f) for f in ("clock", "reset")
                  if leaf.sync_processes]
-        conns += [PortConnection(port=f"{p}_{fname}",
+        conns += [PortConnection(port=f"{pre}_{fname}",
                                  signal=names[find(f"{cname}.{p}.{fname}")])
-                  for p, (_, fields) in child_ports[cname].items() for fname, *_ in fields]
+                  for p, (_, fields, pre) in child_ports[cname].items()
+                  for fname, *_ in fields]
         comp.module_instances.append(ModuleInstance(module=mods[n.key()], name=cname,
                                                     connections=conns))
     out[top.name] = comp

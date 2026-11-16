@@ -166,4 +166,36 @@
         return FILESET; \
     endfunction
 
+// ----------------------------------------------------------------------
+// Factory registration (fw_factory.svh): give the class a type_id, and
+// create instances with T::type_id::create(name, this).
+//
+//   class q extends fw_component;
+//       `fw_component_utils(q)
+//   endclass
+//
+//   class g #(type T = bit, int N = 4) extends fw_component;
+//       typedef g #(T, N) this_t;
+//       `fw_component_param_utils(this_t)
+//   endclass
+//
+// `fw_component_param_utils: a parameterized class, registered per
+// specialization through its this_t (the bare class name will not do: some
+// simulators read it inside the class as the default specialization).
+// `fw_component_obj_param_utils(T): T takes a parameter object, created with
+// T::type_id::create(name, this, params). `fw_component_abstract_utils(T): a
+// virtual class, created only when a rule picks a realization.
+// ----------------------------------------------------------------------
+`define fw_component_utils(T) \
+    typedef fw_hdl_pkg::fw_component_registry #(T, `"T`") type_id;
+
+`define fw_component_param_utils(T) \
+    typedef fw_hdl_pkg::fw_component_registry #(T, `"T`", 1) type_id;
+
+`define fw_component_obj_param_utils(T) \
+    typedef fw_hdl_pkg::fw_component_param_registry #(T, `"T`") type_id;
+
+`define fw_component_abstract_utils(T) \
+    typedef fw_hdl_pkg::fw_abstract_registry #(T, `"T`") type_id;
+
 `endif /* INCLUDED_FW_HDL_MACROS_SVH */

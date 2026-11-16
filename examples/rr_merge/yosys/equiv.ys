@@ -1,0 +1,22 @@
+# Unbounded equivalence of the generated rr_merge and the reference at N = @N@,
+# DEPTH = @DEPTH@: equiv_make pairs the two designs' signals by name (both
+# have instances arb/fifo and registers ptr, locked, owner, mem, wr, rd,
+# count, out_valid_q, out_data), equiv_simple/equiv_induct prove the pairs
+# together by induction. scripts/compare.sh fills in @N@/@DEPTH@ and writes
+# the sv2v output read here.
+read_verilog rundir/compare/rr_merge_gen.v
+read_verilog rundir/compare/rr_merge_ref.v
+chparam -set N @N@ -set DEPTH @DEPTH@ rr_merge rr_merge_ref
+hierarchy -check
+proc
+flatten
+opt_clean
+memory -nomap
+memory_map
+opt -fast
+equiv_make rr_merge_ref rr_merge equiv
+hierarchy -top equiv
+async2sync
+equiv_simple -seq 5
+equiv_induct -seq 5
+equiv_status -assert
