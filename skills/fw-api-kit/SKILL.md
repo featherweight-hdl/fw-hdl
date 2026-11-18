@@ -15,8 +15,8 @@ layers:
 
 - **API** (this skill) — pure class-level interface: an `interface class` plus
   the macro that lets a component *provide* it. No signals, no RTL.
-- **Protocol** (see `fw-proto-kit`) — an API *plus* transactors that bridge it to
-  a signal-level interface (`*_xtor_if`, `*_xtor_core`, integration modules).
+- **Protocol** (see `fw-proto-kit`) — APIs *plus* the bundles that are their
+  pin-level forms; the transactors between the two are generated (`GenKit`).
 
 Define the API first; a protocol is built on top of a finished API.
 

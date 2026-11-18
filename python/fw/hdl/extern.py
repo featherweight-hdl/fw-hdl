@@ -28,11 +28,12 @@ Value = Union[int, str]
 KINDS = ("rv", "valid", "level")
 STYLES = ("fw", "xls")
 
-#: Pin templates of the endpoint kinds that have no kit (``${ep}`` is the
-#: endpoint name the map gives). A ready/valid endpoint uses the ``fw_rv``
-#: kit's template.
+#: Pin templates per endpoint kind and style (``${ep}`` is the endpoint name
+#: the map gives). The ``xls`` style is ``${ep}`` plus XLS's suffix per role.
 _VALID_PINS = {"fw": {"data": "${ep}", "valid": "${ep}_valid"},
                "xls": {"data": "${ep}", "valid": "${ep}_vld"}}
+_RV_PINS = {"fw": {"data": "${ep}", "valid": "${ep}_valid", "ready": "${ep}_ready"},
+            "xls": {"data": "${ep}", "valid": "${ep}_vld", "ready": "${ep}_rdy"}}
 
 
 class ExternError(Exception):
@@ -134,10 +135,13 @@ def header(rec: ExternRecord, srcs: Sequence[str]) -> Header:
 # Pins
 # ---------------------------------------------------------------------------
 
-def _fw_rv_transactor():
-    from . import kits
-    kit = kits.registry().kits["fw_rv"]
-    return next(t for t in kit.transactors if t.endpoint == "port")
+def _fill(tmpl: str, b: Binding, role: str) -> str:
+    from string import Template
+    try:
+        return Template(tmpl).substitute(ep=b.name)
+    except (KeyError, ValueError) as e:
+        raise ExternError(f"port {b.port}: endpoint {b.name} pins.{role}: cannot fill "
+                          f"{tmpl!r} ({e}); known: ['ep']", b.site) from None
 
 
 def pins_of(b: Binding) -> Dict[str, str]:
@@ -149,11 +153,13 @@ def pins_of(b: Binding) -> Dict[str, str]:
         raise ExternError(f"port {b.port}: pin style {b.style!r}; expected one of "
                           f"{list(STYLES)}", b.site)
     if b.kind == "rv":
-        from zuspec.synth.kits.registry import KitError, pin_names
-        try:
-            return pin_names(_fw_rv_transactor(), b.name, b.style, b.pins)
-        except KitError as e:
-            raise ExternError(f"port {b.port}: {e}", b.site) from None
+        out = {r: _fill(t, b, r) for r, t in _RV_PINS[b.style].items()}
+        for role, tmpl in (b.pins or {}).items():
+            if role not in out:
+                raise ExternError(f"port {b.port}: endpoint {b.name}: pin role {role!r} is "
+                                  f"not one of {sorted(out)}", b.site)
+            out[role] = _fill(tmpl, b, role)
+        return out
     out = {r: Template(t).substitute(ep=b.name) for r, t in _VALID_PINS[b.style].items()}
     out.update(b.pins)
     return out

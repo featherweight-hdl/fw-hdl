@@ -37,7 +37,7 @@ an element of a port array. `name` fills `${ep}` in the pin template of `style`:
 | `xls` | `${ep}` | `${ep}_vld` | `${ep}_rdy` |
 
 The `data`, `valid` and `ready` arguments override single pins (use named arguments:
-`.data("in_data")`). A ready/valid port's `fw` template is the `fw_rv` kit's.
+`.data("in_data")`). The templates are fixed (the table above).
 
 In a class simulation `extern_map()` only records; the wrapper's body (inherited from
 the class it realizes) is the model.
@@ -99,7 +99,7 @@ How pins become ports:
 |---|---|---|
 | clock: a 1-bit input named `clk`, `clock`, `aclk`, `*_clk`, ...; else the `posedge` signal in the body | `x.clock` | |
 | reset: a 1-bit input with `rst` or `reset` in its name; else the `negedge`/`posedge` signal beside the clock. Active low when the name ends in `n`, `_n`, `_ni`, `_b`, `_l` or starts with `n` | `x.reset` | |
-| valid, ready and data of one stem, directions agreeing (data and valid one way, ready the other). Valid by the kits' templates (`${ep}_valid`), XLS's (`${ep}_vld`) or `valid_${ep}`; data as `${ep}`, `${ep}_data`, `${ep}_dat`, `${ep}_d` or `data_${ep}` | ready/valid | high; medium when two data pins fit |
+| valid, ready and data of one stem, directions agreeing (data and valid one way, ready the other). Valid by the fw template (`${ep}_valid`), XLS's (`${ep}_vld`) or `valid_${ep}`; data as `${ep}`, `${ep}_data`, `${ep}_dat`, `${ep}_d` or `data_${ep}` | ready/valid | high; medium when two data pins fit |
 | valid and data outputs, no ready | valid-only (`fw_valid_put_if`) | medium |
 | the same shape on stems numbered 0..N-1 (`req0`, `req1`, ...) | a port array, mapped in a `foreach` | as its members |
 | a debug-like output (`dbg`, `debug`, `test`, `scan`, `spare`, `unused`) | `x.open` | low, TODO |

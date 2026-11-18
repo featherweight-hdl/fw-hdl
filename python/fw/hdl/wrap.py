@@ -4,8 +4,8 @@ The module's header is read (:mod:`fw.hdl.rtl_header`) and its pins are
 grouped into class ports:
 
 * the clock and reset, by name (or from the body's ``posedge``/``negedge``);
-* streams: a valid pin whose name fits one of the kits' pin templates (or the
-  XLS suffixes, or a ``valid_`` prefix), with the ready and data pins of the
+* streams: a valid pin whose name fits one of the extern map's pin templates
+  (fw or XLS suffixes, or a ``valid_`` prefix), with the ready and data pins of the
   same stem. All three, directions agreeing: a ready/valid port. A valid and
   data output with no ready: a valid-only port;
 * numbered stems (``req0``, ``req1``, ...) with the same shape: a port array;
@@ -55,26 +55,17 @@ class WrapError(Exception):
 # ---------------------------------------------------------------------------
 
 def _templates() -> Dict[str, List[str]]:
-    """role -> ``${ep}`` templates, from the kits (every transactor with valid
-    and ready roles), the XLS suffixes, and a few common spellings."""
+    """role -> ``${ep}`` templates: the extern map's ready/valid pins (fw and
+    XLS styles) and a few common spellings."""
+    from .extern import _RV_PINS
     out: Dict[str, List[str]] = {"valid": [], "ready": [], "data": []}
 
     def add(role, t):
         if t not in out[role]:
             out[role].append(t)
-    try:
-        from . import kits
-        for kit in kits.registry().kits.values():
-            for tr in kit.transactors:
-                if {"valid", "ready"} <= set(tr.pins):
-                    for role in ("valid", "ready", "data"):
-                        if role in tr.pins:
-                            add(role, tr.pins[role])
-    except Exception:                       # no kits found: the built-in spellings remain
-        pass
-    from zuspec.synth.kits.registry import XLS_PIN_STYLE
-    for role in ("valid", "ready", "data"):
-        add(role, "${ep}" + XLS_PIN_STYLE[role])
+    for style in ("fw", "xls"):
+        for role, t in _RV_PINS[style].items():
+            add(role, t)
     for t in ("${ep}_valid", "valid_${ep}", "${ep}_v"):
         add("valid", t)
     for t in ("${ep}_ready", "ready_${ep}", "${ep}_r"):

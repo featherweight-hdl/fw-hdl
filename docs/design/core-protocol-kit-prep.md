@@ -13,8 +13,46 @@ Status: **draft, review applied (2026-11-15); readiness review
 - **Decided 2026-11-16:** decision 18, the macros' class argument:
   `*_utils(C)` without parameters, `*_param_utils(C)` with a `this_t`
   typedef, after the K1 check found the bare-name form fails (§3.2).
-- **Blocking finding:** layer 2 (processes) has no design yet, and the
-  transactors, monitors and the §9 acceptance need it (§14.1).
+- **Part A done 2026-11-17** (§14.1): the protocol class, queries,
+  sockets, configuration and the Kit-stage generators, with
+  `fw_hdl_std_pkg` (rv and the neutral APIs) built through
+  `fw.hdl.GenKit`. Exit test: fw-hdl-fe-sv
+  `tests/e2e/test_part_a_exit.py`, with `test_std_flow.py` and the
+  `protocols` conformance scenarios in rt-sv and fe-sv.
+- **Blocking finding (resolved):** layer 2 (processes) had no design,
+  and the transactors, monitors and the §9 acceptance (Part B) need it
+  (§14.1). Layer 2 is now done ([core-layer2.md](core-layer2.md)).
+- **Part B, transactors and timing, done 2026-11-18** (K9): endpoint
+  and configuration renames (`fw_{port,export,socket}_cfg_{src,sink}`,
+  transactor role derived from the pin mixin); std `fw_rv_initiator`,
+  `fw_rv_target` and `fw_rv_monitor`, run back to back with no RTL
+  (rt-sv `test_rv_b2b`), the monitor core proved with SymbiYosys (fe-sv
+  `test_rv_formal`); std `fw_timed_channel` and the test UART's kit
+  channels (§3.5; scenario `proto_timed`); two class UART models with
+  baud mismatch (rt-sv `test_two_uart`, half of the Part B exit); the
+  transactor generator for ready/valid bundles with a generated b2b and
+  static lookup `ScanResult.xtor_for` (fe-sv `test_gen_xtor*`).
+- **Part B exit met 2026-11-18** (K10): monitors register with their
+  protocol and take listeners (`add_listener`, std
+  `fw_rv_mon_listener`); fe-sv generates the testbench
+  (`fw.hdl.gen.gen_tb`: a class tb with one opposite-role transactor
+  per protocol port, the DUT and the pin bridges) and the bind module
+  (`gen_bind`: input-only bridges to monitors in the same class tree).
+  The `wrap_rtl` acceptance (decision 15, fe-sv
+  `tests/e2e/test_wrap_rtl_acceptance.py`): random traffic and
+  back-pressure from class code, scored on the bound monitors'
+  listeners, hand-shakes on the same cycles as the hand-written
+  all-RTL reference (`examples/wrap_rtl/tb/chain_accept_tb.sv`), so
+  the transactors add no latency.
+- **Old kit path retired 2026-11-18** (K11; decision 4 done): `kits.py`,
+  its tests, and the kit YAMLs `fw_rv_kit.yaml`/`fw_put_kit.yaml` are
+  gone; `extern.py` and `wrap.py` use fixed rv pin templates. The skill
+  `skills/fw-proto-kit` describes only the new path, and its hand-written
+  rv example is replaced by pointers to the spec `std/` rv and fe-sv
+  `examples/wrap_rtl`. The protocol-package guide is now fw-hdl-spec
+  `docs/protocol-packages.rst`. sv-weave and `python/fw/hdl/weave/` stay
+  (settle/sp_comb); zuspec-synth's own `zuspec/synth/kits/` is not ours
+  to retire.
 This file follows the form of [core-domains.md](core-domains.md): the
 issues, what exists, and a recommendation for each. The plan and its
 status are tracked in the work packet, outside the repo
@@ -35,7 +73,7 @@ Inputs:
   - the rv kit `src/std/rv/` and its descriptor `fw_rv_kit.yaml`;
   - the sync pin bridge `src/sync/fw_rv_pin.svh`;
   - the debug listener `src/dbg/`.
-- `python/fw/hdl/weave/`, `python/fw/hdl/kits.py`, and `packages/sv-weave`.
+- `python/fw/hdl/weave/`, `python/fw/hdl/kits.py` (retired, K11), and `packages/sv-weave`.
 - `skills/fw-proto-kit` and its rv reference kit.
 - **fw-proto-axi-new** (`/packets/featherweight-ip/fw-proto-axi-new`).
   It is the new-style AXI4 kit, and it is the main prior art for this
@@ -84,7 +122,8 @@ only for AXI4 in fw-proto-axi-new, built on the old core.
    once and work on both.
 6. **Fast models at the abstract level, with the same tests.** A UART
    model moves bytes, not bits, and a byte still takes a frame time,
-   because the connection times it from the UART's configuration. The
+   because the timed channel between two models times it from their
+   configuration. The
    same byte-level checkers run on the RTL through a transactor, and a
    baud or parity mismatch between two models shows up as framing errors
    (§3.3–§3.5).
@@ -252,7 +291,7 @@ themselves with it, and each kind of part does so in the way SV allows:
 |---|---|---|
 | **API** (an interface class) | The protocol registers it, through a type handle `fw_api_type_of #(API)::get()` | An interface class can hold only pure virtual methods, typedefs and parameters. It cannot register itself or be passed as a value, so a class parameterized by it stands for it. This is the `fw_domain_kind_type_of #(K)` pattern. |
 | **Bundle** (physical) | The bundle names its protocol: `` `fw_bundle_protocol(PROTO) `` in the bundle class | A bundle is the physical form of a protocol, and there may be more than one form (pin-level variants). The protocol need not know about them. |
-| **Transactor and monitor** | Each registers itself with its protocol and the role it plays: `` `fw_xtor_utils(T, PROTO, ROLE) ``, or `` `fw_xtor_param_utils `` for a parameterized one (§3.2) | Transactors are written or generated *after* the protocol. Some are generated (§7) and some are hand-written (non-rv families), and there may be several per role. |
+| **Transactor and monitor** | Each registers itself with its protocol: `` `fw_xtor_utils `` / `` `fw_xtor_param_utils `` (§3.2). *Amended 2026-11-17 (decision 3):* the role is not an argument; it is derived (below) | Transactors are written or generated *after* the protocol. Some are generated (§7) and some are hand-written (non-rv families), and there may be several per role. |
 | **Generated APIs** (channel APIs) | Registered by a small generated class, in the same way as a transactor | The hand-written protocol class cannot name code generated after it. |
 
 ```systemverilog
@@ -272,13 +311,45 @@ class axi4_if #(axi4_param_t P = AXI4_PARAM_DEFAULT) extends fw_bundle_base;
     ...
 endclass
 
-// A transactor, generated or hand-written, registers with protocol and role.
+// A transactor, generated or hand-written, registers with its protocol.
+// Its role is derived, never stated (decision 3, amended 2026-11-17).
 class axi4_initiator_xtor #(axi4_param_t P = AXI4_PARAM_DEFAULT) extends fw_component;
     typedef axi4_initiator_xtor #(P) this_t;
-    `fw_xtor_param_utils(axi4_initiator_xtor, axi4_proto #(P), FW_ROLE_INITIATOR)
+    `fw_xtor_param_utils(axi4_initiator_xtor, axi4_proto #(P))
     ...
 endclass
 ```
+
+**A role is derived, never declared or registered** *(amended
+2026-11-17, decision 3)*. A transactor's role is what its endpoints
+already say:
+- on the pin side, the mixin of its bundle member (`fw_bundle`,
+  `fw_mirror` or `fw_monitor` of the protocol's bundle);
+- on the method side, which way the protocol's `req` and `rsp` travel
+  through its port, export or socket (§5).
+
+The two must agree; a transactor whose sides disagree is an elaboration
+error. A monitor has no outbound API and is a monitor by its
+`fw_monitor` member.
+
+**Finding a transactor is static** *(amended 2026-11-17; was the
+run-time `xtor_for` and `xtors(role)`)*. The question is always asked
+about a bundle in the design, and answered from IR (fe-sv, the
+generators of §7 and §9), where the transactors' members are visible:
+1. I have a bundle here: what protocol is it? Its bundle type names it
+   (`` `fw_bundle_protocol ``).
+2. What transactors exist for that protocol? Those registered with it
+   (`` `fw_xtor_utils ``), found in the kit's source and the generated
+   code.
+3. Which one has the counterpart of the bundle I have? The one whose pin
+   member is the opposite mixin over the same bundle type: `fw_mirror #(B)`
+   for an `fw_bundle #(B)` port, `fw_bundle #(B)` for an `fw_mirror #(B)`
+   port, `fw_monitor #(B)` for a monitor tap. Matching on the bundle type,
+   not only the protocol, also tells bundle variants apart.
+
+There is no run-time transactor lookup. The generated testbench and bind
+module name each transactor they place (§9), so rt-sv never has to find
+one.
 
 **All registrations point at the hub.** The protocol class depends on
 nothing but its hand-written APIs. That gives three properties:
@@ -294,11 +365,11 @@ object, never methods added to the bundle or component classes.
 | Starting from | Query | Gives |
 |---|---|---|
 | a bundle instance in any role: `fw_bundle`, `fw_mirror` or `fw_monitor` of B | `fw_protocol::of(b)`, `fw_protocol::role_of(b)` | the protocol's handle (`fw_protocol_type`), and the role from the mixin. The mixins extend B, so this works on a wrapped IP's mapped ports too. |
-| a protocol handle | `p.api(FW_PROTO_REQ)`, `p.apis()`, `p.bundles()`, `p.xtors(role)` | the parts that have registered |
-| a bundle, to get its transactor | `fw_protocol::xtor_for(b)` | a constructor for the transactor of the *opposite* role (a target port gets an initiator transactor; a monitor tap gets the monitor) |
+| a protocol handle | `p.api(FW_PROTO_REQ)`, `p.apis()`, `p.bundles()` | the parts that have registered |
+| a bundle, to get its transactor | static only, in IR (fe-sv and the generators; *amended 2026-11-17*, no run-time query) | the protocol's transactor whose pin member is the opposite mixin over the same bundle type (a target port gets an initiator transactor; a monitor tap gets the monitor), as above |
 | an API handle | `a.protocols()` | every protocol that uses it, at the family level (§3.2). The std neutral APIs (`put`, `mem`) belong to many protocols. |
 | a protocol or API handle | `p.family()`, `a.family()`; `p.params()` | the unparameterized identity (§3.2); the specialization's parameters, for reporting |
-| a transactor, or a socket `fw_socket #(PROTO)` | `fw_protocol::of(x)`, or `PROTO::get_type()` statically | the hub, and from it everything else |
+| a transactor | `fw_protocol::of(x)`, or `PROTO::get_type()` statically | the hub, and from it everything else. A socket is typed by its APIs (§5), so from a socket it is `a.protocols()` on its APIs, and its role in each is derived from which way `req` and `rsp` travel (§5) |
 
 The testbench and bind generators (§9) are clients of these queries: from
 each protocol port of the DUT, they find the protocol and the transactor or
@@ -366,10 +437,11 @@ cannot carry:
 
 **Issue: registration of parameterized classes.** At run time, SV runs a
 parameterized class's static initializers only for specializations that
-exist in the image. So in rt-sv, `p.xtors(role)` sees
-`axi4_initiator_xtor #(P)` only if that specialization is compiled in.
-The static view does not have this gap: fe-sv sees every registration
-macro in the source.
+exist in the image, so a run-time list of `axi4_initiator_xtor #(P)`
+specializations would be incomplete. The static view does not have this
+gap: fe-sv sees every registration macro in the source. *Amended
+2026-11-17:* this is now moot for transactors, which are found only
+statically (above).
 
 Recommendation:
 - **The complete lookups are made statically.** The generators work from
@@ -378,9 +450,8 @@ Recommendation:
   rt-sv images contain the registrations they need.
 - **The run-time queries are complete for what the image contains.**
   `fw_protocol::of(b)` and `p.api(...)` are always answerable, because
-  the bundle and the protocol are present wherever a bundle is. Only
-  `xtors()` depends on what is compiled in, and it is documented that
-  way.
+  the bundle and the protocol are present wherever a bundle is. There is
+  no run-time transactor query (amended 2026-11-17).
 
 **Zuspec (Z7).** The hub and its registrations have to reach the IR,
 because all of the generated collateral is produced from IR (§7):
@@ -393,8 +464,9 @@ Z7 is **a new Zuspec work item**: a protocol type in ir-core, with
 - the transactor types registered with it, per role;
 - the protocol and role of each bundle instance in an elaborated design.
 
-The YAML kit descriptor and `kits.py` are then retired. If zuspec-synth
-still needs a `zuspec.kit` file, it is generated from the IR.
+The YAML kit descriptor and `kits.py` are then retired (done
+2026-11-18, K11). If zuspec-synth still needs a `zuspec.kit` file, it is
+generated from the IR.
 
 ### 3.3 Abstraction levels: transactors and abstractors
 
@@ -431,10 +503,8 @@ class uart_proto #(uart_param_t P = UART_PARAM_DEFAULT) extends fw_protocol;
     static function void declare(fw_protocol_decl d);
         d.api(fw_api_type_of #(fw_put_if #(uart_char_t))::get(), FW_PROTO_REQ);
     endfunction
-    static function time xfer_time(cfg_t c, uart_char_t t);    // §3.5
-        return uart_frame_bits(c) * uart_bit_time(c);
-    endfunction
 endclass
+// The frame time is the kit's timed channel's, not the hub's (§3.5).
 ```
 
 **The abstractor (the second case)** registers with two protocols, as a
@@ -502,11 +572,11 @@ is a field access with no call:
 
 ```systemverilog
 // In the UART (the owner):
-fw_cfg_publisher #(uart_cfg_t) cfg_pub;
+fw_cfg_src  #(uart_cfg_t) cfg_pub;        // was fw_cfg_publisher (decision 22)
 ...  cfg_pub.set(c);              // the commit point: pushes c to every consumer
 
-// In a transactor, monitor or self-timed connection:
-fw_cfg_consumer #(uart_cfg_t) cfg;
+// In a transactor, monitor or timed channel:
+fw_cfg_sink #(uart_cfg_t) cfg;            // was fw_cfg_consumer
 ...  bit_t = 1s / cfg.cfg.baud;   // a direct read of the consumer's copy
 ```
 
@@ -537,22 +607,47 @@ fw_cfg_consumer #(uart_cfg_t) cfg;
     writes from code fe-sv never saw.
 - **One copy per consumer.** Fan-out is a loop of small copies on each
   `set()`. A shared copy behind a handle would cost the direct read.
-- **No change events.** Derived values (bit time, frame bits) are a few
-  multiplies, computed at the start of each transfer. An on-change hook
-  can be added later without changing this contract.
+- **A change listener** *(amended 2026-11-17, decision 22; was "no change
+  events")*. Configuration is passive: a reader sees only the current
+  value, so checking it on every transfer costs on every transfer. A
+  consumer may instead register a listener, called after each push with
+  the new value. A sink or channel uses it to check a configuration once
+  per change: a VIP checks that it supports the new baud, a
+  device-to-device channel flags a mismatch at the register write that
+  causes it. A consumer with no listener pays nothing. Derived values
+  (bit time, frame bits) are still computed at the start of a transfer.
 
-**Binding is derived (§14.4).**
-- A protocol with run-time configuration names its type in the hub:
-  `typedef uart_cfg_t cfg_t;`. A protocol without one is unconfigured.
-- A component's publisher of `PROTO::cfg_t` is associated with its
-  endpoints of `PROTO` (sockets, bundle ports) when that is unambiguous:
-  one publisher of that type in the component. Otherwise the component
-  associates them explicitly, as domain associations do.
-- Anything connected to such an endpoint (a transactor, abstractor,
-  monitor or self-timed connection) gets a consumer bound to that
-  endpoint's publisher by elaboration. The user wires nothing.
-- Each side of a link has its own publisher. A UART link has no shared
-  clock, and its two ends are configured independently.
+**Configuration travels with an endpoint** *(amended 2026-11-17, decision
+22; was "Binding is derived" through the hub's `cfg_t`)*.
+- A method-level endpoint (§5) **may** carry configuration; most do not.
+  One that does is a **source** or a **sink**, and the role is in its
+  class name, so a wrong connection does not compile:
+
+  | Endpoint | No configuration | Sources it | Sinks it |
+  |---|---|---|---|
+  | port | `fw_port #(API)` | `fw_port_cfg_src #(API, CFG)` | `fw_port_cfg_sink #(API, CFG)` |
+  | export | `fw_export #(API)` | `fw_export_cfg_src #(API, CFG)` | `fw_export_cfg_sink #(API, CFG)` |
+  | socket | `fw_socket #(OUT, IN)` | `fw_socket_cfg_src #(OUT, IN, CFG)` | `fw_socket_cfg_sink #(OUT, IN, CFG)` |
+  | configuration only | — | `fw_cfg_src #(CFG)` | `fw_cfg_sink #(CFG)` |
+
+- A source publishes. Its owner sets it, for a device from its
+  configuration registers. A sink consumes: its owner reads `cfg` (and
+  may listen for changes).
+- `fw_cfg_src #(CFG)` and `fw_cfg_sink #(CFG)` are the same roles with no
+  API, for configuration that is not tied to a method-level connection
+  (a power controller's mode read by a power model). They follow the
+  same rules: factory, `connect()` phase, netlist, source-to-sink only.
+- `connect` joins a source to a sink of the same `CFG`, and its argument
+  type says so: source to source, sink to sink, and a configured to an
+  unconfigured endpoint are compile errors. `connect_up` passes an
+  endpoint to a parent endpoint of the *same* role.
+- Configuration is a property of the endpoint, not of the protocol. The
+  hub's `cfg_t` no longer drives binding.
+- Each side of a link has its own configuration. A UART link has no
+  shared clock, and its two ends are configured independently; a channel
+  (§3.5) joins them.
+- Not covered yet: configuration on a *bundle* port, for a transactor at
+  a DUT's pins (see "Open: a wrapped RTL UART" below).
 
 **Static view.** A consumer's `cfg` has exactly one writer, the
 publisher's push, and any number of readers. In IR this is the shape of a
@@ -564,11 +659,13 @@ single-driver connection, updated by an event instead of continuously:
 
 The static no-write rule is what makes the single-writer claim true.
 
-**The general primitive.** `fw_cfg_publisher #(T)` and
-`fw_cfg_consumer #(T)` are a capability class pair, not methods on
-`fw_component`. Protocols use them implicitly through `cfg_t`; other
-shared state (a power controller's mode read by a power model) uses them
-explicitly, connected in `connect()`.
+**The general primitive** *(amended 2026-11-17, decision 22)*.
+`fw_cfg_src #(T)` and `fw_cfg_sink #(T)` are a capability class pair, not
+methods on `fw_component`. They replace `fw_cfg_publisher #(T)` and
+`fw_cfg_consumer #(T)` (renamed, so the standalone pair and the
+configured endpoints share one vocabulary); the push, the commit point,
+the direct read and the no-write check above are theirs. The configured
+endpoints (`_cfg_src`, `_cfg_sink`) carry the same behavior.
 
 **Open: a wrapped RTL UART.** In the testbench case (§9), the DUT's real
 configuration is in its registers, not in a publisher. The transactor at
@@ -576,36 +673,56 @@ its pins still needs a consumer. Either the testbench programs the DUT
 and a publisher from one source, or the transactor detects the baud
 rate. Prep starts with the first.
 
-### 3.5 Self-timed connections
+### 3.5 Timed channels
 
-*Direction set in review, 2026-11-16; decision 21.* When two class-level
-UART models are connected at the byte level, an outbound byte should take
-a frame time. The initiator should not time it: that duplicates what the
-transactor does at the signal level, and every initiator would write it
-again. The connection times it.
+*Amended 2026-11-17, decision 22 (supersedes decision 21's derived
+insertion).* When two class-level UART models are connected at the byte
+level, an outbound byte should take a frame time. The initiator should
+not time it: that duplicates what the transactor does at the signal
+level, and every initiator would write it again. Neither should the
+receiver. **A channel times it**, and neither end knows it is there.
 
-- **The protocol owns the timing.** A configured protocol (§3.4) defines
-  `static function time xfer_time(cfg_t c, <payload> t)` in the hub, next
-  to `cfg_t`. The transactor uses the same functions (bit time, frame
-  bits) at the signal level. The timing is written once, in the kit.
-- **The connection is derived.** When two API-level endpoints of a
-  protocol that defines `xfer_time` are connected, elaboration inserts
-  std's `fw_timed_channel #(PROTO)`. It:
-  - holds a consumer for each side's configuration (§3.4);
-  - samples the sender's at the start of a transfer;
-  - delays the delivery by `PROTO::xfer_time(...)`.
-  A protocol without `xfer_time` gets an untimed connection, as today;
-  rv needs nothing new.
-- **Configuration mismatch.** The channel compares the sender's
-  configuration with the receiver's when a transfer starts. A protocol
-  may define `static function <payload> mismatch(cfg_t tx, cfg_t rx,
-  <payload> t)`, which returns the payload as the receiver sees it: for
-  UART, with `frame_err` or `parity_err` set. The most common UART bug is
-  then visible in a fast model, at byte speed. Without `mismatch`, the
-  channel reports a differing configuration as an error.
+- **The channel is explicit.** A channel is a component in the topology,
+  shipped by the protocol kit and placed by the user. It is not inserted
+  by elaboration (decision 21 had elaboration insert one when the hub
+  defined `xfer_time`; SV cannot tell whether a hub defines a static
+  function, so that needed a registration only GenKit or the user could
+  write). Without a channel a link is untimed, and that is visible in the
+  topology. Derived insertion may come back later; not in prep.
+- **Its shape follows the endpoints (§5).** A channel between a port and
+  an export is one-way. A channel between two sockets is two-way, since
+  calls travel both ways. A kit can ship both, for example
+  `uart_tx_chan` (one-way) and `uart_txrx_chan` (two-way).
+- **Configuration decides what kind of channel it is (§3.4):**
+
+  | Channel | Joins | Its endpoints | Timing | Mismatch |
+  |---|---|---|---|---|
+  | forwarding | a device and a VIP | sink on the device side, source on the VIP side; passes the device's configuration through | by the device's configuration | none: one configuration |
+  | sinking | two devices | sinks on both sides | each direction by its sender's configuration | when the two differ |
+
+  ```systemverilog
+  // device <-> VIP
+  dut_uart.sock.connect(fwd.dev);     fwd.vip.connect(uart_vip.sock);
+  // device <-> device: each device sources what its registers hold
+  uart_a.sock.connect(dd.a);          dd.b.connect(uart_b.sock);
+  ```
+- **The kit owns the timing, as methods of the channel.** A std base
+  (`fw_timed_channel`) holds the sampling and delivery; the kit's channel
+  defines the transfer time and the mismatch rule as virtual methods, not
+  as conventions on the hub. The transactor uses the same helpers (bit
+  time, frame bits) at the signal level, so the timing is written once,
+  in the kit.
+- **A channel samples the sender's configuration at the start of a
+  transfer** (§3.4). A sinking channel compares it with the receiver's:
+  its mismatch rule returns the payload as the receiver sees it (for
+  UART, with `frame_err` or `parity_err` set), so the most common UART
+  bug is visible in a fast model, at byte speed. A channel may also
+  check on change, through the consumer's listener (§3.4).
+- **Blocking is up to the channel.** One channel may block the sender for
+  the transfer time and deliver unbuffered; another may return at once
+  and queue.
 - **Depends on layer 2.** Delaying a delivery needs time in the class
-  model, so the channel is Part B. The hub's `cfg_t` and `xfer_time`, and
-  the derivation rule, are Part A.
+  model, so channels are Part B. The configured endpoints are Part A.
 
 ---
 
@@ -734,22 +851,47 @@ classes with derived collateral.
   that fe-sv and the testbench generator see them.
 
 **Recommendation.**
-- **Two typed endpoint classes, parameterized by API:**
-  - `fw_api_port #(API)`, the required side;
-  - `fw_api_export #(API)`, the provided side.
+- **Two typed endpoint classes, parameterized by API** *(names amended
+  2026-11-17, decision 22; were `fw_api_port` / `fw_api_export`)*:
+  - `fw_port #(API)`, the client side: it calls `API`;
+  - `fw_export #(API)`, the provider side: it implements `API`.
 
-  "api" separates them from signal ports. They follow layer 1's rules:
+  Signal endpoints are `fw_input`/`fw_output`, so the short names do not
+  clash, and "api" in every name made the configured forms
+  (`fw_port_cfg_src`) long. They follow layer 1's rules:
   created through the factory, connected in `connect()`, recorded in the
   netlist, and with domain association as for bundles.
-- **Sockets parameterized by the protocol class (§3.1):**
-  - `fw_socket #(PROTO)` is the initiator side: a port of `req`, an export
-    of `rsp`;
-  - `fw_target_socket #(PROTO)` is the reverse.
+- **Sockets parameterized by an API pair** *(amended 2026-11-17, decision
+  22; was `fw_socket #(PROTO)` / `fw_target_socket #(PROTO)`)*:
+  - `fw_socket #(OUT, IN)` calls `OUT` and provides `IN`. Its peer is
+    `fw_socket #(IN, OUT)`: swapped APIs mean the mirror image, so there
+    is no separate target class, and two identical full-duplex devices
+    (`fw_socket #(put_if, put_if)`) connect socket to socket.
+  - Conceptually a socket is a port of `OUT` bundled with an export of
+    `IN`. It is not implemented as one: it is its own endpoint class.
+  - Use a socket when calls travel both ways, and a port/export pair when
+    they travel one way.
+  - Each endpoint kind has configured forms (`_cfg_src`, `_cfg_sink`,
+    §3.4).
 
-  Parameterizing by the protocol, not by the `<I,E>` pair, puts the hub in
-  the socket's type. From `PROTO::get_type()`, the transactor and the
-  testbench generator (§6, §9) reach the protocol's APIs, its bundles and
-  its transactors.
+  **The role is derived, never declared or registered.** Against a
+  protocol, an endpoint's role is which way the protocol's APIs travel
+  through it:
+  - outbound `req` (and inbound `rsp`): initiator;
+  - outbound `rsp` (and inbound `req`): target;
+  - the same for ports and exports: a port of `req` is an initiator, an
+    export of `req` a target.
+
+  A symmetric socket (`fw_socket #(put_if, put_if)` on a protocol whose
+  `req` is `put`) is both, which is right: a full-duplex UART has no
+  initiator. An API shared by several protocols (std `put`) gives a role
+  per protocol, so the generators (§6, §9) ask in the context of the
+  protocol they start from (the DUT port's), not of the socket alone.
+  This is why there is no `fw_target_socket`: a target class would put
+  the role in the type, where it is redundant with the API order, and
+  would double the configured family (initiator/target is independent of
+  source/sink: an AXI master device sources configuration, an AXI master
+  VIP sinks it).
 - **Implementing an export.** A component implements an export with a
   derived `<api>_imp`, never with a macro. Generating per-field
   forwarders (fw-proto-axi-new §4.4, "later") is not needed for
@@ -988,6 +1130,8 @@ sv-weave generate the SV collateral, and kept the weavers in
   - the old-style rules in `skills/fw-proto-kit`, whose new style is
     `writing-a-protocol-package.md`, moved to fw-hdl;
   - `fw_rv_kit.yaml`/`fw_put_kit.yaml` and `kits.py` (§3).
+  (All three done 2026-11-18, K11; the guide is fw-hdl-spec
+  `docs/protocol-packages.rst`.)
 - **Move `fw_proto/` into fw-hdl** (fw-proto-axi-new D2).
   - The weaver logic (`fw_proto_weave`, `xtors.py`) is rewritten as
     IR-driven generators in `fw.hdl.gen` (§7). The rules for what to
@@ -1024,8 +1168,8 @@ records which bundle instances are protocol ports, and in which role).
    - The transactor's role is the opposite of the port's: a target port
      gets an initiator transactor.
    - Clock and reset come from the DUT's domains.
-   - On the class side, each transactor exposes `fw_socket`/
-     `fw_target_socket` plus a proxy, reachable by path (`dut.s_axi`), so
+   - On the class side, each transactor exposes a socket (or port/export)
+     plus a proxy, reachable by path (`dut.s_axi`), so
      tests and listeners attach by path.
    - This is P6's abstractor, without a struct-port `connect` overload.
      The generator places the transactors, not user code.
@@ -1106,10 +1250,11 @@ In:
   fe-sv netlist, domain association;
 - abstraction levels (§3.3): the abstractor registration, shared with
   transactors, and its queries;
-- configuration state (§3.4): `cfg_t` on the hub, the publisher and
-  consumer pair, derived binding, the no-write check;
-- self-timed connections (§3.5): `xfer_time` and `mismatch` on the hub,
-  the derivation rule (Part A), and std's `fw_timed_channel` (Part B);
+- configuration state (§3.4): the publisher and consumer pair with the
+  change listener, the configured endpoints (`_cfg_src`/`_cfg_sink`),
+  the no-write check;
+- timed channels (§3.5): std's `fw_timed_channel` base and a kit's
+  channels, placed explicitly (Part B);
 - the zero-latency rv transactor and monitor, as layer-2 components (§6);
 - IR-driven generators in `fw.hdl.gen`:
   - the kit stage, which includes fe-sv's `Scan` mode (Q-A),
@@ -1148,12 +1293,12 @@ The parts of prep that do not need layer 2 can start before it:
 | # | Question | Status | Recommendation / decision |
 |---|---|---|---|
 | 1 | Terminology | *Decided 2026-11-15* | initiator/target roles; fwd/rev channel direction from the member's bundle role; req/rsp APIs; monitor is a listener producer; drop egress/ingress (§2) |
-| 2 | `fw_mirror` name clash | *Decided 2026-11-15* | Keep `fw_mirror` for the bundle target role; the method-level peer is `fw_target_socket`. "Socket" is TLM terminology anyway (§2, §5) |
-| 3 | How a protocol is declared | *Direction set 2026-11-15*; names *decided 2026-11-16* as §14.3 | A protocol class is the hub. It registers its APIs through `fw_api_type_of #(API)`. Bundles name their protocol (`` `fw_bundle_protocol ``). Transactors and generated APIs register with protocol and role (`` `fw_xtor_utils ``). Static queries (`fw_protocol::of`, `role_of`, `xtor_for`, `p.apis()`, `a.protocols()`) reach every part from any part. Attributes only for per-member facts (`fw_opt`, `fw_default`); fwd/rev and channel family come from the bundle (§3.1) |
-| 4 | Protocol in Zuspec | *Decided 2026-11-16* as §14.3 | New work item Z7: protocol type with its APIs, bundle types and registered transactors per role; protocol and role per bundle instance; retire the `zuspec.kit` YAML and `kits.py` (§3.1) |
+| 2 | `fw_mirror` name clash | *Decided 2026-11-15*; peer *amended 2026-11-17* (22) | Keep `fw_mirror` for the bundle target role. The method-level peer is no longer `fw_target_socket`: it is `fw_socket` with its APIs swapped (§5) |
+| 3 | How a protocol is declared | *Direction set 2026-11-15*; names *decided 2026-11-16* as §14.3; roles *amended 2026-11-17* | A protocol class is the hub. It registers its APIs through `fw_api_type_of #(API)`. Bundles name their protocol (`` `fw_bundle_protocol ``). Transactors and generated APIs register with their protocol (`` `fw_xtor_utils ``); a role is never stated or registered, it is derived from the endpoints (bundle mixin on the pin side, `req`/`rsp` direction on the method side). Static queries (`fw_protocol::of`, `role_of`, `p.apis()`, `a.protocols()`) reach every part from any part; finding a transactor for a bundle is static only, in IR (§3.1). Attributes only for per-member facts (`fw_opt`, `fw_default`); fwd/rev and channel family come from the bundle (§3.1) |
+| 4 | Protocol in Zuspec | *Decided 2026-11-16* as §14.3; **done 2026-11-18** (Z7 in K3; YAML and `kits.py` retired in K11) | New work item Z7: protocol type with its APIs, bundle types and registered transactors per role; protocol and role per bundle instance; retire the `zuspec.kit` YAML and `kits.py` (§3.1) |
 | 5 | Derived shapes normative? | *Decided 2026-11-16* as §14.3 | Yes: names, methods and calling order in `semantics/protocols.md`; the generators are automation that meets it (§4.2) |
 | 6 | Transaction classes | *Decided 2026-11-16* as §14.3 | One `<api>_<m>_txn` per method, grouped per direction; payload structs stay; derived `_txn_listener` and `_txn_driver` bridges; recorder is a txn listener (§4.3) |
-| 7 | Method-level endpoints | *Decided 2026-11-16* as §14.3 | `fw_api_port #(API)`, `fw_api_export #(API)`; sockets `fw_socket #(PROTO)` / `fw_target_socket #(PROTO)`; layer-1 phase, factory and netlist rules; domain association; simulation-only in prep (§5) |
+| 7 | Method-level endpoints | *Decided 2026-11-16* as §14.3; names and sockets *amended 2026-11-17* (22) | `fw_port #(API)`, `fw_export #(API)` (were `fw_api_port`, `fw_api_export`); sockets `fw_socket #(OUT, IN)`, peer `fw_socket #(IN, OUT)` (was `fw_socket #(PROTO)` / `fw_target_socket #(PROTO)`); layer-1 phase, factory and netlist rules; domain association; simulation-only in prep (§5) |
 | 8 | Transactor timing | *Decided 2026-11-16* as §14.3 | Zero added cycles, no buffer; drive in the call cycle, return on handshake; monitor never drops; FIFOs and stalls are separate std components (§6) |
 | 9 | Legality constraints in txn classes | *Decided 2026-11-16* as §14.3 | Kit-provided legal constraints vs user-only (§11) |
 | 10 | Where the generators live | *Decided 2026-11-15*, changed in review | Not in `fw-hdl-spec`: the spec is pure spec and states what is generated; the automation is part of fw-hdl proper, as `fw.hdl.gen` in `fw-hdl-fe-sv` (Q-B) (§7) |
@@ -1165,11 +1310,12 @@ The parts of prep that do not need layer 2 can start before it:
 | 16 | Python in prep | *Decided 2026-11-15* | Deferred past prep; prep keeps the pyhdl-if-friendly conventions and the API types in IR (§10) |
 | 17 | Scope | *Decided 2026-11-16* as §14.3 | §12 |
 | Q-A | How fe-sv finds a kit's types | *Decided 2026-11-15* | fe-sv has two modes: `Scan` (parse a collection of SV, map its types to IR, find fw-hdl types by their registrations) and `Elaborate` (a given specification). Layer 1 defined only `Elaborate`, so `core-layer1.md` §6.7 gains `Scan`. For a kit, protocol classes are the entry points, and parts are found through their registrations (§3.1, §7) |
-| Q-C | Registration of parameterized transactors at run time | *Decided 2026-11-16* as §14.3 | Complete lookups are static, from IR. rt-sv `xtors()` covers only specializations in the image; generated tb and bind modules name theirs explicitly (§3.1) |
+| Q-C | Registration of parameterized transactors at run time | *Decided 2026-11-16* as §14.3 | Complete lookups are static, from IR. Generated tb and bind modules name theirs explicitly. *Amended 2026-11-17:* transactor lookup is static only (bundle → protocol → registered transactors → the one with the counterpart mixin of that bundle type); rt-sv has no `xtors()` or `xtor_for` (§3.1) |
 | 18 | Form of the registration macros' class argument | *Decided 2026-11-16* | §3.2's bare-name form fails in pyslang and Verilator (plan §5.1). Two forms, as in UVM: `` `fw_protocol_utils(C) `` for a class without parameters; `typedef C #(...) this_t;` and `` `fw_protocol_param_utils(C) `` for a parameterized one. The argument is the bare name, only stringified for the family name; fe-sv checks that `this_t` is the class's own specialization. The same pair for `fw_xtor_*` and `fw_abstractor_*` (§3.2) |
 | 19 | Protocols at more than one abstraction level | *Direction set 2026-11-16* | One protocol when the abstract level is the protocol's own transactions: API above, bundle below, transactor between (UART: `put #(uart_char_t)` over the serial line). Two protocols and an abstractor when the abstract level stands alone or spans wire protocols. Transactor and abstractor share one registration, query path and Z7 shape. One hop first (§3.3) |
-| 20 | Configuration shared between components | *Direction set 2026-11-16* | `fw_cfg_publisher #(T)` / `fw_cfg_consumer #(T)`: a struct value, pushed on `set()` (the commit point), read directly from the consumer's copy; no change events; writes to a consumer's copy are errors, checked by fe-sv statically and by rt-sv on each push. A protocol names its `cfg_t` in the hub, and binding to its endpoints is derived (§3.4) |
-| 21 | Who times an abstract-level transfer | *Direction set 2026-11-16* | The connection, not the initiator. The hub defines `xfer_time(cfg_t, payload)` (and optionally `mismatch`); elaboration inserts std's `fw_timed_channel #(PROTO)` between API-level endpoints of such a protocol. Part B, since it needs time in the class model (§3.5) |
+| 20 | Configuration shared between components | *Direction set 2026-11-16* | `fw_cfg_publisher #(T)` / `fw_cfg_consumer #(T)` (renamed `fw_cfg_src` / `fw_cfg_sink` by 22): a struct value, pushed on `set()` (the commit point), read directly from the consumer's copy; writes to a consumer's copy are errors, checked by fe-sv statically and by rt-sv on each push. *Amended 2026-11-17* (22): a change listener on the consumer (was: no change events); configuration travels with configured endpoints, not with the hub's `cfg_t` (§3.4) |
+| 21 | Who times an abstract-level transfer | *Direction set 2026-11-16*; insertion *superseded 2026-11-17* by 22 | The connection, not the initiator. The hub defines `xfer_time(cfg_t, payload)` (and optionally `mismatch`); elaboration inserts std's `fw_timed_channel #(PROTO)` between API-level endpoints of such a protocol. Part B, since it needs time in the class model (§3.5) |
+| 22 | Configured endpoints and explicit channels | *Decided 2026-11-17* | A method-level endpoint may carry configuration as a source or a sink, in its class name: `fw_port_cfg_src`/`_sink #(API, CFG)`, `fw_export_cfg_src`/`_sink`, `fw_socket_cfg_src`/`_sink #(OUT, IN, CFG)`; and standalone `fw_cfg_src`/`fw_cfg_sink #(CFG)` (renaming the publisher/consumer pair); source connects to sink, checked at compile time. Plain endpoints are `fw_port`/`fw_export #(API)`. Sockets are typed by their API pair, the peer is the swap, `fw_target_socket` goes; an endpoint's initiator/target role is derived from whether the protocol's `req` or `rsp` is its outbound API, never declared or registered. Consumers may listen for changes. Timing is in channels, which are kit components placed explicitly: port/export channels are one-way, socket channels two-way; a forwarding channel (device to VIP) or a sinking one (device to device, with mismatch); blocking is per channel; transfer time and mismatch are virtual methods of the channel (§3.4, §3.5, §5) |
 | Q-B | Repo for the generators | *Decided 2026-11-15* | `fw-hdl-fe-sv`, as `fw.hdl.gen`; split out only if a second front end appears (§7) |
 
 ---
@@ -1234,7 +1380,7 @@ What §6 needs from layer 2, stated as requirements on its design:
 
 | # | Recommendation |
 |---|---|
-| 3 (names) | Keep the names in §3.1: `fw_protocol`, `` `fw_protocol_utils(C) `` / `` `fw_protocol_param_utils(C) `` (no string; decision 18, §3.2), `fw_protocol_decl` with `api(type, dir)`, `fw_api_type_of #(API)` / `fw_api_type`, `` `fw_bundle_protocol(PROTO) ``, `` `fw_xtor_utils(T, PROTO, ROLE) `` (and `_param_utils`, decision 18; monitors too, with `FW_ROLE_MONITOR`), and for generated APIs `` `fw_protocol_api(PROTO, API, DIR) ``. Enums `fw_proto_dir_e` (`FW_PROTO_REQ`, `FW_PROTO_RSP`) and `fw_proto_role_e` (`FW_ROLE_INITIATOR`, `FW_ROLE_TARGET`, `FW_ROLE_MONITOR`). Queries as in §3.1. |
+| 3 (names) | Keep the names in §3.1: `fw_protocol`, `` `fw_protocol_utils(C) `` / `` `fw_protocol_param_utils(C) `` (no string; decision 18, §3.2), `fw_protocol_decl` with `api(type, dir)`, `fw_api_type_of #(API)` / `fw_api_type`, `` `fw_bundle_protocol(PROTO) ``, `` `fw_xtor_utils(T, PROTO, ROLE) `` (and `_param_utils`, decision 18; monitors too, with `FW_ROLE_MONITOR`; *the `ROLE` argument is dropped by decision 3's 2026-11-17 amendment*), and for generated APIs `` `fw_protocol_api(PROTO, API, DIR) ``. Enums `fw_proto_dir_e` (`FW_PROTO_REQ`, `FW_PROTO_RSP`) and `fw_proto_role_e` (`FW_ROLE_INITIATOR`, `FW_ROLE_TARGET`, `FW_ROLE_MONITOR`). Queries as in §3.1. |
 | 4 | Yes, Z7 in ir-core, specified in the plan as D3 specified Z6. API interface classes map to the existing `DataTypeProtocol`, extended with its base APIs; classes gain an `implements` list. The hub is a new type, `DataTypeProtocolDecl` (APIs with direction, bundle types, transactors per role). A component records the protocol and role of each bundle instance, and its API endpoints and their connections. The `zuspec.kit` YAML and `kits.py` retire in Part B, when nothing reads them. |
 | 5 | Yes, as recommended (§4.2). |
 | 6 | Yes, as recommended (§4.3). |
@@ -1243,7 +1389,7 @@ What §6 needs from layer 2, stated as requirements on its design:
 | 9 | User-only in prep. Txn classes have `rand` members and no constraints. Kit-provided legality constraints are decided with the first VIP work (§11). |
 | 14 | Yes, port, not copy. Part A ports the derivation rules into `fw.hdl.gen` and the SV runtime pieces std needs (`fw_dir_e`, `fw_field_t`). Part B ports the transactor generator. The rule library moves with the verification side, after prep. |
 | 17 | §12, split into Part A and Part B (§14.1). |
-| Q-C | As recommended (§3.1): complete lookups are static, from IR; rt-sv's `xtors()` covers the specializations in the image. |
+| Q-C | As recommended (§3.1): complete lookups are static, from IR; rt-sv's `xtors()` covers the specializations in the image. *(Superseded 2026-11-17: no run-time transactor lookup.)* |
 
 ### 14.4 Principle: keep the user's specification to a minimum
 

@@ -33,8 +33,10 @@ them `` `include ``s `fw_hdl_macros.svh` (the `` `fw_root `` macros) and/or
 that `hdl.sv-src` exports.
 
 > For building *protocols* (a set of role APIs + signal-level transactors:
-> ready/valid, wishbone, AXI…), see the **fw-proto-kit** skill. This skill covers
-> the core modeling library those kits are built on.
+> ready/valid, wishbone, AXI…), see the **fw-proto-kit** skill: a kit is an SV
+> package declaring the protocol, and fw-hdl-fe-sv's `GenKit` generates its
+> transactors. This skill covers the modeling library and its hand-written
+> transactor pattern.
 
 ---
 
@@ -389,9 +391,9 @@ connect each port/export to the signal world through a **bridge** over a
        endtask
    endinterface
    ```
-   (A handshaked protocol additionally splits into a FIFO'd interface + a clocked
-   core FSM — that is the domain of the **fw-proto-kit** skill. `put` has no
-   handshake, so the interface *is* the whole transactor.)
+   (`put` has no handshake, so the interface *is* the whole transactor. For a
+   handshaked protocol, declare it as a kit and let `GenKit` generate the
+   transactors — the **fw-proto-kit** skill.)
 
 2. **Bridge class** — adapts the API to a `virtual` transactor interface, and by
    role IS either an `fw_export` (a *provider*: driven when its API method is
@@ -508,7 +510,7 @@ A multi-endpoint example (ports *and* exports, plus a monitor) is in
 | --- | --- |
 | Pure-TLM tree (port↔export, `` `FW_PUT_IMP ``) | `tests/intf_pc/` |
 | Signal-level transactor bridge + `` `fw_root `` binds | `tests/put_proto/` |
-| Handshaked protocol (ready/valid), monitors, formal | `tests/rv_proto/` + **fw-proto-kit** skill |
+| Handshaked protocol (ready/valid), monitors | `tests/rv_proto/`; new kits: **fw-proto-kit** skill |
 | Clock-domain inherit / override / divide | `tests/clock_domain/` |
 | Kernel source | `src/fw_*.svh`, `src/fw_root.sv`, `src/fw_hdl_macros.svh` |
 | Std protocol source | `src/std/` |

@@ -46,18 +46,13 @@ fw_rv_initiator_xtor #(.T(pkt_t)) u_out (.clock, .reset, .data(out), .valid(out_
 `fw_root_end
 ```
 
-## Kit descriptors
+## Protocol declaration
 
-Each kit describes itself next to its SV, in the `zuspec.kit` v1 format (zuspec-synth
-`docs/kits.rst`):
-- `src/std/rv/fw_rv_kit.yaml` covers the three roles and the two adapters.
-- `src/std/fw_put_kit.yaml` covers the put transactor.
-
-Shell generation and lowering both read these descriptors through
-`fw.hdl.kits.registry()`. A project adds its own kit directories to that call.
-
-`fw.hdl.kits.check_kits` compares every descriptor with its module's real port list,
-read with pyslang. A renamed pin fails that check instead of being mis-wired.
+The rv protocol is declared in SV, in the fw-hdl-spec `std/` package
+(`fw_rv_proto.svh`, `fw_rv_xtor.svh`); see the spec's *Protocols* chapter
+(`packages/fw-hdl-spec/docs/protocols.rst`). There is no separate kit
+descriptor: fe-sv's `GenKit` task reads the declaration and generates the
+transactors and monitors from it.
 
 ```{eval-rst}
 .. autosvpackage:: fw_rv_pkg

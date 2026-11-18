@@ -1,0 +1,5 @@
+[0] delay0: after #0
+[5] clocked: posedge vif.clk data=0
+[15] clocked: posedge vif.clk data=10
+[25] waiter: flag==3 seen
+[40] flag=4 data=107

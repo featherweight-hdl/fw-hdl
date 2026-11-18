@@ -1175,7 +1175,11 @@ The front end therefore needs no special cases on base-class internals:
 the base classes are executed, not pattern-matched. This is migration
 step 3 of project-architecture.md, done from the start.
 
-On top of the reference runtime's checks, fe-sv checks extern maps
+fe-sv implements the spec's `domains` and `protocols` features
+(protocol registry and queries, API endpoints and sockets, configuration
+publishers and consumers) with the reference runtime's checks, including
+domain crossings over API and configuration bindings
+(`domains.check_binds`). On top of those, fe-sv checks extern maps
 against module headers (§3.7). It gets module headers from the RTL
 filesets passed to the task. The pin-check logic of today's
 `python/fw/hdl/extern.py` (`check`, `header`) is ported, not imported,
@@ -1461,9 +1465,10 @@ closes.
 
 | Task | In | Out |
 |---|---|---|
-| `Elaborate` | SV sources, top class and parameters, extern RTL filesets | Zuspec IR bundle (`.zir`), netlist JSON |
+| `Elaborate` | SV sources (directly or passed on by `Scan`, with its `fwHdlScan`), top class and parameters, extern RTL filesets | Zuspec IR bundle (`.zir`), netlist JSON |
 | `EmitSV` | `.zir` | Verilog and filelist, by composing the Zuspec be-sv task (or adding one there if it doesn't exist) |
-| `Scan` *(added 2026-11-15, not built)* | SV sources | Zuspec IR bundle (`.zir`) of the types found; no netlist |
+| `Scan` *(added 2026-11-15, built 2026-11-16)* | SV sources | `scan.json` (the netlist-form `protocols` table) and a Zuspec IR bundle (`scan.zir`: each protocol's API classes and the types they use), as a `fwHdlScan` FileSet; the sources are passed on; no netlist |
+| `GenKit` *(built 2026-11-16)* | a protocol kit's SV sources | `<core pkg>_gen_pkg.sv` (the classes derived from the kit's APIs, `fw.hdl.gen.gen_kit`) as `systemVerilogSource`; the sources are passed on; re-runs when the generators change (`GEN_VERSION`) |
 
 **Two modes.** fe-sv does two jobs. Layer 1 needed, and built, only the
 second:
@@ -1486,8 +1491,15 @@ from the types it finds. How `Scan` works:
     `` `fw_bundle_protocol ``, `` `fw_xtor_utils ``).
 - **Registrations** are evaluated by the interpreter as intrinsics (§6.2),
   as `build()` is, but no component is constructed.
-- **`Elaborate` gains an optional input:** a scanned `.zir`, plus a choice
-  of top, in place of re-parsing the sources.
+- **`Elaborate` takes an optional input:** the `fwHdlScan` FileSet of a
+  `Scan` upstream, with the sources it passes on, plus a choice of top.
+  The sources are still compiled again (a scan holds no elaboration
+  state); the scan is checked against the elaborated `protocols` table,
+  and a protocol whose declaration, bundles or converters differ is
+  `FW-E-SCAN-STALE`. Scan then Elaborate gives the same netlist and IR as
+  Elaborate alone.
+- **Not in the scan yet:** hubs' `cfg_t`, `xfer_time` and `mismatch`, and
+  their IR; hubs exist only after elaboration.
 
 ---
 
