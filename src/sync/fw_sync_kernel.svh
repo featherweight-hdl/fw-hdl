@@ -1,7 +1,16 @@
-// The sync kernel (design-sync-rtl §3.3): at each edge of each clock domain,
-//   1. commit the sync fields written since the last edge,
-//   2. settle: call every comb() until no comb value changes,
-//   3. call the step()s.
+// The sync kernel (fw-hdl-spec semantics/processes.md, "The edge";
+// sync-task-domains.md §2.2, §6.5). At each edge of a root clock, over the
+// group of domains that edge there (the root and the derived domains that
+// divide it):
+//   1. evaluate: call every step(); they read current values and write the
+//      next ones,
+//   2. update: commit every sync field,
+//   3. settle: call every comb() until no comb value changes,
+//   4. release: the root's edge driver resumes the tasks waiting on it.
+// So related domains at one time behave as flops on one clock tree, and a
+// task resumes after its edge's update. Task code then touches fields as
+// crossing ports (fw_sig_holder): reads at the edge see the values from
+// before it, writes land at once and settle (settle_now).
 // Settle runs the domain's schedule (fw_settle_sched, from the woven settle
 // tables): each comb() once in dependency order, comb loops and classes
 // without a table iterated, at most max_passes, with a named error if they
@@ -12,22 +21,16 @@
 //
 // The root makes one after build (freeze_tree) and connect (elaborate), and
 // launches it with the run phase. A tree with no struct ports and no comb()
-// leaves it inactive: step()s are then forked by do_run() as before.
+// leaves it inactive: step()s are then forked by do_run() as before. A
+// domain whose root has no edge driver (a root bridge outside fw-hdl) gets
+// its own loop, one do_edge() per tick().
 class fw_sync_kernel;
     string       name;          // the root, for errors
     int unsigned max_passes = 64;
     bit          naive;         // settle by whole passes, not the schedule
     bit          active;
     fw_sync_dom  doms[$];
-
-    // run() ordering: a run() and the kernel wake on the same edge in no set
-    // order, but a run() must see what that edge's step()s see (design §3.3:
-    // the kernel releases the run()s). With a kernel launched (m_live), the
-    // root clock bridges call after_tick() at the end of tick(): every
-    // process but the kernel's own (m_procs) then yields with #0, so it
-    // resumes after the kernel's do_edge() at this time.
-    static bit          m_live;
-    static std::process m_procs[$];
+    fw_sync_group groups[$];    // by root edge driver, built by launch()
 
     function new(string name = "");
         this.name = name;
@@ -76,66 +79,109 @@ class fw_sync_kernel;
         foreach (doms[i]) if (doms[i].combs.size() != 0) active = 1;
     endfunction
 
-    // The run phase: one process per domain, one do_edge() per tick. Called
-    // from the root's start(), so its `disable fork` ends them.
+    // The run phase: the domains are grouped by their root's edge driver,
+    // and one process per root runs each root edge's group, then releases
+    // the edge. Called from the root's start(), so its `disable fork` ends
+    // them.
     task launch();
         fw_sig_holder::phase = FW_SYNC_PH_RUN;
-        m_live = 1;
         fw_sig_holder::gen++;
+        groups.delete();
         foreach (doms[i]) begin
-            automatic fw_sync_dom d = doms[i];
-            if (d.clk == null) continue;
-            fork
-                begin
-                    m_procs.push_back(std::process::self());
-                    forever begin
-                        string err;
-                        d.clk.tick(1);
-                        if (do_edge(d, err)) $fatal(1, "fw-hdl: %s: %s", name, err);
-                    end
-                end
-            join_none
+            fw_edge_driver   drv;
+            longint unsigned div;
+            fw_sync_group    g;
+            if (doms[i].clk == null) continue;
+            drv = fw_edge_driver::of(doms[i].clk, div);
+            if (drv == null) begin
+                m_launch_dom(doms[i]);
+                continue;
+            end
+            foreach (groups[j]) if (groups[j].drv == drv) g = groups[j];
+            if (g == null) begin
+                g = new(drv);
+                groups.push_back(g);
+            end
+            g.doms.push_back(doms[i]);
+            g.divs.push_back(div);
         end
+        foreach (groups[i]) m_launch_group(groups[i]);
     endtask
 
-    static task after_tick();
-        std::process p;
-        if (!m_live) return;
-        p = std::process::self();
-        foreach (m_procs[i]) if (m_procs[i] == p) return;
-        #0;
+    // Root edge k of g's root: the group is the domains whose divisor
+    // divides k (their edges are fixed from time 0).
+    protected task m_launch_group(fw_sync_group g);
+        g.drv.own();
+        fork
+            forever begin
+                string           err;
+                fw_sync_dom      ds[$];
+                longint unsigned k = g.drv.released + 1;
+                g.drv.wait_edge(k);
+                foreach (g.doms[j]) if (k % g.divs[j] == 0) ds.push_back(g.doms[j]);
+                if (do_group(ds, err)) $fatal(1, "fw-hdl: %s: %s", name, err);
+                g.drv.release_edge(k);
+            end
+        join_none
     endtask
 
-    // One edge of domain d: commit, settle, step. Returns 1 and the error
-    // in err if settle does not converge (the steps are then not called).
-    // Leaves the phase as it found it.
+    // A domain whose root has no edge driver: one do_edge() per tick().
+    protected task m_launch_dom(fw_sync_dom d);
+        fork
+            forever begin
+                string err;
+                d.clk.tick(1);
+                if (do_edge(d, err)) $fatal(1, "fw-hdl: %s: %s", name, err);
+            end
+        join_none
+    endtask
+
+    // One edge of domain d alone (a group of one).
     function bit do_edge(fw_sync_dom d, output string err);
+        fw_sync_dom ds[$];
+        ds.push_back(d);
+        return do_group(ds, err);
+    endfunction
+
+    // One edge of the domains in ds, together: every step(), then every
+    // commit, then each domain's settle. Returns 1 and the error in err if
+    // a settle does not converge. Leaves the phase as it found it.
+    function bit do_group(fw_sync_dom ds[$], output string err);
         fw_sync_phase_e prev = fw_sig_holder::phase;
         err = "";
-        foreach (d.holders[i]) d.holders[i].commit();
-        if (settle(d, err)) begin
-            fw_sig_holder::phase = prev;
-            return 1;
+        foreach (ds[k]) begin
+            ds[k].edge_n++;
+            ds[k].edge_t = $realtime;
         end
         fw_sig_holder::phase = FW_SYNC_PH_STEP;
-        foreach (d.steps[i]) begin
-            fw_atomic_steppable a;
-            void'($cast(a, d.steps[i]));
-            if (a != null) a.step_save();
-            fw_step_ctx::begin_step(a);
-            d.steps[i].step();
-            if (!fw_step_ctx::end_step()) a.step_restore();
+        foreach (ds[k]) begin
+            foreach (ds[k].steps[i]) begin
+                fw_atomic_steppable a;
+                void'($cast(a, ds[k].steps[i]));
+                if (a != null) a.step_save();
+                fw_step_ctx::begin_step(a);
+                ds[k].steps[i].step();
+                if (!fw_step_ctx::end_step()) a.step_restore();
+            end
+        end
+        fw_sig_holder::phase = prev;
+        foreach (ds[k]) foreach (ds[k].holders[i]) ds[k].holders[i].commit();
+        foreach (ds[k]) begin
+            if (settle(ds[k], err)) begin
+                fw_sig_holder::phase = prev;
+                return 1;
+            end
         end
         fw_sig_holder::phase = prev;
         fw_sig_holder::gen++;
         return 0;
     endfunction
 
-    // A pin bridge wrote a comb field of h from outside the tree, between
-    // edges or after this edge's do_edge(): settle h's domain now, so the
-    // comb paths through the class tree reach the other pins in the same
-    // time step (design §3.3, "Mixed SV/RTL simulation"). Fatal if it does
-    // not converge.
+    // A pin bridge wrote a field of h from outside the tree, between edges
+    // or after this edge's group: settle h's domain now, so the comb paths
+    // through the class tree reach the other pins in the same time step
+    // (design §3.3, "Mixed SV/RTL simulation"). Fatal if it does not
+    // converge.
     function void settle_now(fw_sig_holder h);
         string err;
         if (h.dom == null) return;

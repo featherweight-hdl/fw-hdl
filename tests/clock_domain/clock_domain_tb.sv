@@ -13,8 +13,9 @@
 //   b.c  : inherits b's /2          -> /2
 //   b.e  : /3 derived from b's /2   -> /6
 //
-// Each leaf ticks k times and records the elapsed sim time. Because every tick
-// lands on a root posedge, the spans are exact multiples of one another, so we
+// Each leaf ticks to its domain's first edge, then k times, and records the
+// time across the k. Because every edge is a root posedge and a domain's edges
+// are fixed from time 0, the spans are exact multiples of one another, so we
 // check the cadence by ratio (timescale-independent) alongside the static
 // root_ticks() trace-up.
 `include "fw_hdl_macros.svh"

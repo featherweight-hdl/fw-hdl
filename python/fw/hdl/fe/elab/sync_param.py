@@ -38,7 +38,7 @@ declarations.
 from __future__ import annotations
 
 import dataclasses as dc
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from pyslang import ast
 
@@ -377,6 +377,33 @@ def _sync_ports(scope: _Scope, ct) -> Dict[str, Tuple[bool, list, Optional[Expr]
                            force))
         out[p.name] = (view.endswith("_sp_out"), fields, size_expr, size)
     return out
+
+
+def _channel_roles(fields: list) -> Optional[Dict[str, str]]:
+    """``{field: role}`` when a sync port's holder fields are a ready/valid
+    channel: 1-bit ``valid`` forward, 1-bit ``ready`` backward, ``data``
+    forward. The roles are read from the holder's shape, not from a table of
+    port classes. None for any other holder."""
+    by = {f[0]: f for f in fields}
+    if set(by) != {"valid", "ready", "data"}:
+        return None
+    one = DataTypeInt(bits=1, signed=False)
+    if by["valid"][2] != "FW_SYNC_FWD" or by["ready"][2] != "FW_SYNC_BWD" \
+            or by["data"][2] != "FW_SYNC_FWD":
+        return None
+    if by["valid"][1] != one or by["ready"][1] != one:
+        return None
+    return {"valid": "valid", "ready": "ready", "data": "data"}
+
+
+def _channel_pragmas(port: str, is_out: bool, fname: str,
+                     roles: Optional[Dict[str, str]]) -> Dict[str, Any]:
+    """Field pragmas naming a port field's place in its channel (spike: D0
+    F5a, until Q9 settles where region facts live in the IR)."""
+    if roles is None:
+        return {}
+    return {"channel": port, "channel_kind": "rv", "channel_role": roles[fname],
+            "channel_side": "out" if is_out else "in"}
 
 
 class _Proc:
@@ -758,10 +785,13 @@ def sync_component_param(ct, name: Optional[str] = None,
         if p.name in ports:
             is_out, fields, size_expr, size = ports[p.name]
             drives = "FW_SYNC_FWD" if is_out else "FW_SYNC_BWD"
+            roles = _channel_roles(fields)
             for fname, dt, d, fo in fields:
                 i = low.add(FieldInOut(name=f"{p.name}_{fname}",
                                        datatype=_arr(dt, size_expr, size),
-                                       is_out=(d == drives)))
+                                       is_out=(d == drives),
+                                       pragmas=_channel_pragmas(p.name, is_out, fname,
+                                                                roles)))
                 if d == drives:
                     force[i] = fo
             continue
@@ -877,20 +907,32 @@ def _subst(x, env: Dict[str, object]):
     return x
 
 
-def composite_param(top: hier.Node, types: Optional[_Types] = None
+def composite_param(top: hier.Node, types: Optional[_Types] = None,
+                    name: Optional[str] = None, connects: Optional[list] = None
                     ) -> Dict[str, DataTypeComponent]:
     """Parameterized IR components for composite ``top``: ``{module: component}``
-    with one component per child class and the composite (``top.name``) last."""
+    with one component per child class and the composite (``name``, by default
+    ``top.name``) last. A child composite is lowered the same way, as a module
+    of its own (named for its class); ``connects`` is the tree's wiring
+    (``Node.sync_connects`` of the tree's top), of which each composite takes
+    the calls between its own and its direct children's ports."""
+    outer = connects is None
+    connects = top.sync_connects if outer else connects
     types = types or _Types(f"{top.name}_types")
     scope, tps = _root_scope(top.cls, types)
     out: Dict[str, DataTypeComponent] = {}
     kids: Dict[str, Tuple[DataTypeComponent, Dict[str, object]]] = {}
     kid_ports: Dict[str, Dict[str, List[str]]] = {}
+    claimed: set = set()
     for cname, n in top.children.items():
-        if n.children:
-            raise SyncElabError(f"{n.path}: nested composites are not lowered yet")
         mod = _generic_name(n.cls)
-        if mod not in out:
+        if n.children:
+            # Each instance, for the wiring inside it; the module once.
+            sub = composite_param(n, types, mod, connects)
+            claimed |= sub.pop(None)
+            for k, v in sub.items():
+                out.setdefault(k, v)
+        elif mod not in out:
             out[mod] = sync_component_param(n.cls, mod, types)
         prop = _prop(top.cls, cname)
         if prop is None:
@@ -902,8 +944,15 @@ def composite_param(top: hier.Node, types: Optional[_Types] = None
         kid_ports[cname] = {p: [f[0] for f in v[1]]
                             for p, v in _sync_ports(kscope, n.cls).items()}
 
-    comp = DataTypeComponent(name=top.name, super=None, template_params=tps)
+    comp = DataTypeComponent(name=name or top.name, super=None, template_params=tps)
     own = _port_fields(_sync_ports(scope, top.cls))
+
+    def mine(path: str) -> bool:
+        """``path`` is one of this composite's ports or a direct child's."""
+        if not path.startswith(top.path + "."):
+            return False
+        parts = path[len(top.path) + 1:].split(".")
+        return len(parts) == 1 or (len(parts) == 2 and parts[0] in kids)
 
     # Ports: "<child>.<port>" / ".<port>" with (element) index or None.
     def port_of(path: str):
@@ -922,7 +971,10 @@ def composite_param(top: hier.Node, types: Optional[_Types] = None
                             f"a direct child")
 
     pairs: Dict[Tuple, List[Tuple]] = {}
-    for method, recv, args in top.sync_connects:
+    for k, (method, recv, args) in enumerate(connects):
+        if not (mine(recv) and args and mine(args[0])):
+            continue
+        claimed.add(k)
         if method not in ("connect", "connect_up"):
             raise SyncElabError(f"{recv}.{method}: not lowered yet")
         a, b = port_of(recv), port_of(args[0])
@@ -985,14 +1037,22 @@ def composite_param(top: hier.Node, types: Optional[_Types] = None
                                              datatype=_subst(by_name[f"{p}_{f}"].datatype,
                                                              env)))
     for cname, (kc, env) in kids.items():
-        conns = [PortConnection(port=f, signal=f) for f in ("clock", "reset")
-                 if kc.sync_processes]
+        kf = {f.name for f in kc.fields}
+        conns = [PortConnection(port=f, signal=f) for f in ("clock", "reset") if f in kf]
         conns += [PortConnection(port=f"{p}_{f}", signal=names[find((cname, p, f))])
                   for p, fs in kid_ports[cname].items() for f in fs]
         comp.module_instances.append(ModuleInstance(
             module=kc.name, name=cname, connections=conns,
             parameters={tp.name: env[tp.name] for tp in kc.template_params}))
-    out[top.name] = comp
+    out[comp.name] = comp
+    if not outer:
+        out[None] = claimed
+        return out
+    for k, (method, recv, args) in enumerate(connects):
+        if k not in claimed:
+            raise SyncElabError(f"{recv}.{method}({', '.join(map(str, args))}): joins "
+                                f"ports that are not of one composite or its direct "
+                                f"children")
     return out
 
 

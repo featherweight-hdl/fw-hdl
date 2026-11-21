@@ -188,7 +188,9 @@ module fw_sync_kernel_unit_test;
     `SVUNIT_TESTS_BEGIN
 
     // src -> a -> b -> sink, all comb valid; the comb()s are listed b, a,
-    // src (creation order), so settling takes several passes.
+    // src (creation order), so settling takes several passes. The settle
+    // follows the edge's step()s and update, so the sink sees the register
+    // src.r as that edge's step() left it.
     `SVTEST(comb_chain_settles_in_one_edge)
         fw_component top  = new("top", null);
         k_wire       b    = new("b", top);
@@ -212,11 +214,11 @@ module fw_sync_kernel_unit_test;
         `FAIL_UNLESS_EQUAL(src.o.sig.frozen, 1)
         e = k.do_edge(k.doms[0], err);
         `FAIL_UNLESS_EQUAL(e, 0)
-        `FAIL_UNLESS_EQUAL(sink.i.get_valid(), 1)
+        `FAIL_UNLESS_EQUAL(sink.i.get_valid(), 0)
         `FAIL_UNLESS_EQUAL(src.r, 0)
         e = k.do_edge(k.doms[0], err);
         `FAIL_UNLESS_EQUAL(e, 0)
-        `FAIL_UNLESS_EQUAL(sink.i.get_valid(), 0)
+        `FAIL_UNLESS_EQUAL(sink.i.get_valid(), 1)
     `SVTEST_END
 
     // src -> s1 -> s2 -> s3 -> sink, all sync. The value reaches s1 at edge
@@ -266,8 +268,9 @@ module fw_sync_kernel_unit_test;
         exp_step = "comb field \"valid\" of \"o\" written from step()";
         e = k.do_edge(k.doms[0], err);
         `FAIL_UNLESS_EQUAL(e, 0)
+        // Both errors; the comb one is last, since settle follows the step()s.
         `FAIL_UNLESS_EQUAL(fw_sig_holder::rule_errs, 2)
-        `FAIL_UNLESS_STR_EQUAL(fw_sig_holder::rule_err, exp_step)
+        `FAIL_UNLESS_STR_EQUAL(fw_sig_holder::rule_err, exp_comb)
         // comb() alone, through settle: the sync write is the error.
         fw_sig_holder::rule_errs = 0;
         e = k.settle(k.doms[0], err);
@@ -291,10 +294,12 @@ module fw_sync_kernel_unit_test;
         `FAIL_UNLESS_STR_EQUAL(err, exp)
     `SVTEST_END
 
-    // A run() resumes after the kernel's do_edge() at its edge, so it reads
-    // what that edge's step() reads, and its sync write lands at the next
-    // edge. A write from a process that ran before the kernel at an edge
-    // (here the test, right after the rising clock) lands after that edge.
+    // A run() resumes after its edge's group (step()s, update, settle), and
+    // reads the value from before the edge, k, as the step()s at it do
+    // (crossing ports, C2). Its write lands at once, so lg's step() reads it
+    // at the next edge (C3). A write from task code that ran before the
+    // kernel at an edge (here the test, right after the rising clock) is
+    // between edges: it lands at once, and that edge's step()s read it.
     `SVTEST(clocked_root_run_and_step)
         k_root r;
         int    n;
@@ -320,11 +325,10 @@ module fw_sync_kernel_unit_test;
             `FAIL_UNLESS_EQUAL(r.mix.stp[k], k)
             `FAIL_UNLESS_EQUAL(r.mix.rn[k], k)
             `FAIL_UNLESS_EQUAL(r.lg.got[k], (k == 0) ? 0 : k - 1)
-            `FAIL_UNLESS_EQUAL(r.lg2.got[k], (k == 0) ? 0 : 99 + k)
+            `FAIL_UNLESS_EQUAL(r.lg2.got[k], 100 + k)
         end
         clk_rst = 1;
         #1;
-        fw_sync_kernel::m_live = 0;
     `SVTEST_END
 
     `SVUNIT_TESTS_END

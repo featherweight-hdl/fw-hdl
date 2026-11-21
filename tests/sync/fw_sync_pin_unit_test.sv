@@ -136,7 +136,6 @@ module fw_sync_pin_unit_test;
         foreach (got[k]) `FAIL_UNLESS_EQUAL(got[k], pbyte_t'(k))
         rst = 1;
         #1;
-        fw_sync_kernel::m_live = 0;
     `SVTEST_END
 
     `SVUNIT_TESTS_END

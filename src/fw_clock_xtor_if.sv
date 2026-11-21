@@ -32,6 +32,18 @@ interface fw_clock_xtor_if(
         end
     endtask
 
+    // The root's edges, counted from time 0 (fw-hdl-spec processes.md,
+    // "Edges"): a rise to 1 from any other value, so 0 -> X -> 1 is one
+    // edge. Read by the root's edge driver (fw_edge_driver_net).
+    longint unsigned n_edges;
+
+    always @(posedge clock) if (clock === 1'b1) n_edges++;
+
+    // Returns once edge k has come.
+    task automatic wait_edges(longint unsigned k);
+        while (n_edges < k) @(n_edges);
+    endtask
+
 //    function void 
 
 endinterface

@@ -69,10 +69,11 @@ These are the choices the code makes now. Each one is up for discussion.
 7. **State comments** say what the register means, not how it is updated.
 8. **An array of ports names its elements `in[0]`, `in[1]`, ...**, after the member.
    A settle-table path that names the member (`in.ready`) covers every element.
-9. **The pin bridges declare the pin-driven fields comb** (`.COMB(1)` on
-   `fw_rv_pin_in/out`). The pins are register outputs in module code, so on the tree's
-   side they are wires. Left sync, the tree sees each value an edge late and disagrees
-   with the pins about when a beat moved (the testbench then fails with 505 errors).
+9. **The pin bridges need no declaration.** The pins are register outputs in module
+   code; a pin value lands in the tree at once and the domain settles, so the tree and
+   the pins agree about when a beat moved. (A `COMB` parameter once made the
+   pin-driven fields comb for this; it was removed with the two-phase kernel,
+   `docs/design/sync-task-domains.md` §8.8.)
 10. **State, indices and the functions that return them are declared at hardware
     width** (`bit [$clog2(N)-1:0] ptr`, `idx_t g = grant()`, `function idx_t
     grant()`; not `int`). Lowering keeps the declared width, since the module it emits
@@ -152,7 +153,6 @@ Fixes made in fw-hdl to get here (covered by `tests/sync/sp_comb`):
   attaching, and the factory calls it after `new()`. A component that implements
   `fw_combinational`/`fw_steppable` is registered for itself in `do_build()`;
   `add_comb`/`add_steppable` ignore a second registration of the same object.
-- `fw_rv_pin_in/out` take `COMB`: the fields the pins drive are comb in the tree.
 - `fw_settle_sched` resolves a table path whose port is an array member (`in.ready`)
   to that field of every element (`in[0].ready`, ...), with dependences across all of
   them (conservative).
@@ -168,8 +168,8 @@ Fixes made in fw-hdl to get here (covered by `tests/sync/sp_comb`):
    does not do. Array elements are not told apart either (`in.ready` ← `in.valid` for
    every pair). That is conservative. On a larger design it could report false cycles
    that per-field analysis would not.
-3. **Pin-driven fields still default to sync** (`COMB = 0`), as the existing tests
-   expect. Should comb be the default for pin bridges?
+3. *Closed:* pin-driven fields need no comb declaration; a pin value lands at once
+   (`docs/design/sync-task-domains.md` §8.8).
 4. **`fw_root.sv` cannot be woven.** sv-weave elaborates every top, and `fw_root`
    on its own has `Tbind = int`. The flow therefore splits fw-hdl into `fw-pkg`
    (woven) and `fw-mods` (not woven). The testbench is not woven either.

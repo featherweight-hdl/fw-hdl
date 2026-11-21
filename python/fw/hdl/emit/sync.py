@@ -50,6 +50,43 @@ def class_vars(compilation, module: str) -> List[str]:
     raise SyncElabError(f"no top module {module}")
 
 
+def _parse(files: List[str], top: str, incdirs, defines) -> Parser:
+    defs = {"FW_TRACE_OFF": "1"}
+    defs.update(defines or {})
+    rep = ErrorReporter()
+    p = Parser(FlowConfig(incdirs=list(incdirs or []), defines=defs, top_module=top), rep)
+    if not p.parse(list(files), include_root=False):
+        raise SyncElabError("parse failed: " + "; ".join(str(e) for e in rep.errors()[:5]))
+    return p
+
+
+def _param_ir(compilation, top: str, var: str) -> Dict[str, object]:
+    """The parameterized IR of class variable ``var``: ``{name: type}`` with
+    the packed structs it uses and one component per module (the class's,
+    or a composite's children's and then its own, named ``var``)."""
+    ct = find_class_var(compilation, top, var)
+    types = _Types(f"{var}_types")
+    if _sub(ct, "step") is None and _sub(ct, "comb") is None:
+        tree = hier.elaborate_tree(compilation, ct, var)
+        comps = composite_param(tree, types)
+    else:
+        comp = sync_component_param(ct, None, types)
+        comps = {comp.name: comp}
+    return {**types.structs, **comps}
+
+
+def elab_sync_param(files: List[str], top: str, *, incdirs: Optional[List[str]] = None,
+                    defines: Optional[Dict[str, str]] = None,
+                    vars: Optional[List[str]] = None) -> Dict[str, Dict[str, object]]:
+    """The parameterized Zuspec IR of each class variable of ``top`` (or only
+    ``vars``), before it is emitted: ``{var: {name: type}}`` as
+    ``emit_sync(parameterized=True)`` emits it. For IR-to-IR passes (and
+    tools that read the IR) ahead of zuspec-be-sv."""
+    p = _parse(files, top, incdirs, defines)
+    names = list(vars) if vars else class_vars(p.compilation, top)
+    return {var: _param_ir(p.compilation, top, var) for var in names}
+
+
 def emit_sync(files: List[str], top: str, *, incdirs: Optional[List[str]] = None,
               defines: Optional[Dict[str, str]] = None,
               vars: Optional[List[str]] = None,
@@ -57,28 +94,16 @@ def emit_sync(files: List[str], top: str, *, incdirs: Optional[List[str]] = None
     """Parse ``files`` and emit each class variable of ``top`` (or only
     ``vars``). Returns ``{module name: SystemVerilog text}``, with a
     ``<var>_pins`` shell where the class has pin presets."""
-    defs = {"FW_TRACE_OFF": "1"}
-    defs.update(defines or {})
-    rep = ErrorReporter()
-    p = Parser(FlowConfig(incdirs=list(incdirs or []), defines=defs, top_module=top), rep)
-    if not p.parse(list(files), include_root=False):
-        raise SyncElabError("parse failed: " + "; ".join(str(e) for e in rep.errors()[:5]))
+    p = _parse(files, top, incdirs, defines)
     names = list(vars) if vars else class_vars(p.compilation, top)
     if not names:
         raise SyncElabError(f"{top}: no class variables to emit")
     out = {}
     for var in names:
-        ct = find_class_var(p.compilation, top, var)
         if parameterized:
-            types = _Types(f"{var}_types")
-            if _sub(ct, "step") is None and _sub(ct, "comb") is None:
-                tree = hier.elaborate_tree(p.compilation, ct, var)
-                comps = composite_param(tree, types)
-            else:
-                comp = sync_component_param(ct, None, types)
-                comps = {comp.name: comp}
-            out[var] = emit_sv(ir.Context(type_m={**types.structs, **comps}))
+            out[var] = emit_sv(ir.Context(type_m=_param_ir(p.compilation, top, var)))
             continue
+        ct = find_class_var(p.compilation, top, var)
         if _sub(ct, "step") is None and _sub(ct, "comb") is None:
             # A composite: its children's modules, then the composite.
             tree = hier.elaborate_tree(p.compilation, ct, var)

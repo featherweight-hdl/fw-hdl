@@ -59,7 +59,8 @@ channels), fw-hdl-fe-sv `examples/wrap_rtl/` (gen_tb/gen_bind on std rv ports).
    parameter (use a non-struct `logic [W-1:0]` payload for that).
 3. **Bundle of channels**: one `fw_rv_if` member per channel, `fw_bundle` = initiator
    drives, `fw_mirror` = target drives. Only such bundles get generated transactors;
-   plain-signal bundles need a hand-written `` `fw_xtor_utils `` transactor.
+   plain-signal bundles need a hand-written transactor (extends `fw_xtor_initiator`/
+   `_target`/`_monitor #(B)`, registers with `` `fw_xtor_utils(C) ``).
 4. **Parameterized classes** need `this_t` + the `_param_utils` macro, and a specialization
    named in the scanned source (a typedef), or GenKit silently skips the bundle.
 5. **Timing is a channel** (`fw_timed_channel`) the user places; config is a struct on
@@ -69,5 +70,5 @@ channels), fw-hdl-fe-sv `examples/wrap_rtl/` (gen_tb/gen_bind on std rv ports).
 7. Don't name a class `checker` (SV keyword), or a channel `pins`, `s`, `p`, `t`.
 
 Check the guide's "Known limits" table before designing around `fw_opt` (optional
-fields), 4-state payloads, struct-valued parameters, `abstractor_for` in fe-sv, or
+fields), 4-state payloads, struct-valued parameters, or
 Yosys/SBY on lowered type-parameterized classes.

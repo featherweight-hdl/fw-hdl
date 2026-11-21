@@ -15,7 +15,8 @@ typedef class fw_component;
 //
 // Because src is a port, resolution is deferred: tick()/root_ticks() walk
 // `src` -> ... -> root at the moment they are called, with the divisor folded in
-// at this level. A divide-by-1 domain is a no-op pass-through (useful as a named
+// at this level. Its edges are fixed from time 0: edge j is root edge
+// j * root_ticks(1). A divide-by-1 domain is a no-op pass-through (useful as a named
 // boundary).
 class fw_clock_domain extends fw_export #(fw_clock_domain_if)
         implements fw_clock_domain_if;
@@ -31,9 +32,14 @@ class fw_clock_domain extends fw_export #(fw_clock_domain_if)
         m_div = div;
     endfunction
 
-    // Advancing this domain by n cycles advances the source by n*div cycles.
+    // To this domain's n-th edge, counted from time 0: its edges are the
+    // root's edges j * root_ticks(1) (fw_edge_driver), whoever ticks it.
+    // Below a root with no edge driver: n * div source cycles from now.
     virtual task tick(int n = 1);
-        src.get_if().tick(n * m_div);
+        longint unsigned div;
+        fw_edge_driver   d = fw_edge_driver::of(this, div);
+        if (d != null) d.tick(div, n);
+        else           src.get_if().tick(n * m_div);
     endtask
 
     // Fold this level's divisor into the count and recurse toward the root.

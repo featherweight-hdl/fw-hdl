@@ -39,6 +39,7 @@ package fw_hdl_pkg;
     `include "fw_port.svh"
     `include "fw_domain_port.svh"       // fw_clock_port
     `include "fw_reset_domain_if.svh"   // the reset kind; fw_reset_port
+    `include "fw_edge_driver.svh"       // a root's edges, groups and release (sync kernel)
     `include "fw_clock_domain.svh"
     `include "fw_clock_xtor_bridge.svh"
     `include "fw_clock_period_xtor_bridge.svh"

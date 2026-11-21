@@ -1,0 +1,28 @@
+FW-E-IN-OPEN: top.r8.pins.ready: input is not connected or tied
+FW-E-IN-OPEN: top.r16.pins.ready: input is not connected or tied
+FW-E-PROTO-XTOR: q_init: q_init: missing an endpoint of an API of q_proto
+FW-E-PROTO-XTOR: q_tgt: q_tgt: missing an endpoint of an API of q_proto
+FW-E-PROTO-XTOR: r_init: r_init: missing an endpoint of an API of fw_rv_proto#(bit[7:0])
+FW-E-PROTO-XTOR: r_init: r_init: missing an endpoint of an API of fw_rv_proto#(bit[15:0])
+elab_errors 6
+role q_init initiator
+role q_tgt target
+role q_mon monitor
+role q_tgt_unused target
+proto q_init q_proto
+proto q_tgt_unused q_proto
+proto r_init8 fw_rv_proto#(bit[7:0])
+proto r_init16 fw_rv_proto#(bit[15:0])
+r8_ne_r16 1
+r8_eq_rv8 1
+typename class xb_pkg::r_init#(bit[7:0]) extends class xb_pkg::fw_xtor_initiator#(class fw_hdl_std_pkg::fw_rv_if#(bit[7:0])) | class xb_pkg::r_init#(bit[15:0]) extends class xb_pkg::fw_xtor_initiator#(class fw_hdl_std_pkg::fw_rv_if#(bit[15:0]))
+typename_in_class class xb_pkg::r_init#(bit[7:0]) extends class xb_pkg::fw_xtor_initiator#(class fw_hdl_std_pkg::fw_rv_if#(bit[7:0])) | class xb_pkg::r_init#(bit[15:0]) extends class xb_pkg::fw_xtor_initiator#(class fw_hdl_std_pkg::fw_rv_if#(bit[15:0]))
+pins top.qi.pins:bundle top.qt.pins:mirror top.qm.pins:monitor
+sub_build 1
+pins_r16 top.r16.pins:bundle
+D FW-E-IN-OPEN top.r8.pins.ready
+D FW-E-IN-OPEN top.r16.pins.ready
+D FW-E-PROTO-XTOR q_init
+D FW-E-PROTO-XTOR q_tgt
+D FW-E-PROTO-XTOR r_init
+D FW-E-PROTO-XTOR r_init

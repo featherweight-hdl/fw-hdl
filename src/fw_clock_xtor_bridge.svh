@@ -1,6 +1,23 @@
 
 typedef class fw_component;
-typedef class fw_sync_kernel;   // sync/, later in the package
+
+// The edge driver of a root clocked from a net: the edges its interface
+// counts from time 0.
+class fw_edge_driver_net extends fw_edge_driver;
+    virtual fw_clock_xtor_if vif;
+
+    function new(virtual fw_clock_xtor_if vif);
+        this.vif = vif;
+    endfunction
+
+    virtual function longint unsigned edges();
+        return vif.n_edges;
+    endfunction
+
+    virtual task wait_edge(longint unsigned k);
+        vif.wait_edges(k);
+    endtask
+endclass
 
 // The ROOT clock domain: the base case of the domain chain.
 //
@@ -10,20 +27,32 @@ typedef class fw_sync_kernel;   // sync/, later in the package
 // resolves, so fw_root can do `root.clock.connect(<this>)` to seat the whole
 // tree's default domain. Being the root, root_ticks() is the identity: n ticks
 // of the root domain ARE n root clocks.
+//
+// tick() counts the root's edges through its edge driver (fw_edge_driver):
+// once a sync kernel runs the tree, a task resumes after its edge's update.
 class fw_clock_xtor_bridge extends fw_export #(fw_clock_domain_if)
-        implements fw_clock_domain_if;
+        implements fw_clock_domain_if, fw_edge_source;
     virtual fw_clock_xtor_if vif;
+    protected fw_edge_driver_net m_drv;
 
     function new(string name, fw_component parent, virtual fw_clock_xtor_if vif);
         super.new(name, parent, this);   // register `this` as the export's imp
         set_ambient();                   // domain plumbing, not a data binding
         this.vif = vif;
+        m_drv = new(vif);
     endfunction
 
+    // Once a sync kernel owns the root, by release count (fw_edge_driver);
+    // before, n edges from now on the interface, the form the elaborator
+    // (fe/elab) reads.
     virtual task tick(int n = 1);
-        vif.tick(n);                     // tick(0) -> #0, handled by the xtor if
-        if (n != 0) fw_sync_kernel::after_tick();   // after the sync kernel
+        if (m_drv.owned) m_drv.tick(1, n);
+        else             vif.tick(n);    // tick(0) -> #0
     endtask
+
+    virtual function fw_edge_driver edge_driver();
+        return m_drv;
+    endfunction
 
     virtual function longint root_ticks(int n = 1);
         return n;                        // I am the root domain

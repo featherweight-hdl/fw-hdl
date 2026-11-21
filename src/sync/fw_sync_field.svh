@@ -23,6 +23,12 @@ class fw_sync_field;
     bit           comb;        // 0: sync (default), 1: comb
     bit           has_force;   // a reset-force value applies
     logic [63:0]  force_val;   // the value, for reports; the holder keeps it typed
+    // The edge (of the holder's domain) that samples the last task write;
+    // 0: none yet (C5, fw_sig_holder::m_task_wr).
+    longint unsigned xing_n;
+    // The thread and time of that write: a write by it then may undo it.
+    process          xing_p;
+    realtime         xing_t;
 
     function new(string name, int width, fw_sync_dir_e dir = FW_SYNC_FWD);
         this.name  = name;

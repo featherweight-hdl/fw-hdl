@@ -1,0 +1,31 @@
+# Unbounded equivalence of two rr_merge_pipe forms with the same registers by
+# name (F6: the generated form against the answer key). Each is read and
+# flattened apart (their child modules share names), then equiv_make pairs
+# their signals by name and equiv_simple/equiv_induct prove the pairs
+# together. scripts/equiv_auto.sh writes the sv2v output read here.
+read_verilog @GOLD@
+hierarchy -top meas_top
+proc
+flatten
+opt_clean
+memory -nomap
+memory_map
+opt -fast
+rename meas_top gold
+design -stash gold
+read_verilog @GATE@
+hierarchy -top meas_top
+proc
+flatten
+opt_clean
+memory -nomap
+memory_map
+opt -fast
+rename meas_top gate
+design -copy-from gold -as gold gold
+equiv_make gold gate equiv
+hierarchy -top equiv
+async2sync
+equiv_simple -seq 5
+equiv_induct -seq 5
+equiv_status -assert

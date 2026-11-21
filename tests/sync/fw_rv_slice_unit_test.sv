@@ -130,7 +130,6 @@ module fw_rv_slice_unit_test;
             rst_bad += int'(a_ready !== 1'b0) + int'(b_valid !== 1'b0);
         end
         `FAIL_UNLESS_EQUAL(rst_bad, 0)
-        fw_sync_kernel::m_live = 0;
     `SVTEST_END
 
     `SVUNIT_TESTS_END

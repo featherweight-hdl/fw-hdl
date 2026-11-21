@@ -52,5 +52,7 @@ package fw_std_pkg;
     `include "fw_resource.svh"          // a hazard lock: reserve / block / release (PDL)
     `include "sync/fw_rv_slice.svh"     // register slice, step() only (design-sync-rtl §3.4)
     `include "sync/fw_rv_pass.svh"      // passthrough, comb() only
+    `include "sync/fw_rv_put_ep.svh"    // put() onto ready/valid, at an edge (X4)
+    `include "sync/fw_rv_get_ep.svh"    // get() from ready/valid, at an edge (X4)
 
 endpackage

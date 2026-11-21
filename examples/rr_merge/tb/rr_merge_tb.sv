@@ -40,17 +40,16 @@ module rr_merge_tb;
     logic     b_valid, b_ready;
     rr_beat_t b_data;
 
-    // The pins are register outputs of the module code below, so the fields
-    // they drive are wires on the tree's side (COMB).
-    fw_rv_pin_in  #(.T(rr_beat_t), .NAME("in0"), .COMB(1)) u_in0 (
+    // A pin value lands in the tree at once (fw_rv_pin).
+    fw_rv_pin_in  #(.T(rr_beat_t), .NAME("in0")) u_in0 (
         .valid(a_valid[0]), .data(a_data[0]), .ready(a_ready[0]));
-    fw_rv_pin_in  #(.T(rr_beat_t), .NAME("in1"), .COMB(1)) u_in1 (
+    fw_rv_pin_in  #(.T(rr_beat_t), .NAME("in1")) u_in1 (
         .valid(a_valid[1]), .data(a_data[1]), .ready(a_ready[1]));
-    fw_rv_pin_in  #(.T(rr_beat_t), .NAME("in2"), .COMB(1)) u_in2 (
+    fw_rv_pin_in  #(.T(rr_beat_t), .NAME("in2")) u_in2 (
         .valid(a_valid[2]), .data(a_data[2]), .ready(a_ready[2]));
-    fw_rv_pin_in  #(.T(rr_beat_t), .NAME("in3"), .COMB(1)) u_in3 (
+    fw_rv_pin_in  #(.T(rr_beat_t), .NAME("in3")) u_in3 (
         .valid(a_valid[3]), .data(a_data[3]), .ready(a_ready[3]));
-    fw_rv_pin_out #(.T(rr_beat_t), .NAME("out"), .COMB(1)) u_out (
+    fw_rv_pin_out #(.T(rr_beat_t), .NAME("out")) u_out (
         .valid(b_valid), .data(b_data), .ready(b_ready));
 
     // Producers. A beat offered stays until taken. `left` counts the beats
@@ -155,7 +154,6 @@ module rr_merge_tb;
 
         if (errors == 0) $display("PASS: rr_merge: %0d beats", n_got_all);
         else $fatal(1, "FAIL: rr_merge: %0d errors", errors);
-        fw_sync_kernel::m_live = 0;
         $finish;
     end
 endmodule

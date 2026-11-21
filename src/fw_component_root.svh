@@ -69,8 +69,10 @@ class fw_component_root #(type Tb=fw_component) extends Tb;
 
         // Launch every runnable in the tree -- including the root's own run() if
         // the root component is itself a runnable (fork happens inside do_run).
-        // With the sync kernel active, it calls the step()s (after commit and
-        // settle), so do_run() forks none.
+        // With the sync kernel active, it calls the step()s (each edge's
+        // group: step()s, update, settle), so do_run() forks none. The run()s
+        // are forked first but start after launch(), so they tick an owned
+        // root from their first edge.
         fw_component::m_kernel_steps = m_kernel.active;
         do_run();
         fw_component::m_kernel_steps = 0;

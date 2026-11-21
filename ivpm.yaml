@@ -9,8 +9,6 @@ package:
   - name: use
     deps: []
   - name: default
-    uses: use
-
     uses: dev
 
   - name: dev

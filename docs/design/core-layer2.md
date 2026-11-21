@@ -271,6 +271,15 @@ whose signals it reads (§6).
 
 ### 5.2 Visibility of `run()`'s writes (R2.4)
 
+*Superseded (2026-11-21) by [`sync-task-domains.md`](sync-task-domains.md)
+and the spec, `fw-hdl-spec/semantics/processes.md` ("The edge",
+"Crossings"):* an edge is evaluate, update, settle, then release, so
+`run()` resumes after the update. A signal `run()` touches is a crossing
+port: a read at edge *k* returns the value from before *k* (C2), and a write
+takes effect at once, so comb logic settles on it and `step()` reads it
+from *k*+1 (C3). The rv timing below is unchanged; the original text
+follows.
+
 **Recommendation.** `run()` writes are register writes, exactly like
 `step()`'s:
 - `run()` resumes at an edge *after* that edge's commit and settle, and
@@ -289,6 +298,13 @@ For the rv transactor (prep §6, decision 8) this gives:
 the call is made; nothing is buffered and no cycle is added.
 
 ### 5.3 `run()` with `step()` in one component
+
+*Amended (2026-11-21), see the spec's "Crossings":* a signal written by a
+`step` block and the task code of the same component is no longer
+`FW-E-WRITE-MULTI`: the block's write is the default and a task write at
+the same edge overrides it (C5). With release after the update, shared
+component state is ordered by the edge, not by process order. The
+original text follows.
 
 Allowed (fw-proto-axi-new §3.5's case). Both write registers; a signal
 written by both is `FW-E-WRITE-MULTI`. Their

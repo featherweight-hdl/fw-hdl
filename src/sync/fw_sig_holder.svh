@@ -5,6 +5,18 @@
 // field holds like a register). A comb field keeps one value, written and
 // read at once. Subclasses hold the typed values; this base keeps the field
 // table and the reset domain that reset-force reads.
+//
+// Task code (phase RUN) touches a field as a crossing port (fw-hdl-spec
+// semantics/processes.md, "Crossings"; sync-task-domains.md §6.6). At an
+// edge of the holder's domain (m_at_edge), a read returns the value from
+// before the edge (`pre`, saved by commit()); between edges, `cur`. A write
+// takes effect at once, in `cur` and `nxt`, and the domain settles: at an
+// edge that is after the update, so it overrides a step()'s write there
+// (the default) and the step()s read it from the next edge. A second task
+// write sampled by the same edge is FW-E-XING-DRIVE-TWICE, and is ignored,
+// unless the same thread makes it in the same time step and it restores the
+// value from before the first: then it undoes that write (the call's writes
+// settle, as comb logic would, to no change).
 typedef class fw_sync_kernel;
 typedef class fw_sync_dom;
 virtual class fw_sig_holder;
@@ -12,8 +24,6 @@ virtual class fw_sig_holder;
     fw_sync_field      fields[$];
     fw_reset_domain_if rst;    // null: never in reset
     bit                frozen; // set by freeze(); set_comb is then fatal
-    realtime           edge_t = -1; // time of the last commit()
-    realtime           wr_t = -1;   // time of an early run() write, below
     fw_sync_kernel     kernel;      // set by the kernel's elaborate()
     fw_sync_dom        dom;         // ...with the domain this holder is in
 
@@ -156,15 +166,47 @@ virtual class fw_sig_holder;
 `endif
         if (f.comb && changed) comb_changes++;
         gen++;
-        // A run-phase sync write at a time whose edge has not been committed
-        // yet (a process that woke on the edge before the kernel) belongs
-        // after that edge, like a nonblocking assignment: keep the next
-        // values as they were, for commit() at this time.
-        if (phase == FW_SYNC_PH_RUN && !f.comb && edge_t != $realtime
-                && wr_t != $realtime) begin
-            wr_t = $realtime;
-            m_keep();
+    endfunction
+
+    // Is task code at an edge of this holder's domain: the domain ran an
+    // edge in this time step? (Task code resumes after the edge's group.)
+    function bit m_at_edge();
+        return phase == FW_SYNC_PH_RUN && dom != null && dom.edge_n != 0
+            && dom.edge_t == $realtime;
+    endfunction
+
+    // A task write of field f (phase RUN), before m_wr: counts it against
+    // the edge that samples it, the domain's next. Returns 1 if it is the
+    // second for that edge (C5): an error, and the caller ignores it. One
+    // by the thread of the last, in its time step, that restores the value
+    // from before it (restores) undoes it instead. first: this is the first
+    // for the edge, so the caller records the value it replaces.
+    protected function bit m_task_wr(fw_sync_field f, bit restores, output bit first);
+        longint unsigned e;
+        process          p = process::self();
+        first = 0;
+        if (phase != FW_SYNC_PH_RUN || dom == null) return 0;
+        e = dom.edge_n + 1;
+        if (f.xing_n == e && restores && f.xing_p == p && f.xing_t == $realtime) begin
+            f.xing_n = 0;   // undone: no task write for the edge
+            return 0;
         end
+        if (f.xing_n == e) begin
+            m_rule($sformatf("FW-E-XING-DRIVE-TWICE: field \"%s\" of \"%s\" written twice by task code for one edge",
+                             f.name, name));
+            return 1;
+        end
+        f.xing_n = e;
+        f.xing_p = p;
+        f.xing_t = $realtime;
+        first    = 1;
+        return 0;
+    endfunction
+
+    // After a task write that changed a value: the domain's comb logic
+    // settles on it now.
+    protected function void m_task_settle();
+        if (kernel != null) kernel.settle_now(this);
     endfunction
 
     static function void m_rule(string msg);
@@ -173,15 +215,13 @@ virtual class fw_sig_holder;
         if (fatal_on_rule) $fatal(1, "fw-hdl: %s", msg);
     endfunction
 
-    // At the edge: make the sync writes of the last step visible (those
-    // kept by m_keep() if an early run() write came at this time).
+    // The update at the edge: make the sync writes of the edge's step()s
+    // visible, keeping the values from before the edge for task reads.
     function void commit();
-        m_commit(wr_t == $realtime);
-        edge_t = $realtime;
+        m_commit();
     endfunction
 
-    // Copy each sync field's next value (or kept value, if kept) to current.
-    pure virtual protected function void m_commit(bit kept);
-    // Keep each sync field's next value aside, for m_commit(1).
-    pure virtual protected function void m_keep();
+    // Save each field's current value as `pre`, then copy each sync field's
+    // next value to current.
+    pure virtual protected function void m_commit();
 endclass
