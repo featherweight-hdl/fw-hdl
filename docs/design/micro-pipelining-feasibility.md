@@ -34,14 +34,14 @@ Phase 1 doesn't ship a feature. It gives users and maintainers:
 |---|---|---|
 | Plan (this doc) | approved and carried out, 2026-11-20 | |
 | F0 Baseline | **done** 2026-11-20 | `rr_merge`: sim, ref-sim, gen-sim pass; generated RTL byte-identical; 25/25 `equiv` proven, 3/3 BMC; 181/207 cells, 37 flops as in LOWERING-RESULTS.md; unit tests 328 pass, 2 skip |
-| F1 Vehicle: `examples/rr_merge_pipe` | **done (RTL); class sim blocked by G4** | v0 lowers and passes the bench. The classes weave and elaborate but fail on G4 (§0.1) |
+| F1 Vehicle: `examples/rr_merge_pipe` | **done** | v0 lowers and passes the bench. The classes pass it too since G4 closed (§0.1; `dfm run sim`, 2026-11-21) |
 | F2 Latency-insensitive bench | **done** | `tb/pipe_bench.sv`, `pipe_mutant.sv`; 4/4 mutants caught; per-source streams independent of DUT timing |
 | F3 Answer key: hand-pipelined R1 variants | **done** | 8 variants lower unchanged; 36 configurations / 864 runs pass (`rundir/rtl/matrix.txt`). **A1: go** |
 | F4 Measurements | **done** | `scripts/measure.sh`; operator cuts barely help, retiming does. **A2: go, by registers plus retiming. A8: answered** |
 | F5 IR spikes: roles, recognizer, delay | **done** | roles as pragmas (A3 go); `spikes/dataflow.py` (A4 go); delay routes i and ii (A5: estimate yes, cut choice no) |
 | F6 Thin automated slice (map, stall) | **done** | `spikes/pipeline.py`, `scripts/gen_auto.py`; auto1 ≡ stall1, unbounded, W = 8/16/32. **A6: go** |
 | F7 Checks: datapath and controller | **done** | `scripts/formal.sh`: 12/12 as expected (K = 1..3, with mutants). **A7: go** |
-| F8 Assessment and plan revision | **done, awaiting review** | `examples/rr_merge_pipe/RESULTS.md`; `process-synthesis.md` §0, §5.3, §5.5, §5.6, §6.1, §14, §15, §17 revised. **Next: G4 first** (`sync-task-domains.md`, decided 2026-11-21), then D1 |
+| F8 Assessment and plan revision | **done, awaiting review** | `examples/rr_merge_pipe/RESULTS.md`; `process-synthesis.md` §0, §5.3, §5.5, §5.6, §6.1, §14, §15, §17 revised. G4 closed by `sync-task-domains.md` (X2, §8.3; 2026-11-21). **Next: D1** |
 
 ### 0.1 Gaps found (details in `examples/rr_merge_pipe/RESULTS.md`)
 
@@ -62,8 +62,11 @@ Phase 1 doesn't ship a feature. It gives users and maintainers:
   one edge late (latency 2, beats taken twice). It shows up whenever comb
   logic follows a register at an output pin. That's common in pipelined
   designs, so this blocks class-model runs of every variant. Suggested fix:
-  a look-ahead settle for pin-bridge comb values. Not fixed: needs a
-  decision (kernel change).
+  a look-ahead settle for pin-bridge comb values. **Closed 2026-11-21** by
+  the two-phase edge of `sync-task-domains.md` (X2, §8.3): every `step()`
+  is evaluated and then committed, and comb settles after the commit, so a
+  comb pin field reads the new register value at the same edge. The
+  vehicle's class sim passes (`examples/rr_merge_pipe`, `dfm run sim`).
 - **G5 sv-weave identifies specializations by spelling.** It names them by
   their printed spelling (`rr_arbiter#(rr_merge::T,4)`), so specializations
   from different packages collapse into one (`sv_weave/frontend/specialize.py:37-39`,

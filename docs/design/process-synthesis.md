@@ -272,6 +272,29 @@ parts a designer would use by hand, and the fast model (§11) can run them like
 any other sync block. The same holds for region controllers (§5.5) and
 ordering elements (§6.2).
 
+### 4.5 The simulation side: crossing endpoints
+
+A connection's realization is sync (§4.3). When one side of it is task code
+(an R2 process run as a class, a sequence, a test), that side reaches the
+connection through a **crossing endpoint**: a sync component whose
+`step()` gives the default (drop `valid` or `ready` after a handshake) and
+whose blocking method (`put()`, `get()`) drives the field for the next edge
+and returns at the handshake edge. The rules (C1–C8) and the edge model are
+in [`sync-task-domains.md`](sync-task-domains.md) §3.2 and §6.5; which
+signals task code may touch (its own ports and its direct children's) is
+§6.6 there, checked statically as `FW-E-RUN-SYNC-ACCESS`.
+
+The library has them for ready/valid: `fw_rv_put_ep`/`fw_rv_get_ep` in
+`src/std/sync/`, and `fw_rv_initiator`/`fw_rv_get_ep` in the spec std
+(fw-hdl-rt-sv). They are simulation-only: task code is never lowered
+(zuspec-be-sv rejects a `TASK` block). So the endpoint is how an R2 call
+meets an R1 connection in simulation. Where this design lowers the R2 side
+itself, the call becomes logic on the connection and no endpoint is
+involved.
+`examples/wb_initiator` is the worked case: a sync Wishbone core that
+lowers to RTL equivalent to fw-proto-wb's, with `access()` as `put` then
+`get` on the two endpoints.
+
 ### 4.4 Calls in flight ("outstanding")
 
 | What | Owner | Where it lives |
@@ -804,8 +827,9 @@ From a survey of the repo (2026-11-20):
   IR from the kit work, but not in sync IR. D0 spikes it as field pragmas
   (`channel`, `channel_role`, `channel_side`), set in `sync_param.py`.
 - **Examples**: `examples/rr_merge` (sync ready/valid, with `LOWERING.md`;
-  `rr_fifo` has a comb `out.ready → in.ready` path); `examples/xls/*` (XLS
-  path); picorv32 retiming is in the fw-picorv32 packet, not here.
+  `rr_fifo` has a comb `out.ready → in.ready` path); `examples/wb_initiator`
+  (a sync core with task code reaching it through crossing endpoints, §4.5);
+  `examples/xls/*` (XLS path); picorv32 retiming is in the fw-picorv32 packet, not here.
 
 Gaps this design must close:
 
@@ -827,7 +851,8 @@ Found by D0 (`examples/rr_merge_pipe/RESULTS.md`; G-numbers from
 8. **G4, the class model is one edge late.** Comb logic computed from a
    register and driven to a pin reaches the pin one edge late, because
    `fw_rv_pin` corrects only for sync fields read directly. Every pipelined
-   design run as classes hits this. Fix before D2.
+   design run as classes hits this. Fix before D2. **Closed 2026-11-21**
+   (`sync-task-domains.md` X2, §8.3: the two-phase edge).
 9. **G3, no arrays of child components** in the parameterized lowering.
 10. **G5, sv-weave identifies specializations by spelling**, so
     specializations of one class from different packages collapse into one.

@@ -36,7 +36,7 @@ micro-pipelining D1 waits for it. Pick up from **§0 Status**.
 
 | Step | Status | Notes |
 |---|---|---|
-| Plan (this doc) | **draft**, 2026-11-21 | Q1, Q3, Q4, Q7, Q8 decided (Q3 revised by Q8); Q2, Q5, Q6 open (§9); clock design in §6.5; derived endpoints in §6.6 |
+| Plan (this doc) | **X0–X7 done**, 2026-11-21 | Q1, Q3, Q4, Q7, Q8 decided (Q3 revised by Q8); Q2, Q5, Q6 open (§9); clock design in §6.5; derived endpoints in §6.6 |
 | X0 Probes | **done** 2026-11-21 | findings in §8.1; probes in `docs/design/probes/sync-domains-x0/`. `rr_merge_pipe`'s class sim passes, cycle-identical to its RTL |
 | X1 Semantics written down | **done** 2026-11-21 | spec, conformance and IR (§8.2) |
 | X2 Kernel: two-phase edge | **done** 2026-11-21 | `src/` §8.3, rt-sv §8.4. Root suite: 865 passed, 3 skipped, 1 xfailed; the root flow's 35 SV sim tasks pass (`rundir/log/x2-*`) |
@@ -44,8 +44,8 @@ micro-pipelining D1 waits for it. Pick up from **§0 Status**.
 | X3 Crossing ports in the kernel | **done** 2026-11-21 | `src/` and rt-sv §8.5. Root suite 866 passed, 3 skipped, 1 xfailed; 35 SV sim tasks pass (`rundir/log/x3-*`); rt-sv conformance 103/0/13. Follow-up §8.6 (std rv transactors; C5 undo rule): rt-sv pytest 25 passed, root suite and SV tasks unchanged |
 | X4 Generic ready/valid crossings (put/get) | **done** 2026-11-21 | re-scoped under §6.6; results §8.7. Root suite 867 passed, 3 skipped, 1 xfailed; 35 SV sim tasks rc=0; rt-sv pytest 26 passed (`rundir/log/x4-*`) |
 | X5 Pin bridges | **done** 2026-11-21 | inputs to `cur`, outputs `<=` in both runtimes (§8.3, §8.4); `comb_pins` removed (§8.8; user chose A). Root suite 867 passed, 3 skipped, 1 xfailed; 35 SV sim tasks rc=0; rt-sv pytest 26 passed (`rundir/log/x5-*`) |
-| X6 Enforcement and migration | **in progress** 2026-11-21 | §8.9: task blocks, `check_xing` in fe-sv, be-sv rejects task blocks; survey: nothing to migrate. Package suites running |
-| X7 Examples, WB walkthrough, docs | not started | `rr_merge_pipe`'s class sim already passes (G4 closed, §8.3); left: the WB initiator, docs |
+| X6 Enforcement and migration | **done** 2026-11-21 | §8.9: task blocks, `check_xing` in fe-sv, be-sv rejects task blocks; survey: nothing to migrate. zuspec-fe-sv 161 passed; fw-hdl-fe-sv 436 passed, 6 skipped (conformance 110/6); zuspec-be-sv 255 passed; zuspec-synth xing and domain tests 39 passed (its full suite has 55 failed, 96 errors in files that don't use process blocks: missing modules, SV sizing, docs). Root suite 867 passed, 3 skipped, 1 xfailed; 35 SV sim tasks rc=0; rt-sv pytest 26 passed (`rundir/log/x6-*`). The package changes are uncommitted |
+| X7 Examples, WB walkthrough, docs | **done** 2026-11-21 | §8.10: `examples/wb_initiator` (sync core lowered and proven equivalent to fw-proto-wb's, unbounded; §4's table reproduced in a test, back to back); G4 closed in the docs; `process-synthesis.md` §4.5; override contract in the spec. Root suite 869 passed, 3 skipped, 1 xfailed (+2: `test_wb_initiator.py`); 35 SV sim tasks rc=0; rt-sv pytest 26 passed; `rr_merge_pipe` `dfm run sim` PASS (`rundir/log/x7-*`). Uncommitted, as is the fw-hdl-spec edit |
 
 Nothing is committed by these steps. The user commits.
 
@@ -126,7 +126,9 @@ implementation must, at each edge of its domain:
 
 and settle its comb outputs when a comb input changes between edges. A
 compiled model, or a Verilated module of the generated RTL, does exactly
-this.
+this. *Placed (X7):* fw-hdl-spec `semantics/processes.md`, "Replacing a
+sync subtree", next to the edge it refers to; the factory-override design,
+when it is written, cites it.
 
 ## 3. The crossing
 
@@ -237,10 +239,13 @@ fwvip-wb's initiator is a sync core (`wb_initiator_xtor_core`, in
 fw-proto-wb) with two ready/valid channels to the task side:
 
 - a **request** channel: the task side drives `req_valid`/`req_dat`, and the
-  core drives `req_ready = (state == 0)`;
+  core drives `req_ready = !waiting`;
 - a **response** channel: the core drives
-  `rsp_valid = (ack || err) && state == 1`, and the task side drives
-  `rsp_ready`.
+  `rsp_valid = waiting && (ack || err || rty)`, and the task side drives
+  `rsp_ready`. The phase (`stb`) is held until the response is taken.
+
+(This is fw-proto-wb's two-state core as of 2026-11-21; `waiting` was
+`state == 1` in the earlier FSM. The timing below is the same for both.)
 
 `access()` is `request()` then `response()`. The SV task interface
 (`wb_initiator_xtor_if.sv`) does that with `<=` drives at `posedge`.
@@ -251,17 +256,18 @@ with a target that acks in the first bus cycle:
 
 | Edge | Sampled before the edge (C2) | Task side, at the edge | Core `step()` at the edge | Visible after the edge |
 |---|---|---|---|---|
-| k0 | — | `Ereq.put(A)`: drive `req_valid=1`, `req_dat=A` (C3) | state 0 | `req_valid=1`, `req_ready=1` |
-| k1 | `req_valid && req_ready` | `put` returns (C7); `Ereq` default drops `req_valid`. `Ersp.get()`: drive `rsp_ready=1` | latch A, state 1 | `stb=cyc=1`; ack, so `rsp_valid=1` |
-| k2 | `rsp_valid && rsp_ready` | `get` returns A's response; `Ersp` default drops `rsp_ready`. `access()` returns; the sequence's next item is ready (zero time, C7); `Ereq.put(B)`: drive `req_valid=1` | term, so state 0 | `req_valid=1`, `req_ready=1` |
-| k3 | `req_valid && req_ready` | `put(B)` returns; `Ersp.get()`: `rsp_ready=1` | latch B, state 1 | … |
+| k0 | — | `Ereq.put(A)`: drive `req_valid=1`, `req_dat=A` (C3) | idle | `req_valid=1`, `req_ready=1` |
+| k1 | `req_valid && req_ready` | `put` returns (C7); `Ereq` default drops `req_valid`. `Ersp.get()`: drive `rsp_ready=1` | launch A: `waiting` | `stb=cyc=1`; ack, so `rsp_valid=1` |
+| k2 | `rsp_valid && rsp_ready` | `get` returns A's response; `Ersp` default drops `rsp_ready`. `access()` returns; the sequence's next item is ready (zero time, C7); `Ereq.put(B)`: drive `req_valid=1` | response taken: `waiting` drops | `req_valid=1`, `req_ready=1` |
+| k3 | `req_valid && req_ready` | `put(B)` returns; `Ersp.get()`: `rsp_ready=1` | launch B | … |
 
 At k2 the task reads the response channel and drives the request channel
 at the same edge (C6). Each output is driven explicitly at most once per
 edge (C5): `rsp_ready`'s drop is a default, and `req_valid=1` is the one
 explicit drive of `req_valid`. B is accepted at k3, one edge after A's
 ack. That is the same timing as the SV interface, and the only gap is
-the core's own state-0 cycle, which frames WB phases.
+the core's own idle cycle, which frames WB phases. `examples/wb_initiator`
+reproduces this table in a test (§8.10).
 
 The same table holds if the task happens to run before the kernel at k1 or
 k2 (C4). If fetching B took time, B would re-align to a later edge (C1), and
@@ -1257,6 +1263,60 @@ Its findings:
   this survey, not by a tool.
 - A task write to a child input that is also on a net isn't counted as a
   second driver (`FW-E-NET-MULTI`). No code does it; the spec doesn't say.
+
+### 8.10 X7 results: the WB initiator, docs (2026-11-21)
+
+**The example, `examples/wb_initiator`** (README there):
+- `wb_init_core`: the sync core, `step()`/`comb()` only. The bus is a new
+  sync struct port, `wb_sig` with ends `wb_sp_out`/`wb_sp_in`, written like
+  `fw_rv_sig`; the lowering took it with no change (fields from the
+  holder's `new()`, widths from `<f>_cur`).
+- `wb_init`: the core, `fw_rv_put_ep #(wb_req_t)` and
+  `fw_rv_get_ep #(wb_rsp_t)`, and `access()` = `put` then `get`.
+- **Lowered and proven:** `scripts/gen_rtl.py` lowers the core to
+  `rtl/gen/wb_init_core.sv` (one module, 109 lines). `scripts/equiv.sh`
+  proves it equivalent to fw-proto-wb's `wb_initiator_xtor_core`
+  (vendored in `ref/`), unbounded: yosys `equiv_induct`, 219 cells, all
+  proven. A mutant of the generated core (`cyc` not held) is not proven.
+- **The §4 table, in a test** (`tb/wb_init_tb.sv`): 12 accesses back to
+  back, a write and a read back per address, against a target that acks in
+  the first bus cycle. Access *i* is called at edge 2*i* and returns at
+  2*i* + 2. At each edge the log matches the table: `req.valid` at odd
+  edges, `rsp.ready`, `stb` and `ack` at even ones, `req.ready` =
+  `!stb`. `+rand` (0–3 wait states, 0–3 idle edges) checks the data and one
+  bus phase per access. The `+mut_ws` mutant (one wait state) fails the
+  table check.
+- **Root suite:** `tests/python/system/test_wb_initiator.py`, two tests:
+  the sim (all three runs), and lowering plus equivalence, which also fails
+  if the checked-in RTL is stale.
+
+**What the example found:**
+- The reference has moved since §4 was written: fw-proto-wb's working tree
+  has a two-state core (`waiting`; the phase held until the response is
+  taken). The timing at the endpoints is the same. §4 now describes the
+  current core, and `ref/` is a copy of that working tree, not of a commit.
+- The bench builds the tree in `new()` and never runs the connect phase,
+  whose `do_connect()` would give `wb_init`'s children its clock. So it
+  connects each one, as `tests/xing/rv_ep_tb.sv` does. A tree built under
+  `fw_root` inherits them.
+- Without the `fw_sp_comb` weaver, comb fields are declared by
+  `set_comb()` in `new()`. That works because a merged net keeps every
+  end's comb flags (`fw_sync_net::merge`).
+
+**Docs:**
+- `micro-pipelining-feasibility.md`: G4 closed (F1, F8 and the G4 entry).
+  `examples/rr_merge_pipe`: README and RESULTS.md say the class sim
+  passes; `dfm run sim` gives `PASS: rr_merge_pipe (classes) sink=1: 1159
+  beats`.
+- `process-synthesis.md`: new §4.5, crossing endpoints as the simulation
+  side of a connection; §14 lists the example and marks G4 closed.
+- The override contract (§2.3) is in fw-hdl-spec `semantics/processes.md`,
+  "Replacing a sync subtree". There is no factory-override design doc yet.
+
+**Not done:** fw-proto-wb itself is unchanged; the README's note proposes
+generating its core from `wb_init_core`. There is no SBY proof of the
+endpoints (§5.1 mentions one); C1–C8 are checked by the simulation tests
+of X3–X5 and this one.
 
 ## 9. Open questions
 
