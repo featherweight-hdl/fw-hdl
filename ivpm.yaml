@@ -73,6 +73,10 @@ package:
       url: https://github.com/dv-flow/dv-flow-libproject.git
     - name: pytest-dfm
       url: https://github.com/dv-flow/pytest-dfm.git
+    # cocotb bridges of generated transactors (docs/design/xtor-shell-plan.md
+    # T7); cocotb 2.x needs Verilator >= 5.036.
+    - name: cocotb
+      src: pypi
 
     - name: zuspec-ir-core
       url: https://github.com/zuspec/zuspec-ir-core.git

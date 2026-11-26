@@ -46,7 +46,7 @@ From this directory, with Python as
 | `sh scripts/measure.sh` | cells, flops and logic levels per variant × W (`rundir/measure/measure.txt`) |
 | `sh scripts/equiv_auto.sh [gold gate]` | the generated `auto1` ≡ the hand-written `stall1`, unbounded |
 | `sh scripts/formal.sh [K ...]` | SBY proofs and their mutants |
-| `dfm run sim` | the classes on the bench: **fails** on a kernel timing gap (RESULTS.md, "The class model") |
+| `dfm run sim` | the classes on the bench: passes since the two-phase edge closed G4 ([`sync-task-domains.md`](../../docs/design/sync-task-domains.md) §8.3; RESULTS.md, "The class model") |
 
 Run each `sh` script as `direnv exec . sh scripts/<name>.sh`.
 

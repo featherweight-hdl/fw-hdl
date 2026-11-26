@@ -293,6 +293,13 @@ interleaving must say so, as an ordering rule (§6.6).
 
 ## The class model (F1): blocked by G4
 
+**Closed (2026-11-21).** The two-phase edge of
+[`sync-task-domains.md`](../../docs/design/sync-task-domains.md) (X2, §8.3)
+evaluates every `step()` and then commits, and settles comb after the
+commit, so `mout`'s comb output is current at the pins. `dfm run sim`
+passes: `PASS: rr_merge_pipe (classes) sink=1: 1159 beats`. The finding
+below is kept as it was found.
+
 The classes weave and elaborate, but they fail the bench: lone-beat latency
 is 2 against the RTL's 1, and beats are taken twice.
 

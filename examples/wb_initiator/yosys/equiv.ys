@@ -1,0 +1,27 @@
+# Unbounded equivalence of the lowered wb_init_core and fw-proto-wb's
+# wb_initiator_xtor_core (ref/), each in a wrapper `meas_top` with the same
+# flat ports and the core as instance `dut`. Each is read and flattened apart,
+# then equiv_make pairs their signals by name (the ports, and the state
+# dut.waiting and dut.hold; the bus registers are the wrapper's outputs) and
+# equiv_simple/equiv_induct prove the pairs together. scripts/equiv.sh fills in
+# @OUT@ and writes the sv2v output read here.
+read_verilog @OUT@/ref.v
+hierarchy -top meas_top
+proc
+flatten
+opt_clean
+rename meas_top gold
+design -stash gold
+read_verilog @OUT@/gen.v
+hierarchy -top meas_top
+proc
+flatten
+opt_clean
+rename meas_top gate
+design -copy-from gold -as gold gold
+equiv_make gold gate equiv
+hierarchy -top equiv
+async2sync
+equiv_simple -seq 5
+equiv_induct -seq 5
+equiv_status -assert

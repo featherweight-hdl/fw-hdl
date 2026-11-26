@@ -1,0 +1,33 @@
+# yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+# The Wishbone protocol package and its bench, through fw-hdl-fe-sv.
+#
+#   dfm run scan    the protocol table: wb_proto, wb_bundle, the transactors
+#
+# The package is parameterized (AW, DW), and a scan sees a generic class only
+# through a specialization, so the scan takes the bench too, which names
+# #(32, 32).
+#
+# fe-sv's Elaborate task also maps to IR for emission, which rejects task
+# code (FW-E-EMIT-RUN), so the bench is elaborated by scripts/elab_check.py.
+# scripts/run_sim.sh runs the bench under Verilator on fw-hdl-rt-sv.
+package:
+  name: wb_xtor
+
+  tasks:
+  - name: src
+    uses: std.FileSet
+    with:
+      type: fwHdlSource
+      base: src
+      include: [wb_api_pkg.sv, wb_pkg.sv]
+
+  - name: tb
+    uses: std.FileSet
+    with:
+      type: fwHdlSource
+      base: tb
+      include: [wb_xtor_tb.sv]
+
+  - root: scan
+    uses: fw.hdl.fe.sv.Scan
+    needs: [src, tb]
