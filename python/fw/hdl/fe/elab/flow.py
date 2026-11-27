@@ -45,7 +45,8 @@ class ElabStages:
 
 def elab_design(files: List[str], top: str, *, incdirs: Optional[List[str]] = None,
                 defines: Optional[Dict[str, str]] = None,
-                module: Optional[str] = None, keep_loops: bool = False) -> ElabStages:
+                module: Optional[str] = None, keep_loops: bool = False,
+                arrays: Optional[List[str]] = None, share_calls: bool = False) -> ElabStages:
     """parse -> elaborate -> translate -> structure (the stages before lower).
     ``keep_loops``: keep static non-blocking loops as loops (``P.Loop.trip``)
     for an engine; ``zuspec.synth.proc.unroll.unroll_loops`` unrolls them."""
@@ -58,7 +59,8 @@ def elab_design(files: List[str], top: str, *, incdirs: Optional[List[str]] = No
         msgs = "\n".join(str(x) for x in rep.errors()[:20])
         raise ElabError(f"parse failed:\n{msgs}")
     elab = elaborate(p.compilation, top)
-    d, notes = translate(elab, keep_loops=keep_loops)
+    d, notes = translate(elab, keep_loops=keep_loops, arrays=set(arrays or ()),
+                         share_calls=share_calls)
     build_structure(elab, d)
     if module:
         d.name = module
@@ -84,6 +86,27 @@ def lower_design(files: List[str], top: str, *, incdirs: Optional[List[str]] = N
     ``keep_loops`` (default on): translate keeps static non-blocking loops as
     loops, for the engine; off, translate unrolls them itself.
 
+    ``share_calls`` (in ``options``, default off): case arms that each assign
+    one call of the same function call it once, the arguments selected by
+    the arm (translate); a schedule's edges then fall in one copy.
+
+    ``share_shifts`` (in ``options``, default off): the exclusive shifts of
+    one width in a selection (an if tree that only assigns) become one
+    arithmetic right shift a bit wider, operand and amount selected
+    (``zuspec.synth.proc.shiftshare``), before the schedule.
+
+    ``thread_tests`` (in ``options``, default off): a test right after a
+    branch that decides it on some of its paths is moved into the branch's
+    arms (jump threading, ``zuspec.synth.proc.thread``), before the
+    schedule; each path's code then reads its own values.
+
+    ``share_tails`` (in ``options``, default off; ``emit=structured``):
+    each clocked process's states written as one region, so code several
+    states reach is written once (``zuspec.synth.proc.structured``).
+
+    ``mem`` (in ``options``): vars to bind to a memory, by netlist name,
+    ``+``-separated (``LowerOptions.memories``).
+
     ``emit_sched``: also write the schedule as source (``LowerResult.sched``,
     see :func:`emit_sched`).
 
@@ -99,8 +122,22 @@ def lower_design(files: List[str], top: str, *, incdirs: Optional[List[str]] = N
 
     options = dict(options or {})
     keep = bool(options.pop("keep_loops", True))
+    share = bool(options.pop("share_calls", False))
+    shifts = bool(int(options.pop("share_shifts", 0) or 0))
+    tails = bool(int(options.pop("share_tails", 0) or 0))
+    thread = bool(int(options.pop("thread_tests", 0) or 0))
+    mems = [m for m in str(options.pop("mem", "") or "").split("+") if m]
+    if mems:
+        options["memories"] = tuple(mems)
     st = elab_design(files, top, incdirs=incdirs, defines=defines, module=module,
-                     keep_loops=keep)
+                     keep_loops=keep, arrays=mems, share_calls=share)
+    shift_notes: List[str] = []
+    if shifts:
+        from zuspec.synth.proc.shiftshare import share_shifts
+        share_shifts(st.design, shift_notes)
+    if thread:
+        from zuspec.synth.proc.thread import thread_tests
+        thread_tests(st.design, shift_notes)
     engine, eopts = sched.parse_spec(schedule or "as-written")
     if engine == "delay":
         # the delay engine takes the timing analysis's model and period
@@ -115,7 +152,8 @@ def lower_design(files: List[str], top: str, *, incdirs: Optional[List[str]] = N
         # the budget loop lowers as this flow does
         eopts["lower"] = LowerOptions(encoding=encoding, **{
             k: v for k, v in options.items() if k != "emit"})
-    elab, d, notes = st.elab, sched.schedule(st.design, engine, eopts or None), st.notes
+    elab, d = st.elab, sched.schedule(st.design, engine, eopts or None)
+    notes = list(st.notes) + shift_notes
     if engine == "delay":
         from zuspec.synth.proc.sched.delay import DelayEngine
         notes = list(notes) + (DelayEngine.last.lines() if DelayEngine.last else [])
@@ -130,7 +168,7 @@ def lower_design(files: List[str], top: str, *, incdirs: Optional[List[str]] = N
     if timing and timing.get("model"):
         trep = _timing(nl, timing)
         report += trep.lines()
-    text = emit_structured(nl) if style == "structured" else emit_verilog(nl)
+    text = emit_structured(nl, share_tails=tails) if style == "structured" else emit_verilog(nl)
     res = LowerResult(verilog=text, module=d.name, report=report,
                       leaf_modules=sorted(st.design.leaf_defs), timing=trep)
     if emit_sched:

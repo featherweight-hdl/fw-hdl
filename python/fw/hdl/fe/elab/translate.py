@@ -106,11 +106,19 @@ class Act:
 
 
 class Translator:
-    def __init__(self, elab: ElabResult, keep_loops: bool = False):
+    def __init__(self, elab: ElabResult, keep_loops: bool = False,
+                 arrays: Optional[Set[str]] = None, share_calls: bool = False):
         self.elab = elab
+        # case arms that assign one call of the same function share it
+        # (_call_groups); _call_args: the selected arguments of such a call
+        self.share_calls = share_calls
+        self._call_args: Dict[Any, List[Optional[T.Term]]] = {}
         # keep static non-blocking `for` loops as loops (P.Loop.trip) instead of
         # unrolling them (docs/methodology/timing.md, loops and goals)
         self.keep_loops = keep_loops
+        # vars whose run-time element accesses stay word-level (T.aread,
+        # T.awrite) for a storage binding; the others are expanded here
+        self.arrays: Set[str] = set(arrays or ())
         self.it = elab.interp
         self.dyn_fields: Set[Tuple[int, Any]] = set()     # (oid, prop)
         self.dyn_ifvars: Set[Tuple[str, str]] = set()     # (iface path, name)
@@ -561,17 +569,31 @@ class Translator:
         sel = self.ev(s.expr, act)
         w = width_of(s.expr.type)
         arms = []
+        labels: List[Optional[int]] = []      # the item values, while all are constants
         for item in s.items:
-            conds = [T.eq(self._term(sel, w, s.expr), self._term(self.ev(x, act), w, x))
-                     for x in item.expressions]
+            ts = [self._term(self.ev(x, act), w, x) for x in item.expressions]
+            conds = [T.eq(self._term(sel, w, s.expr), t) for t in ts]
             arms.append((T.or_(*conds) if conds else T.ZERO, item.stmt))
+            labels += [t.val if t.is_const else None for t in ts]
+        disjoint = (s.condition == ast.CaseStatementCondition.Normal and None not in labels
+                    and len(set(labels)) == len(labels))
+        groups = self._call_groups(s, arms, disjoint) if self.share_calls else {}
+        skip = {m for g in groups.values() for m in g[1:]}
 
         def chain(i):
+            while i in skip:
+                i += 1
             if i == len(arms):
                 if s.defaultCase is not None:
                     self.pe_stmt(s.defaultCase, act)
                 return
             c, st = arms[i]
+            if i in groups:
+                g = groups[i]
+                self._dyn_if(T.or_(*[arms[m][0] for m in g]),
+                             lambda: self._shared_call([arms[m] for m in g], act),
+                             lambda: chain(i + 1), act)
+                return
             if c.is_const:
                 if c.val:
                     self.pe_stmt(st, act)
@@ -580,6 +602,127 @@ class Translator:
                 return
             self._dyn_if(c, lambda: self.pe_stmt(st, act), lambda: chain(i + 1), act)
         chain(0)
+
+    # ---------------------------------------------------- shared calls (case)
+    # A case whose arms each assign one call of the same function to the same
+    # target (`x = f(a1, b1)`, `x = f(a2, b2)`) calls it once, the arguments
+    # that differ selected by the arm's condition (share_calls). The arms then
+    # share one body, so what follows (a schedule's edges, the logic) has one
+    # copy. An argument is evaluated in its own arm only, so what it reads or
+    # does is as written; arguments written the same in all arms are
+    # evaluated once.
+
+    @staticmethod
+    def _text(e) -> Optional[str]:
+        """The source of ``e``, blanks removed (an implicit conversion, which
+        has none: its type, then its operand's), or None."""
+        pre = ""
+        while getattr(e, "syntax", None) is None and e.kind == EK.Conversion:
+            pre += f"({e.type})"
+            e = e.operand
+        syn = getattr(e, "syntax", None)
+        return pre + "".join(str(syn).split()) if syn is not None else None
+
+    def _same_text(self, xs) -> bool:
+        ts = [self._text(x) for x in xs]
+        return None not in ts and len(set(ts)) == 1
+
+    def _arm_call(self, st):
+        """(assignment, call) when ``st`` is `x = f(...)` with ``f`` a function
+        of this object or a free one, every argument given and an input."""
+        if st is None or st.kind != SK.ExpressionStatement:
+            return None
+        e = st.expr
+        if e.kind != EK.Assignment or e.isCompound:
+            return None
+        r = e.right
+        while r.kind == EK.Conversion:
+            r = r.operand
+        if r.kind != EK.Call or r.isSystemCall or r.thisClass is not None:
+            return None
+        sub = r.subroutine
+        if sub.subroutineKind != ast.SubroutineKind.Function or sub.body is None:
+            return None
+        formals = list(sub.arguments)
+        args = list(r.arguments)
+        if len(args) != len(formals) or any(
+                fa.direction != ast.ArgumentDirection.In for fa in formals) or any(
+                x is None or x.kind == EK.EmptyArgument for x in args):
+            return None
+        if self._text(e.left) is None:
+            return None
+        return e, r
+
+    def _call_groups(self, s, arms, disjoint: bool) -> Dict[int, List[int]]:
+        """Arms that share a call, by the first of them. With disjoint
+        conditions (a plain case on constants) any arms can share; otherwise
+        only runs of adjacent ones (the first match must still win)."""
+        keys = []
+        for c, st in arms:
+            ac = None if c.is_const else self._arm_call(st)
+            if ac is None:
+                keys.append(None)
+                continue
+            e, r = ac
+            keys.append((skey_sym(r.subroutine), self._text(e.left), str(e.left.type),
+                         str(e.right.type), bool(e.isNonBlocking)))
+        groups: Dict[int, List[int]] = {}
+        if disjoint:
+            by: Dict[Any, List[int]] = {}
+            for i, k in enumerate(keys):
+                if k is not None:
+                    by.setdefault(k, []).append(i)
+            for g in by.values():
+                if len(g) > 1:
+                    groups[g[0]] = g
+        else:
+            i = 0
+            while i < len(keys):
+                j = i
+                while keys[i] is not None and j + 1 < len(keys) and keys[j + 1] == keys[i]:
+                    j += 1
+                if j > i:
+                    groups[i] = list(range(i, j + 1))
+                i = j + 1
+        for g in groups.values():
+            _, r = self._arm_call(arms[g[0]][1])
+            na = len(list(r.arguments))
+            n = sum(not self._same_text([list(self._arm_call(arms[m][1])[1].arguments)[k]
+                                         for m in g]) for k in range(na))
+            note = (f"{self._src_loc(s)}: case arms {', '.join(str(m + 1) for m in g)} share "
+                    f"one call of {r.subroutine.name} ({n} of {na} arguments selected)")
+            if note not in self.warnings:
+                self.warnings.append(note)
+        return groups
+
+    def _shared_call(self, members, act: Act) -> None:
+        calls = [self._arm_call(st)[1] for _, st in members]
+        formals = list(calls[0].subroutine.arguments)
+        vals: List[Optional[T.Term]] = []
+        for k, fa in enumerate(formals):
+            xs = [list(r.arguments)[k] for r in calls]
+            if self._same_text(xs):
+                vals.append(None)                 # as written, once
+                continue
+            fw = width_of(fa.type)
+            tv = self._temp_var(fw, "arg")
+
+            def put(x, tv=tv, fa=fa, fw=fw):
+                v = self._conv_to(self.ev(x, act), fa.type, x)
+                self.emit(P.Assign(tv, self._term(v, fw, x)))
+
+            def pick(i, xs=xs, put=put):
+                if i == len(xs) - 1:
+                    put(xs[i])
+                else:
+                    self._dyn_if(members[i][0], lambda: put(xs[i]), lambda: pick(i + 1), act)
+            pick(0)
+            vals.append(T.var(tv.name, tv.w))
+        self._call_args[skey(calls[0])] = vals
+        try:
+            self.pe_stmt(members[0][1], act)
+        finally:
+            self._call_args.pop(skey(calls[0]), None)
 
     # ----------------------------------------------------------------- loops
     _UNROLL_LIMIT = 4096
@@ -1282,6 +1425,7 @@ class Translator:
         site = self._call_site(sub, this, iface, caller, call_e)
         outs = []
         formals = list(sub.arguments)
+        given = self._call_args.pop(skey(call_e), None)     # a shared call's
         for i, fa in enumerate(formals):
             x = args[i] if i < len(args) else None
             d = fa.direction
@@ -1294,7 +1438,8 @@ class Translator:
                 self.set_local(a, fa, self._conv_to(v, fa.type, dv))
                 continue
             if d == ast.ArgumentDirection.In:
-                v = self._conv_to(self.ev(x, caller), fa.type, x)
+                v = given[i] if given is not None and given[i] is not None else \
+                    self._conv_to(self.ev(x, caller), fa.type, x)
                 if site is not None:
                     if isinstance(v, T.Term):
                         site.args[-1] = v
@@ -1631,6 +1776,8 @@ class Translator:
             idx = self._term(self.ev(e.selector, act), width_of(e.selector.type) or 32, e.selector)
             r = t.fixedRange
             left, right = int(r.left), int(r.right)
+            if self._kept_array(v):
+                return T.aread(v, self._elem_num(t, idx, v.w, ew), ew)
             if idx.is_const:
                 lo = self.it._bit_offset(t, idx.val, ew)
                 return T.slice_(v, lo, ew)
@@ -1962,6 +2109,10 @@ class Translator:
                 idx = self._term(self.ev(lhs.selector, act), width_of(lhs.selector.type) or 32,
                                  lhs.selector)
                 ew = width_of(lhs.type)
+                if self._kept_array(cur):
+                    num = self._elem_num(t, idx, width_of(t), ew)
+                    self.assign(lhs.value, act, T.awrite(cur, num, self._term(v, ew, None)), nb)
+                    return
                 if not idx.is_const:
                     self.assign(lhs.value, act, self._dyn_insert(cur, t, idx, self._term(v, ew, None)),
                                 nb)
@@ -1993,6 +2144,11 @@ class Translator:
     # file: 32:1 read muxes, one write enable per register). Wider vectors keep
     # the shifter form, which is smaller there.
     MUX_MAX_ELEMS = 256
+
+    def _kept_array(self, t: T.Term) -> bool:
+        while t.op == "awrite":
+            t = t.args[0]
+        return t.op == "var" and t.name in self.arrays
 
     @staticmethod
     def _elem_num(t, idx: T.Term, w: int, ew: int) -> T.Term:
@@ -2369,8 +2525,15 @@ def _safe(name: str) -> str:
     return "".join(c if (c.isalnum() or c == "_") else "_" for c in name).strip("_")
 
 
-def translate(elab: ElabResult, keep_loops: bool = False) -> Tuple[P.Design, List[str]]:
-    tr = Translator(elab, keep_loops=keep_loops)
+def translate(elab: ElabResult, keep_loops: bool = False,
+              arrays: Optional[Set[str]] = None,
+              share_calls: bool = False) -> Tuple[P.Design, List[str]]:
+    """``arrays``: vars (by netlist name) whose run-time element reads and
+    writes stay word-level (``aread``/``awrite`` terms) for a storage binding
+    in the lowering (``LowerOptions.memories``). ``share_calls``: case arms
+    that each assign one call of the same function call it once, the
+    arguments selected (``Translator._call_groups``)."""
+    tr = Translator(elab, keep_loops=keep_loops, arrays=arrays, share_calls=share_calls)
     tr._act_stack = []
     tr._loop_flags = []
     d = tr.translate()

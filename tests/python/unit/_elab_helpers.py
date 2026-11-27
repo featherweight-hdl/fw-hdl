@@ -46,18 +46,19 @@ def _write(text: str, workdir: Path, name: str) -> Path:
 def translate_sv(text: str, top: str, workdir: Path, *,
                  files: Sequence[os.PathLike] = (),
                  defines: Optional[Dict[str, str]] = None,
-                 keep_loops: bool = False) -> ElabStages:
+                 keep_loops: bool = False, share_calls: bool = False) -> ElabStages:
     """Parse ``files`` then ``text`` (written to ``workdir/<top>.sv``) with
     the fw-hdl library, elaborate ``top``, translate and structure."""
     src = _write(text, workdir, f"{top}.sv")
     return elab_design([str(f) for f in files] + [str(src)], top, defines=defines,
-                       keep_loops=keep_loops)
+                       keep_loops=keep_loops, share_calls=share_calls)
 
 
 def lower_sv(text: str, top: str, workdir: Path, *, files: Sequence[os.PathLike] = (),
              defines: Optional[Dict[str, str]] = None, encoding: str = "binary",
              optimize: bool = True, emit: str = "flat", keep_loops: bool = True,
-             schedule: str = "as-written", **lower_opts) -> Lowered:
+             schedule: str = "as-written", share_calls: bool = False,
+             **lower_opts) -> Lowered:
     """:func:`translate_sv`, then the engine ``schedule``
     (``zuspec.synth.proc.sched``), then lower, as ``lower_design`` does.
     ``lower_opts`` are :class:`zuspec.synth.proc.lower.LowerOptions` fields.
@@ -69,7 +70,8 @@ def lower_sv(text: str, top: str, workdir: Path, *, files: Sequence[os.PathLike]
 
     from zuspec.synth.proc import sched
 
-    st = translate_sv(text, top, workdir, files=files, defines=defines, keep_loops=keep_loops)
+    st = translate_sv(text, top, workdir, files=files, defines=defines, keep_loops=keep_loops,
+                      share_calls=share_calls)
     nl = lower(sched.schedule(st.design, schedule), LowerOptions(encoding=encoding, **lower_opts))
     if optimize:
         nl = opt_pass(nl)
