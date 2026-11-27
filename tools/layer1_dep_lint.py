@@ -19,7 +19,7 @@ PKGS = os.path.join(ROOT, "packages")
 
 # (repo, forbidden patterns)
 UMBRELLA = [r"fw-hdl-sync/(src|python)/", r"\.\./\.\./\.\./(src|python)/",
-            r"\bfrom fw\.hdl\.(?!fe\.sv|rt\.sv)\w", r"\bimport fw\.hdl\.(?!fe\.sv|rt\.sv)\w",
+            r"\bfrom fw\.hdl\.(?!fe\.sv|rt\.sv|gen)\w", r"\bimport fw\.hdl\.(?!fe\.sv|rt\.sv|gen)\w",
             r"\bfw_root\b", r"\bfw_extern_impl\b"]
 RULES = {
     "fw-hdl-spec": UMBRELLA + [r"fw-hdl-(rt|fe)-sv", r"\bfw\.hdl\.(rt|fe)\.sv\b"],

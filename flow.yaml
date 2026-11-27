@@ -1,83 +1,13 @@
 # yaml-language-server: $schema=https://dv-flow.github.io/flow.dv.schema.json
+# fw-hdl, the umbrella project. Each example under examples/ is its own dfm
+# package; `dfm run tests` here runs every example's tests (pytest's
+# testpaths, see pyproject.toml).
 package:
   name: fw-hdl
 
   tasks:
-  # The library regression. One root task so `dfm run tests` means the same
-  # thing here as it does at the project root -- and so the observable-events
-  # work has a single gate to keep green (invariant G6: every existing test
-  # passes with the facility compiled in and disabled).
-  #
-  # Fragment tasks are namespaced, so each entry is qualified by its fragment.
   - name: tests
-    needs:
-    - tests.smoke
-    - blinky.blinky
-    - clock_domain.clock-domain
-    - reset_domain.reset-domain
-    - crossing.crossing
-    - dbg_smoke.dbg-smoke
-    - dbg_smoke.dbg-smoke-off
-    - dbg_listener.dbg-listener
-    - dbg_listener.dbg-listener-dbg
-    - dbg_listener.dbg-listener-off
-    - dbg_struct.dbg-struct
-    - dbg_struct.dbg-struct-off
-    - dbg_struct.dbg-struct-artifact
-    - dbg_reg.dbg-reg
-    - dbg_reg.dbg-reg-off
-    - dbg_sched.dbg-sched
-    - dbg_sched.dbg-sched-off
-    - dbg_filter.dbg-filter
-    - dbg_filter.dbg-filter-off
-    - dbg_op.dbg-op
-    - dbg_op.dbg-op-off
-    - intf_pc.intf-pc
-    - fifo.fifo
-    - socket.socket
-    - root_restart.root-restart
-    - put_proto.put-proto
-    - reg_bus.reg-bus
-    - reg_core.reg-core
-    - reg_dma.reg-dma
-    - reg_hooks.reg-hooks
-    - reg_smoke.reg-smoke
-    - root_param.root-param
-    - rv_proto.rv-proto
-    - python.pytest
-    - xls.xls-conformance
-    - order.selftest
-    - stdlib.unit
-
-  fragments:
-  - src/flow.yaml
-  - tests/flow.yaml
-  - tests/reg_smoke/flow.yaml
-  - tests/reg_core/flow.yaml
-  - tests/reg_hooks/flow.yaml
-  - tests/reg_bus/flow.yaml
-  - tests/reg_dma/flow.yaml
-  - tests/dbg_smoke/flow.yaml
-  - tests/dbg_listener/flow.yaml
-  - tests/dbg_struct/flow.yaml
-  - tests/dbg_reg/flow.yaml
-  - tests/dbg_sched/flow.yaml
-  - tests/dbg_filter/flow.yaml
-  - tests/dbg_op/flow.yaml
-  - tests/blinky/flow.yaml
-  - tests/clock_domain/flow.yaml
-  - tests/reset_domain/flow.yaml
-  - tests/crossing/flow.yaml
-  - tests/intf_pc/flow.yaml
-  - tests/fifo/flow.yaml
-  - tests/socket/flow.yaml
-  - tests/root_restart/flow.yaml
-  - tests/put_proto/flow.yaml
-  - tests/root_param/flow.yaml
-  - tests/rv_proto/flow.yaml
-  - tests/formal/flow.yaml
-  - tests/python/flow.yaml
-  - tests/xls/flow.yaml
-  - tests/xls/compose/flow.yaml
-  - tests/order/flow.yaml
-  - tests/stdlib/flow.yaml
+    desc: The examples' tests (examples/*/test_*.py)
+    # A test run with no inputs for dv-flow to hash: never "up to date".
+    uptodate: false
+    run: cd ${{ srcdir }} && python -m pytest -q -p no:cacheprovider examples

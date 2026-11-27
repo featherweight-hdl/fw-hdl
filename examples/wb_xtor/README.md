@@ -3,7 +3,6 @@
 A Wishbone protocol package (classic cycles, one access in flight) written
 only against the canonical packages: `fw-hdl-spec` (API and std),
 `fw-hdl-rt-sv` (the SV runtime) and `fw-hdl-fe-sv` (the static front end).
-Nothing comes from this repo's `src/` or `python/fw/hdl`.
 
 Each transactor is one class, with the API on one side and the bundle on the
 other, as std's `fw_rv_initiator` does:
@@ -56,8 +55,8 @@ transactors and the bench's memory re-declare `req_t`/`rsp_t` from it.
 
 ## Running
 
-From this directory, under direnv. The root suite runs all three:
-`tests/python/system/test_wb_xtor.py`.
+From this directory, under direnv. `test_wb_xtor.py` runs them all
+(`dfm run tests` at the repo root runs it with every example's tests).
 
 | Command | Result |
 |---|---|
@@ -155,5 +154,5 @@ drove the pins:
    - reset;
    - a pin map for wrapping an RTL Wishbone port (`fw_extern_if`);
    - lowering the target (it has a `run()`: `FW-E-EMIT-RUN`).
-6. `examples/wb_initiator` is the old, `src/`-based version of this
-   example.
+6. The old, `src/`-based version of this example, `examples/wb_initiator`,
+   is on branch `legacy`.

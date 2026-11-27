@@ -14,14 +14,14 @@ Managed by direnv. Use the following to run commands properly:
 - `packages/fw-hdl-spec`: the canonical API.
 - `packages/fw-hdl-rt-sv`: the canonical SV runtime.
 - `packages/fw-hdl-fe-sv`: the compile (static-analysis) front end.
-- This repo's own code (fw-hdl: `src/`, `python/fw/hdl`) is the *old* front
-  end, full of experiments that will be removed soon. It is historical and
-  not canonical. Use it only for reference, and very selectively, while
-  features are built out in the packages above. Don't build new examples,
-  tests or features on it.
-- fw-hdl is becoming the umbrella project that pulls the pieces together.
-  Examples belong here (`examples/`) and are encouraged, as long as they use
-  the canonical API (the packages above), not `src/` or `python/fw/hdl`.
+- `packages/fw-hdl-dv`: the DV library (only started).
+- fw-hdl is the umbrella project that pulls the pieces together. Examples
+  belong here (`examples/`) and are encouraged; they use the packages above.
+- The pre-2026-11 front end is frozen on branch `legacy` (tag
+  `legacy-fe-final`). Don't base work on it. Consult it without checking it
+  out into a packet: `git show legacy-fe-final:<path>`,
+  `git grep <pat> legacy-fe-final -- src python`, or a worktree outside the
+  packet directory (`git worktree add ../fw-hdl-legacy legacy-fe-final`).
 
 # SystemVerilog code style
 - Each class in a package gets its own .svh file that is 'included' in the parent package

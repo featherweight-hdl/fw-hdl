@@ -54,6 +54,10 @@ jobs:
         fi
         echo "OK: no internal identifiers in tracked files"
 
+    - name: Check for the legacy front end
+      # The old front end lives on branch `legacy` (tag `legacy-fe-final`).
+      run: sh tools/check-no-legacy.sh
+
     - name: Static-check the packaging metadata
       # Deliberately does not execute the build: that is what the GitHub side
       # is for, and running it here would pull dependencies over the network on

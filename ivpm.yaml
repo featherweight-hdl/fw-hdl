@@ -41,26 +41,12 @@ package:
       url: https://github.com/edapack/nextpnr-bin
       src: gh-rls
       cache: true
-    # Google XLS (xlsynth) tools: opt_main, codegen_main, block_to_verilog_main, ...
-    # Found by dv-flow-libsynth and zuspec-be-xls on PATH.
-    - name: xlsynth
-      url: https://github.com/edapack/xlsynth-bin
-      src: gh-rls
-      cache: true
     - name: sv-weave
       url: https://github.com/sv-weave/sv-weave.git
     - name: dv-flow-mgr
       url: https://github.com/dv-flow/dv-flow-mgr.git
     - name: dv-flow-libhdlsim
       url: https://github.com/dv-flow/dv-flow-libhdlsim.git
-    # Provides the formal.sby.* tasks used by tests/formal/flow.yaml. Declared
-    # so the package definition resolves in CI / fresh checkouts (it was
-    # previously only available via a local editable install).
-    - name: dv-flow-libformal
-      url: https://github.com/dv-flow/dv-flow-libformal.git
-    # The synth.xls.* tasks (XLS IR -> Verilog) of the SPL -> RTL flow.
-    - name: dv-flow-libsynth
-      url: https://github.com/dv-flow/dv-flow-libsynth.git
     # FPGA back end: place and route, packing, programming.
     - name: dv-flow-libfpga
       url: https://github.com/dv-flow/dv-flow-libfpga.git
@@ -68,9 +54,6 @@ package:
     # into packages/svunit.
     - name: dv-flow-libhdltest
       url: https://github.com/dv-flow/dv-flow-libhdltest.git
-    # Project recipes (project.spl.utils.*), used by tests/xls/compose.
-    - name: dv-flow-libproject
-      url: https://github.com/dv-flow/dv-flow-libproject.git
     - name: pytest-dfm
       url: https://github.com/dv-flow/pytest-dfm.git
     # cocotb bridges of generated transactors (docs/design/xtor-shell-plan.md
@@ -88,23 +71,7 @@ package:
       url: https://github.com/zuspec/zuspec-be-sv.git
     - name: zuspec-fe-sv
       url: https://github.com/zuspec/zuspec-fe-sv.git
-    - name: zuspec-be-xls
-      url: https://github.com/zuspec/zuspec-be-xls.git
     - name: zuspec-be-bc
       url: https://github.com/zuspec/zuspec-be-bc.git
     - name: pyslang
       src: pypi
-    - name: sphinx
-      src: pypi
-    # The docs (docs/README.md): MyST pages, SystemVerilog and dv-flow autodoc.
-    - name: myst-parser
-      src: pypi
-    - name: sphinx-copybutton
-      src: pypi
-    - name: furo
-      src: pypi
-    - name: sphinx-systemverilog
-      url: https://github.com/fvutils/sphinx-systemverilog.git
-    - name: sphinx-dv-flow
-      url: https://github.com/dv-flow/sphinx-dv-flow.git
-      dep-set: use

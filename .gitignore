@@ -15,8 +15,6 @@ downloads/
 eggs/
 .eggs/
 lib/
-!python/fw/hdl/lib/
-!tests/xls/lib/
 lib64/
 parts/
 sdist/
@@ -254,9 +252,4 @@ rundir/
 /xls-examples.md
 /xls-phase0.md
 /xls-phase2.md
-/python/fw/hdl/PLAN.md
-/python/fw/hdl/DESIGN.md
-/python/fw/hdl/CENTRALIZED-LOWERING-DESIGN.md
-/python/fw/hdl/REUSE-AUDIT.md
-/tests/rv_proto/STATUS.md
 /docs/tool-issues.md
