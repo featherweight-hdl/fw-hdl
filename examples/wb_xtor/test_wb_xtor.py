@@ -116,7 +116,7 @@ def test_shell_gen(tmp_path, which):
     assert res == _RESULTS[which], out[-3000:]
     x = {"init": "wb_initiator", "tgt": "wb_target"}[which]
     files = [f for f in (tmp_path / "gen" / "files.f").read_text().split()
-             if not f.endswith(("_lowered.sv", "api_stub.sv"))]
+             if not f.endswith("_lowered.sv")]
     lint = subprocess.run(["verilator", "--lint-only", "-Wall", "--top-module",
                            f"{x}_xtor"] + files, capture_output=True, text=True, timeout=300)
     assert lint.returncode == 0, (lint.stdout + lint.stderr)[-3000:]
@@ -163,7 +163,7 @@ def test_plain(tmp_path):
         assert "fw_" not in b.read_text(), b.read_text()
     files = [f for w in ("init", "tgt")
              for f in (tmp_path / f"gen_{w}" / "files.f").read_text().split()
-             if not f.endswith(("_lowered.sv", "api_stub.sv"))]
+             if not f.endswith("_lowered.sv")]
     lint = subprocess.run(
         ["verilator", "--lint-only", "-Wall", "--top-module", "wb_plain_tb",
          f"-I{_EX / 'src'}", f"-I{_EX / 'plain'}", f"-I{tmp_path / 'gen_init'}",
@@ -219,7 +219,7 @@ def test_static():
 def _xtor_ir(src, top):
     from fw.hdl.fe.sv import elaborate
     r = elaborate([str(_EX / "src" / "wb_api_pkg.sv"), str(_EX / "src" / "wb_pkg.sv"), str(_EX / "tb" / src)], top=top,
-                  incdirs=[str(_EX / "src")])
+                  incdirs=[str(_EX / "src")], lower=True)
     assert r.ok, "\n".join(map(str, r.diags))
     return r.to_ir()[0]
 
@@ -271,7 +271,7 @@ def test_task_code_lowered(tmp_path):
                           ("wb_emit_tgt.sv", "wb_emit_tgt_pkg::top", "wb_target")):
         from fw.hdl.fe.sv import elaborate
         r = elaborate([str(_EX / "src" / "wb_api_pkg.sv"), str(_EX / "src" / "wb_pkg.sv"), str(_EX / "tb" / src)], top=top,
-                      incdirs=[str(_EX / "src")])
+                      incdirs=[str(_EX / "src")], lower=True)
         assert r.ok, "\n".join(map(str, r.diags))
         ctxt, t = r.to_ir()
         (m,) = ctxt.type_m["wb_if"].body.methods

@@ -10,7 +10,7 @@ from fw.hdl.fe.sv.emit import emit_sv
 
 ex = Path(__file__).resolve().parents[1]
 r = elaborate([str(ex / "src" / "wb_api_pkg.sv"), str(ex / "src" / "wb_pkg.sv"), str(ex / "tb" / "wb_emit.sv")],
-              top="wb_emit_pkg::top", incdirs=[str(ex / "src")])
+              top="wb_emit_pkg::top", incdirs=[str(ex / "src")], lower=True)
 if not r.ok:
     sys.exit("\n".join(map(str, r.diags)))
 ctxt, top = r.to_ir()

@@ -31,9 +31,8 @@ for w in ("init", "tgt"):
     if r.returncode:
         sys.exit((out / f"emit_{w}.log").read_text()[-4000:])
     fl = Path(r.stdout.strip())
-    # the core and its types package; not the unused top or the port stubs
-    srcs += [l for l in fl.read_text().split()
-             if not l.endswith(("_lowered.sv", "api_stub.sv"))]
+    # the core and its types package; not the unused top
+    srcs += [l for l in fl.read_text().split() if not l.endswith("_lowered.sv")]
     gens.append(str(g))
 
 runner = get_runner("verilator")

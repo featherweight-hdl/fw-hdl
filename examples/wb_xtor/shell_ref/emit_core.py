@@ -16,7 +16,7 @@ XTOR = {  # which: (class, emit top file, emit top)
 cls, src, tname = XTOR[sys.argv[1]]
 ex = Path(__file__).resolve().parents[1]
 r = elaborate([str(ex / "src" / "wb_api_pkg.sv"), str(ex / "src" / "wb_pkg.sv"), str(ex / "tb" / src)],
-              top=tname, incdirs=[str(ex / "src")])
+              top=tname, incdirs=[str(ex / "src")], lower=True)
 if not r.ok:
     sys.exit("\n".join(map(str, r.diags)))
 ctxt, top = r.to_ir()

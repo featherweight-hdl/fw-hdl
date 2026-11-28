@@ -1,5 +1,7 @@
 # X0 probes: sync and task domains
 
+> Describes the legacy front end (branch `legacy`, tag `legacy-fe-final`).
+
 Throwaway probes for step X0 of
 [`sync-task-domains.md`](../../sync-task-domains.md). They ran on a scratch
 mirror of the repo. These patches recreate it; none is applied to `src/`.

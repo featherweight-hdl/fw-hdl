@@ -1,5 +1,7 @@
 # Micro-pipelining sync logic: phase 1, feasibility (D0)
 
+> Describes the legacy front end (branch `legacy`, tag `legacy-fe-final`).
+
 The implementation, test and doc plan for the first phase of pipelining
 ready/valid `comb()` logic (`process-synthesis.md` §5, plan step D0). This
 phase is an assessment. It answers whether the D1–D5 approach is sound and

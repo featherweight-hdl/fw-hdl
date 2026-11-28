@@ -14,7 +14,7 @@ fls=""
 for w in init tgt; do
     fl=$(python "$ex/scripts/emit_xtor.py" "$w" "$out/gen_$w" plain 2> "$out/emit_$w.log") \
         || { tail -40 "$out/emit_$w.log"; exit 1; }
-    fls="$fls $(grep -v -e '_lowered\.sv$' -e 'api_stub\.sv$' "$fl")"
+    fls="$fls $(grep -v -e '_lowered\.sv$' "$fl")"
 done
 
 verilator --binary -Wno-fatal -Wno-lint -Wno-style \

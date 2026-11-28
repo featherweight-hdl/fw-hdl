@@ -25,7 +25,7 @@ The how-to is **`packages/fw-hdl-spec/docs/protocol-packages.rst`** and its page
 | Step | Page (under `packages/fw-hdl-spec/docs/`) |
 | --- | --- |
 | 0. Fit check (channels, roles, config, timing, known limits) | `protocol-packages.rst` |
-| 1–3. Package, payload structs, APIs, protocol (`declare()`, `this_t`), bundles of channels | `protocol-packages/declare.rst` |
+| 1–3. Package, payload structs, APIs, protocol (`` `fw_protocol_utils(C, REQ, RSP) ``, `this_t`, `` `fw_protocol_prefix ``), bundles of channels (`` `fw_bundle_utils(C, PROTO) ``) | `protocol-packages/declare.rst` |
 | 4. GenKit (dfm task and Python), compile order, every generated class and how to use it | `protocol-packages/generate.rst` |
 | 5. Adapters, reference model, endpoints/sockets, hand-written transactors, configuration, timed channels, abstractors | `protocol-packages/behaviour.rst` |
 | 6–7. Back to back, static elaboration, against RTL (wrap, emit, testbench, bind monitors), formal, reference IPs | `protocol-packages/testing.rst` |
@@ -49,7 +49,27 @@ through every step. Copy its layout for a new kit:
 Also: std ready/valid (`fw-hdl-spec/std/fw_rv_*.svh`), fw-hdl-fe-sv
 `tests/unit/gen/src/proto_chan/` (parameterized bundle of channels),
 `fw-hdl-spec/conformance/_lib/test_uart_*.svh` (plain-signal pins, config, timed
-channels), fw-hdl-fe-sv `examples/wrap_rtl/` (gen_tb/gen_bind on std rv ports).
+channels), fw-hdl-fe-sv `examples/wrap_rtl/` (gen_tb/gen_bind on std rv ports),
+fw-hdl-spec `docs/examples/apb/` (the hand-written reference: an APB-style protocol
+package and transactor pair on plain signals, with a bench, a mutant and `check.py`),
+fw-hdl `examples/wb_xtor/` (a larger hand-written pair, Wishbone, `src/wb_pkg.sv`, with a
+generated shell and bridges).
+
+## Hand-written transactors: task-sync crossings
+
+Write a transactor in the task-sync crossing shape, which lowers. The API task (`access`,
+`put`) only hands off through a task-sync crossing the transactor owns, `fw_to_sync #(T)` (task `put` → sync `take`) or
+`fw_from_sync #(T)` (sync `give` → task `get`); its `comb()` drives the pins from the
+crossing (`valid`/`peek`, `ready`/`waiting`) and its `step()` moves items at the handshake
+(`take`/`give`). A target's `run()` only gets each request from a crossing, makes its port
+call and puts the response back. Task code neither reads nor writes a signal
+(`FW-E-TASK-SIGNAL`): only `comb()`/`step()` do. Rules X1–X8:
+`fw-hdl-spec/semantics/processes.md`, "Task-sync crossings". Copy the
+shape from fw-hdl-spec `docs/examples/apb/src/apb_pkg.sv` (`apb_initiator`, `apb_target`;
+guide: `docs/protocol-packages/behaviour.rst`, "Hand-written transactors"), std
+`fw-hdl-spec/std/fw_rv_xtor.svh` (`fw_rv_initiator`, `fw_rv_target`) and, larger, fw-hdl
+`examples/wb_xtor/src/wb_pkg.sv`. Monitor internals are not covered yet (a sync-to-task
+crossing for them is being designed).
 
 ## Rules that bite (details in the guide)
 
@@ -60,13 +80,18 @@ channels), fw-hdl-fe-sv `examples/wrap_rtl/` (gen_tb/gen_bind on std rv ports).
 3. **Bundle of channels**: one `fw_rv_if` member per channel, `fw_bundle` = initiator
    drives, `fw_mirror` = target drives. Only such bundles get generated transactors;
    plain-signal bundles need a hand-written transactor (extends `fw_xtor_initiator`/
-   `_target`/`_monitor #(B)`, registers with `` `fw_xtor_utils(C) ``).
+   `_target`, `fw_xtor_sock_initiator`/`_sock_target` for a request and a response API,
+   or `fw_xtor_monitor #(B)`; registers with `` `fw_xtor_utils(C) ``; see the task-sync
+   crossing shape above).
 4. **Parameterized classes** need `this_t` + the `_param_utils` macro, and a specialization
    named in the scanned source (a typedef), or GenKit silently skips the bundle.
 5. **Timing is a channel** (`fw_timed_channel`) the user places; config is a struct on
    endpoints (`fw_cfg_src`/`fw_cfg_sink`), never on the protocol.
-6. `gen_tb`/`gen_bind` work for std ready/valid DUT ports only; for a bundle of channels
-   write the bench by hand like `tb/sbus_rtl_tb.sv`.
+6. `gen_tb`/`gen_bind` take a DUT port that is a bundle of channels as well as a std
+   ready/valid one, and use the outermost protocol's transactors and monitor (sbus:
+   `check.py`, fw-hdl-fe-sv `tests/e2e/test_gen_tb_sbus.py`). Scan the kit **and** its
+   generated package for them (`FW-E-TB-XTOR` otherwise); the test is a subclass of the
+   generated bench class, like `tb/sbus_rtl_tb.sv`.
 7. Don't name a class `checker` (SV keyword), or a channel `pins`, `s`, `p`, `t`.
 
 Check the guide's "Known limits" table before designing around `fw_opt` (optional
